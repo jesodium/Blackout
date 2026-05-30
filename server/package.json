@@ -1,0 +1,18 @@
+{
+  "name": "wro2026-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Receives Bluetooth sensor data from Mega, dashboard + AI analysis",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "openai": "^4.86.2",
+    "serialport": "^12.0.0",
+    "socket.io": "^4.8.1"
+  }
+}
