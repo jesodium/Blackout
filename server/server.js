@@ -6,13 +6,15 @@ const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
 const OpenAI = require("openai");
 
+const openai = new OpenAI({
+  baseURL: "https://api.cerebras.ai/v1",
+  apiKey: process.env.CEREBRAS_API_KEY,
+});
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+  cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
 app.use(express.static("public"));
@@ -21,12 +23,6 @@ const PORT = process.env.PORT || 3000;
 const SERIAL_PATH = process.env.SERIAL_PORT || "/dev/cu.HC-06-SPP";
 const SERIAL_BAUD = parseInt(process.env.SERIAL_BAUD || "9600", 10);
 const AI_INTERVAL = parseInt(process.env.AI_INTERVAL || "30", 10) * 1000;
-
-const openai = new OpenAI({
-  baseURL: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
-  apiKey: process.env.OPENROUTER_API_KEY,
-  defaultHeaders: { "HTTP-Referer": "http://localhost:3000" },
-});
 
 let latestData = null;
 let dataHistory = [];
@@ -43,12 +39,12 @@ Roll: ${data.roll}°  Pitch: ${data.pitch}°  Yaw: ${data.yaw}°`;
 }
 
 async function runAiAnalysis() {
-  if (!process.env.OPENROUTER_API_KEY || !latestData) return;
+  if (!process.env.CEREBRAS_API_KEY || !latestData) return;
   try {
     const resp = await openai.chat.completions.create({
-      model: process.env.OPENROUTER_MODEL || "google/gemini-2.0-flash-lite",
+      model: process.env.CEREBRAS_MODEL || "gpt-oss-120b",
       messages: [
-        { role: "system", content: "You are a rover exploration AI assistant. Keep responses concise." },
+        { role: "system", content: "You are a rover exploration AI assistant. Keep responses concise, 2-3 sentences." },
         { role: "user", content: buildAiPrompt(latestData) },
       ],
       max_tokens: 200,
@@ -114,6 +110,10 @@ if (AI_INTERVAL > 0) {
 io.on("connection", (socket) => {
   console.log("Client connected");
   if (latestData) socket.emit("sensor-data", latestData);
+  socket.on("request-analysis", () => {
+    console.log("On-demand analysis requested");
+    runAiAnalysis();
+  });
 });
 
 server.listen(PORT, () => {

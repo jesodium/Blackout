@@ -20,6 +20,49 @@ function typewriteText(elementId, text) {
   el.appendChild(cursor);
 }
 
+// --- TTS ---
+let ttsEnabled = true;
+let ttsVoices = [];
+let aiHistory = [];
+let currentAnalysisText = '';
+
+function loadVoices() { ttsVoices = window.speechSynthesis?.getVoices() || []; }
+loadVoices();
+if (window.speechSynthesis) speechSynthesis.onvoiceschanged = loadVoices;
+
+function speakAnalysis(text) {
+  if (!text || !window.speechSynthesis || !ttsVoices.length) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 0.85; u.pitch = 1.0; u.volume = 1.0; u.lang = 'en-US';
+  const v = ttsVoices.find(v => v.lang.startsWith('en') && /samantha|alex|karen|moira|enhanced|google/i.test(v.name))
+    || ttsVoices.find(v => v.lang.startsWith('en'))
+    || ttsVoices[0];
+  if (v) u.voice = v;
+  speechSynthesis.speak(u);
+}
+
+function addAiHistory(text, timestamp) {
+  if (!text) return;
+  const prev = aiHistory[aiHistory.length - 1];
+  if (prev && prev.text === text) return;
+  aiHistory.push({ text, timestamp, id: Date.now() + Math.random() });
+  if (aiHistory.length > 20) aiHistory.shift();
+  const list = document.getElementById('ai-history-list');
+  if (!list) return;
+  const item = document.createElement('div');
+  item.className = 'ai-history-item';
+  const ts = timestamp ? new Date(timestamp).toLocaleTimeString() : '';
+  const snippet = text.length > 70 ? text.substring(0, 70) + '...' : text;
+  item.innerHTML = '<span class="ai-history-time">' + ts + '</span>' + escapeHtml(snippet);
+  item.addEventListener('click', () => {
+    currentAnalysisText = text;
+    typewriteText('ai-text', text);
+  });
+  list.appendChild(item);
+  list.scrollTop = list.scrollHeight;
+}
+
 // --- Sensor setup ---
 const sensorIds = ['temp','humid','dist','smoke','airq','roll','pitch','yaw'];
 const sensorColors = {
@@ -156,6 +199,14 @@ setInterval(() => {
 setupLogFilters();
 addLog('System ready. Waiting for connection...', 'system');
 
+// --- AI controls ---
+document.getElementById('btn-analyze')?.addEventListener('click', () => {
+  document.getElementById('ai-badge').textContent = 'Analyzing...';
+  document.querySelector('.ai-card')?.classList.add('analyzing');
+  socket.emit('request-analysis');
+});
+document.getElementById('tts-enable')?.addEventListener('change', e => { ttsEnabled = e.target.checked; });
+
 // --- Socket events ---
 socket.on('connect', () => {
   document.getElementById('status-dot').className = 'status-dot active';
@@ -181,6 +232,12 @@ socket.on('sensor-data', d => {
 });
 
 socket.on('ai-analysis', d => {
+  if (!d || !d.analysis) return;
+  currentAnalysisText = d.analysis;
   addLog('AI analysis received.', 'ai');
   typewriteText('ai-text', d.analysis);
+  addAiHistory(d.analysis, d.timestamp);
+  document.getElementById('ai-badge').textContent = 'Online';
+  document.querySelector('.ai-card')?.classList.remove('analyzing');
+  if (ttsEnabled) speakAnalysis(d.analysis);
 });

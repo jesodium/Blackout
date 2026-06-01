@@ -9,9 +9,10 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "openai": "^4.86.2",
+    "openai": "^4.104.0",
     "serialport": "^12.0.0",
     "socket.io": "^4.8.1"
   }
