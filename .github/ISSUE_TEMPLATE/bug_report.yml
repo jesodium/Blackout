@@ -1,0 +1,42 @@
+name: Bug Report
+description: Report a problem with the robot or server
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to fill out this bug report.
+  - type: dropdown
+    id: subsystem
+    attributes:
+      label: Subsystem
+      options:
+        - Mega (sensors)
+        - Uno (motors)
+        - Server / dashboard
+        - CAD / mechanical
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect to happen and what actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: How do we trigger this bug?
+      placeholder: |
+        1. Power on Mega
+        2. Open dashboard
+        3. Click "Analyze area"
+        4. See error...
+  - type: input
+    id: serial-output
+    attributes:
+      label: Serial / error output
+      description: Paste relevant logs or error messages
+      render: text

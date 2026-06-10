@@ -1,0 +1,35 @@
+name: Feature Request
+description: Suggest an idea for the robot or server
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: Describe the feature and why it's useful.
+  - type: dropdown
+    id: subsystem
+    attributes:
+      label: Subsystem
+      options:
+        - Mega (sensors)
+        - Uno (motors)
+        - Server / dashboard
+        - CAD / mechanical
+        - Testing / CI
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What's missing or hard to do right now?
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How should this work?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you've thought about

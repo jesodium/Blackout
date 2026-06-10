@@ -1,0 +1,38 @@
+name: Arduino Compile
+
+on:
+  push:
+    paths:
+      - "arduino-mega/**"
+      - "arduino-uno/**"
+  pull_request:
+    paths:
+      - "arduino-mega/**"
+      - "arduino-uno/**"
+
+jobs:
+  compile-mega:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/compile-sketches@v1
+        with:
+          fqbn: arduino:avr:mega:cpu=atmega2560
+          sketch-paths: arduino-mega/main
+          libraries: |
+            - name: DHT sensor library
+            - name: Adafruit Unified Sensor
+            - name: MPU6050_light
+            - name: NewPing
+            - name: MQUnifiedsensor
+
+  compile-uno:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/compile-sketches@v1
+        with:
+          fqbn: arduino:avr:uno
+          sketch-paths: arduino-uno/main
+          libraries: |
+            - name: Adafruit Motor Shield library

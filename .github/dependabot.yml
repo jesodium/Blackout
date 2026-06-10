@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+    groups:
+      production-deps:
+        dependency-type: production
+      dev-deps:
+        dependency-type: development
