@@ -12,7 +12,7 @@ const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
 const SENSORS = [
   { key: "temp",  name: "Temp",       unit: "°C",  d: 1, min: 0, max: 60,   st: v => v > 45 ? ["Critical", "abort"] : v > 35 ? ["High", "warn"] : ["Normal", "go"] },
   { key: "humid", name: "Humidity",   unit: "%",   d: 1, min: 0, max: 100,  st: v => (v > 75 || v < 20) ? ["Out of range", "warn"] : ["Good", "go"] },
-  { key: "dist",  name: "Distance",   unit: "cm",  d: 0, min: 0, max: 200,  st: v => v < 20 ? ["Alert", "abort"] : v < 55 ? ["Caution", "warn"] : ["Clear", "go"] },
+  { key: "dist",  name: "Distance",   unit: "cm",  d: 0, min: 0, max: 200,  invert: true, st: v => v < 20 ? ["Alert", "abort"] : v < 55 ? ["Caution", "warn"] : ["Clear", "go"] },
   { key: "smoke", name: "Smoke / Gas",unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 600 ? ["Hazard", "abort"] : v > 300 ? ["Warning", "warn"] : ["Normal", "go"] },
   { key: "airq",  name: "Air Qual",   unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 800 ? ["Poor", "abort"] : v > 450 ? ["Moderate", "warn"] : ["Good", "go"] },
 ];
@@ -77,7 +77,8 @@ function Trends({ packet }) {
 function Gauge({ s, value, delay }) {
   const has = value != null && !isNaN(value);
   const [label, kind] = has ? s.st(value) : ["—", ""];
-  const pct = has ? Math.max(0, Math.min(100, ((value - s.min) / (s.max - s.min)) * 100)) : 0;
+  const raw = has ? Math.max(0, Math.min(100, ((value - s.min) / (s.max - s.min)) * 100)) : 0;
+  const pct = s.invert ? 100 - raw : raw;
   return html`
     <article class="panel gauge reveal" style=${{ animationDelay: delay + "ms" }}>
       <div class="gauge-top">
@@ -269,7 +270,7 @@ function App() {
   const [uptime, setUptime] = useState("00:00:00");
 
   const socketRef = useRef(null);
-  const ttsRef = useRef(true);
+  const ttsRef = useRef(localStorage.getItem("tts") !== "false");
   const lastObstacle = useRef(0);
   const lastDist = useRef(0);
 

@@ -6,11 +6,18 @@
 #define TRIG_PIN 42
 #define ECHO_PIN 43
 #define SONAR_MAX 400
-#define DHT_INTERVAL 2000
+#define DHT_INTERVAL 1000
 #define SONAR_INTERVAL 50
 
 #define BT_STATE_PIN 27
 #define BT_EN_PIN 28
+
+#define MQ2_AO A0
+#define MQ2_DO 22
+#define MQ135_AO A1
+#define MQ135_DO 26
+#define MQ9_AO A3
+#define MQ9_DO 29
 
 DHT dht(DHT_PIN, DHT_TYPE);
 NewPing sonar(TRIG_PIN, ECHO_PIN, SONAR_MAX);
@@ -27,6 +34,9 @@ void setup() {
   pinMode(BT_STATE_PIN, INPUT);
   pinMode(BT_EN_PIN, OUTPUT);
   digitalWrite(BT_EN_PIN, LOW);
+  pinMode(MQ2_DO, INPUT);
+  pinMode(MQ135_DO, INPUT);
+  pinMode(MQ9_DO, INPUT);
   dht.begin();
   temp = dht.readTemperature();
   humid = dht.readHumidity();
@@ -46,11 +56,19 @@ void loop() {
   if (now - lastSonar >= SONAR_INTERVAL) {
     lastSonar = now;
     float dist = sonar.ping_cm();
+    int smoke = analogRead(MQ2_AO);
+    int airq  = analogRead(MQ135_AO);
+    int coRaw = analogRead(MQ9_AO);
+    int coAlert = digitalRead(MQ9_DO);
 
     String line = "S:";
-    line += temp; line += ",";
+    line += temp;  line += ",";
     line += humid; line += ",";
-    line += dist; line += ",0,0,0,0,0";
+    line += dist;  line += ",";
+    line += smoke; line += ",";
+    line += airq;  line += ",0,0,0,";
+    line += coRaw; line += ",";
+    line += coAlert;
 
     Serial.println(line);
     Serial1.println(line);

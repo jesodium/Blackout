@@ -29,6 +29,8 @@ Two independent Arduino boards, **no direct link yet**:
 | A1 | MQ-135 (air quality) | Analog read |
 | D26 | MQ-135 | Digital out |
 | A2 | Microphone (MAX9814/KY-038) | Analog |
+| A3 | MQ-9 (CO/combustible gas) | Analog read |
+| D29 | MQ-9 | Digital out |
 | D18 (TX1) | → HC-06 RX | Bluetooth TX (Mega → BT) |
 | D19 (RX1) | ← HC-06 TX | Bluetooth RX (BT → Mega) |
 
@@ -53,6 +55,7 @@ HC-06 is slave-only, no AT commands needed. Pairs as serial port on PC (/dev/cu.
 | HC-SR04 | Distance (ultrasonic) | TRIG D24, ECHO D25 |
 | MQ-135 | Air quality (CO2, NH3, benzene) | Analog A1 + digital D26 |
 | MAX9814/KY-038 | Microphone / sound level | Analog A2 |
+| MQ-9 | CO + combustible gas (LPG, methane) | Analog A3 + digital D29 |
 
 ## Mega Libraries
 

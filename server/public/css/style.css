@@ -152,10 +152,10 @@ body {
 @media (max-width: 940px) { .deck-row--mid, .deck-row--bot { grid-template-columns: 1fr; } }
 
 /* ---------- Sensor bay ---------- */
-.bay { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: var(--gap); }
+.bay { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--gap); }
 @media (max-width: 540px) { .bay { grid-template-columns: 1fr 1fr; } }
 
-.gauge { padding: 14px; min-height: 190px; display: flex; flex-direction: column; }
+.gauge { padding: 14px; min-height: 280px; display: flex; flex-direction: column; }
 .gauge-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .gauge-name { font-size: 0.8rem; font-weight: 500; color: var(--text-2); }
 

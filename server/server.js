@@ -66,6 +66,8 @@ app.post("/api/ports/switch", async (req, res) => {
       roll: parseFloat(parts[5]),
       pitch: parseFloat(parts[6]),
       yaw: parseFloat(parts[7]),
+      co: parts.length > 8 ? parseFloat(parts[8]) : 0,
+      co_alert: parts.length > 9 ? parts[9].trim() === "1" : false,
       timestamp: Date.now(),
     };
     latestData = data;
@@ -154,6 +156,7 @@ Humidity: ${data.humid}%
 Distance ahead: ${data.dist} cm
 Smoke/gas level: ${data.smoke}
 Air quality (CO2/etc): ${data.airq}
+CO/combustible gas (MQ-9 raw): ${data.co}${data.co_alert ? " ⚠ ALERT" : ""}
 Roll: ${data.roll}°  Pitch: ${data.pitch}°  Yaw: ${data.yaw}°`;
 }
 
@@ -222,6 +225,8 @@ async function connectSerial(path) {
       roll: parseFloat(parts[5]),
       pitch: parseFloat(parts[6]),
       yaw: parseFloat(parts[7]),
+      co: parts.length > 8 ? parseFloat(parts[8]) : 0,
+      co_alert: parts.length > 9 ? parts[9].trim() === "1" : false,
       timestamp: Date.now(),
     };
     latestData = data;
