@@ -118,7 +118,7 @@ function Orientation({ packet, onLog }) {
   useEffect(() => { if (packet && apiRef.current) apiRef.current.setData(packet); }, [packet]);
 
   const pick = (c) => { setCam(c); apiRef.current?.setCamera(c); onLog(`Camera: ${c}`, "system"); };
-  const cams = ["isometric", "front", "top", "side"];
+  const cams = ["isometric", "front", "top", "side", "free"];
 
   return html`
     <section class="panel reveal" style=${{ animationDelay: "260ms" }} aria-labelledby="vis-h">

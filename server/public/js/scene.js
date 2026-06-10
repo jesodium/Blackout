@@ -96,6 +96,37 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   const SENSOR_Z = 0.55;
   let compassEl = null;
 
+  // Free-orbit drag state (spherical coords around origin)
+  const orbit = {
+    active: false,
+    theta: Math.atan2(3.2, 4.8),   // azimuth, matches isometric preset
+    phi: 1.19,                      // polar angle (clamped above ground)
+    radius: Math.sqrt(3.2 * 3.2 + 2.4 * 2.4 + 4.8 * 4.8),
+    dragging: false, lastX: 0, lastY: 0,
+  };
+
+  function onPointerDown(e) {
+    if (!orbit.active) return;
+    orbit.dragging = true;
+    orbit.lastX = e.clientX; orbit.lastY = e.clientY;
+    canvas.style.cursor = "grabbing";
+  }
+  function onPointerMove(e) {
+    if (!orbit.active || !orbit.dragging) return;
+    const dx = e.clientX - orbit.lastX;
+    const dy = e.clientY - orbit.lastY;
+    orbit.theta -= dx * 0.012;
+    orbit.phi = Math.max(0.12, Math.min(1.52, orbit.phi + dy * 0.012));
+    orbit.lastX = e.clientX; orbit.lastY = e.clientY;
+  }
+  function onPointerUp() {
+    orbit.dragging = false;
+    if (orbit.active) canvas.style.cursor = "grab";
+  }
+  canvas.addEventListener("pointerdown", onPointerDown);
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp);
+
   const loader = new THREE.GLTFLoader();
   loader.load(
     "models/rover.glb",
@@ -124,8 +155,17 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   let raf;
   function animate() {
     raf = requestAnimationFrame(animate);
-    cam.x += (cam.tx - cam.x) * 0.06; cam.y += (cam.ty - cam.y) * 0.06; cam.z += (cam.tz - cam.z) * 0.06;
-    camera.position.set(cam.x, cam.y, cam.z);
+    if (orbit.active) {
+      const r = orbit.radius;
+      camera.position.set(
+        r * Math.sin(orbit.phi) * Math.sin(orbit.theta),
+        r * Math.cos(orbit.phi),
+        r * Math.sin(orbit.phi) * Math.cos(orbit.theta)
+      );
+    } else {
+      cam.x += (cam.tx - cam.x) * 0.06; cam.y += (cam.ty - cam.y) * 0.06; cam.z += (cam.tz - cam.z) * 0.06;
+      camera.position.set(cam.x, cam.y, cam.z);
+    }
     camera.lookAt(0, 0.22, 0);
 
     if (state.rover && !isNaN(state.tRoll)) {
@@ -181,7 +221,29 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
       if (d.yaw != null && !isNaN(d.yaw)) state.tYaw = (d.yaw * Math.PI) / 180;
       if (d.dist != null && !isNaN(d.dist)) state.tDist = SENSOR_Z + Math.min(d.dist * 0.04, 4.0);
     },
-    setCamera(preset) { const p = presets[preset]; if (p) { cam.tx = p.x; cam.ty = p.y; cam.tz = p.z; } },
-    dispose() { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); renderer.dispose(); },
+    setCamera(preset) {
+      if (preset === "free") {
+        // Sync orbit angles from wherever the camera currently is
+        const cx = cam.x, cy = cam.y, cz = cam.z;
+        orbit.radius = Math.sqrt(cx * cx + cy * cy + cz * cz);
+        orbit.phi = Math.acos(Math.max(-1, Math.min(1, cy / orbit.radius)));
+        orbit.theta = Math.atan2(cx, cz);
+        orbit.active = true;
+        canvas.style.cursor = "grab";
+      } else {
+        orbit.active = false;
+        orbit.dragging = false;
+        canvas.style.cursor = "";
+        const p = presets[preset];
+        if (p) { cam.tx = p.x; cam.ty = p.y; cam.tz = p.z; }
+      }
+    },
+    dispose() {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", resize);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      renderer.dispose();
+    },
   };
 }
