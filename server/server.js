@@ -38,7 +38,9 @@ app.get("/api/ports", async (req, res) => {
 app.post("/api/ports/switch", async (req, res) => {
   const { path } = req.body;
   if (!path) return res.status(400).json({ error: "path required" });
+  selectedPortPath = path;
   if (serialPort) {
+    serialPort.removeAllListeners("close");
     serialPort.close();
   }
   serialPort = new SerialPort({ path, baudRate: SERIAL_BAUD }, (err) => {
@@ -186,6 +188,7 @@ async function connectSerial(path) {
       return;
     }
     path = usbPorts[0];
+    selectedPortPath = path;
     console.log(`Auto-selected: ${path}`);
   } else {
     selectedPortPath = path;

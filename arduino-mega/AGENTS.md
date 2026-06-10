@@ -140,13 +140,13 @@ arduino-cli upload --port /dev/cu.usbserial-XXX
 
 ## Node.js Server (`server/`)
 
-Receives Bluetooth data from Mega, serves real-time dashboard, sends to OpenRouter AI for analysis.
+Receives Bluetooth data from Mega, serves real-time dashboard, sends to Cerebras AI for analysis.
 
 ### Setup
 
 ```bash
 cd server
-cp .env.example .env   # add your OpenRouter API key
+cp .env.example .env   # add your Cerebras API key
 npm install
 npm start
 ```
@@ -160,18 +160,17 @@ Opens at `http://localhost:3000`.
 | Serial port | `serialport` — reads from HC-06 |
 | Web server | `express` — serves dashboard |
 | Real-time | `socket.io` — pushes sensor data to browser |
-| AI | `openai` SDK with OpenRouter base URL — analyzes environment |
+| AI | `openai` SDK with Cerebras base URL — analyzes environment |
 
-### OpenRouter
+### Cerebras
 
 Configurable in `.env`:
 ```
-OPENROUTER_API_KEY=sk-or-v1-xxx
-OPENROUTER_MODEL=openai/gpt-4o-mini  # any OpenRouter model
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+CEREBRAS_API_KEY=your-cerebras-key-here
+CEREBRAS_MODEL=gpt-oss-120b
 ```
 
-Free/cheap models: `google/gemini-2.0-flash-lite`, `meta-llama/llama-3.2-3b-instruct`, `mistralai/mistral-7b-instruct`.
+Get a key at https://cloud.cerebras.ai (generous free tier).
 
 ---
 

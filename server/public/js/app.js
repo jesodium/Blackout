@@ -226,11 +226,7 @@ function TopBar({ connected, ports, currentPort, ping, packets, uptime, onPort }
   return html`
     <header class="panel console-top reveal">
       <div class="brand">
-        <svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
-          <circle cx="12" cy="12" r="9" stroke-dasharray="4 2"/><circle cx="12" cy="12" r="3.5"/>
-          <path d="M12 3v5M12 16v5M3 12h5M16 12h5"/>
-        </svg>
-        <div class="brand-text"><h1>Blackout</h1><p>Rover Flight Console</p></div>
+        <div class="brand-text"><h1>BLACKOUT</h1></div>
       </div>
       <div class="console-status">
         <p class="lamp" role="status" aria-live="polite">
@@ -266,7 +262,7 @@ function App() {
   const [packets, setPackets] = useState(0);
   const [logs, setLogs] = useState([]);
   const [ai, setAi] = useState({ text: "Awaiting telemetry…", badge: "Standby", analyzing: false, history: [] });
-  const [tts, setTts] = useState(true);
+  const [tts, setTts] = useState(() => localStorage.getItem("tts") !== "false");
   const [ports, setPorts] = useState([]);
   const [currentPort, setCurrentPort] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -356,7 +352,7 @@ function App() {
     setAi(p => ({ ...p, analyzing: true, badge: "Analyzing…" }));
     socketRef.current?.emit("request-analysis");
   }, []);
-  const toggleTts = useCallback(() => setTts(p => { const n = !p; ttsRef.current = n; return n; }), []);
+  const toggleTts = useCallback(() => setTts(p => { const n = !p; ttsRef.current = n; localStorage.setItem("tts", n); return n; }), []);
   const pickHistory = useCallback((text) => setAi(p => ({ ...p, text })), []);
 
   return html`
