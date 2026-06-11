@@ -10,7 +10,7 @@ Exploration rover inspired by Mars rovers. Reads environment sensors and prints 
 |--------|-----|----------|
 | DHT11/DHT22 | D23 | Temp + humidity |
 | MPU6050 | SDA/SCL (20/21) | Gyro + accelerometer (roll, pitch, yaw) |
-| HC-SR04 | D24/D25 (TRIG/ECHO) | Ultrasonic distance |
+| HC-SR04 | A6/A5 (TRIG/ECHO) | Ultrasonic distance |
 | MQ-2 | A0/D22 | Smoke/gas detection (analog + digital) |
 | MQ-135 | A1/D26 | Air quality / CO2 (analog + digital) |
 | Microphone | A2 | Sound level (MAX9814/KY-038) |

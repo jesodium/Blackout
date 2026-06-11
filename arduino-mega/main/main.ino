@@ -3,8 +3,8 @@
 
 #define DHT_PIN 23
 #define DHT_TYPE DHT11
-#define TRIG_PIN 42
-#define ECHO_PIN 43
+#define TRIG_PIN A6
+#define ECHO_PIN A5
 #define SONAR_MAX 400
 #define DHT_INTERVAL 1000
 #define SONAR_INTERVAL 50

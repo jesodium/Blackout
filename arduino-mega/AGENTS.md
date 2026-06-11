@@ -24,8 +24,8 @@ Two independent Arduino boards, **no direct link yet**:
 | D23 | DHT11/DHT22 | Temp + humidity signal |
 | 20 (SDA) | MPU6050 | I2C data |
 | 21 (SCL) | MPU6050 | I2C clock |
-| D24 | HC-SR04 | TRIG |
-| D25 | HC-SR04 | ECHO |
+| A6 | HC-SR04 | TRIG |
+| A5 | HC-SR04 | ECHO |
 | A1 | MQ-135 (air quality) | Analog read |
 | D26 | MQ-135 | Digital out |
 | A2 | Microphone (MAX9814/KY-038) | Analog |
@@ -33,6 +33,9 @@ Two independent Arduino boards, **no direct link yet**:
 | D29 | MQ-9 | Digital out |
 | D18 (TX1) | → HC-06 RX | Bluetooth TX (Mega → BT) |
 | D19 (RX1) | ← HC-06 TX | Bluetooth RX (BT → Mega) |
+| D27 | HC-06 STATE | Connection-detect input (HIGH = paired) |
+| D28 | HC-06 EN / KEY | Enable/AT-mode output (held LOW in firmware) |
+| D0 (RX0) / D1 (TX0) | USB ↔ PC | Wired serial link — Node server reads `S:` packets here |
 
 ### HC-06 Bluetooth Wiring
 
@@ -42,6 +45,8 @@ Two independent Arduino boards, **no direct link yet**:
 | GND | GND | |
 | TX | D19 (RX1) | BT → Mega receive |
 | RX | D18 (TX1) | Mega → BT send — use voltage divider (1kΩ + 2kΩ) or 1kΩ series resistor to drop 5V→3.3V |
+| STATE | D27 | Connection status — HIGH when paired |
+| EN/KEY | D28 | Enable / AT-command mode (firmware holds LOW for normal operation) |
 
 HC-06 is slave-only, no AT commands needed. Pairs as serial port on PC (/dev/cu.HC-06-SPP or similar).
 
@@ -52,7 +57,7 @@ HC-06 is slave-only, no AT commands needed. Pairs as serial port on PC (/dev/cu.
 | MQ-2 | Smoke/gas (LPG, propane, H2) | Analog A0 + digital D22 |
 | DHT11/DHT22 | Temperature + humidity | Digital D23 |
 | MPU6050 | Gyroscope (roll, pitch, yaw) | I2C (20/21) |
-| HC-SR04 | Distance (ultrasonic) | TRIG D24, ECHO D25 |
+| HC-SR04 | Distance (ultrasonic) | TRIG A6, ECHO A5 |
 | MQ-135 | Air quality (CO2, NH3, benzene) | Analog A1 + digital D26 |
 | MAX9814/KY-038 | Microphone / sound level | Analog A2 |
 | MQ-9 | CO + combustible gas (LPG, methane) | Analog A3 + digital D29 |

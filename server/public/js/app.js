@@ -222,6 +222,38 @@ function Logs({ logs }) {
     </section>`;
 }
 
+/* ---------------- serial monitor ---------------- */
+function SerialMonitor({ lines, hidden, onToggle, onClear }) {
+  const [paused, setPaused] = useState(false);
+  const streamRef = useRef(null);
+  // Stick to the bottom on new lines unless the user paused to read.
+  useEffect(() => {
+    if (hidden || paused) return;
+    const el = streamRef.current; if (el) el.scrollTop = el.scrollHeight;
+  }, [lines, hidden, paused]);
+  return html`
+    <section class=${"panel serial reveal" + (hidden ? " is-collapsed" : "")} style=${{ animationDelay: "500ms" }} aria-labelledby="ser-h">
+      <div class="panel-head">
+        <h2 id="ser-h">Serial Monitor</h2>
+        <div class="serial-tools">
+          <span class="tag">${lines.length}</span>
+          ${!hidden && html`<button type="button" class="serial-btn" onClick=${() => setPaused(p => !p)}
+            aria-pressed=${paused}>${paused ? "Resume" : "Pause"}</button>`}
+          ${!hidden && html`<button type="button" class="serial-btn" onClick=${onClear}>Clear</button>`}
+          <button type="button" class="serial-btn" onClick=${onToggle} aria-expanded=${!hidden}
+            title="Toggle (backtick \`)">${hidden ? "Show" : "Hide"}</button>
+        </div>
+      </div>
+      ${!hidden && html`
+        <div class="serial-stream" role="log" aria-live="off" ref=${streamRef}>
+          ${lines.length === 0
+            ? html`<div class="serial-empty">No serial traffic yet…</div>`
+            : lines.map(l => html`<div key=${l.id} class=${"serial-line" + (l.s ? " is-data" : "")}>
+                <span class="t">${l.time}</span><span class="m">${l.text}</span></div>`)}
+        </div>`}
+    </section>`;
+}
+
 /* ---------------- top bar ---------------- */
 function TopBar({ connected, ports, currentPort, ping, packets, uptime, onPort }) {
   return html`
@@ -268,6 +300,8 @@ function App() {
   const [currentPort, setCurrentPort] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [uptime, setUptime] = useState("00:00:00");
+  const [serialLines, setSerialLines] = useState([]);
+  const [serialHidden, setSerialHidden] = useState(() => localStorage.getItem("serialHidden") === "true");
 
   const socketRef = useRef(null);
   const ttsRef = useRef(localStorage.getItem("tts") !== "false");
@@ -305,6 +339,14 @@ function App() {
           addLog(`Obstacle at ${d.dist.toFixed(0)} cm`, d.dist < 20 ? "danger" : d.dist < 55 ? "warn" : "system");
         }
       }
+    });
+    socket.on("serial-line", d => {
+      if (!d?.line) return;
+      setSerialLines(p => [...p, {
+        text: d.line, s: d.line.startsWith("S:"),
+        time: new Date(d.timestamp || Date.now()).toLocaleTimeString(),
+        id: Date.now() + Math.random(),
+      }].slice(-300));
     });
     socket.on("ai-analysis", d => {
       if (!d?.analysis) return;
@@ -355,6 +397,20 @@ function App() {
   }, []);
   const toggleTts = useCallback(() => setTts(p => { const n = !p; ttsRef.current = n; localStorage.setItem("tts", n); return n; }), []);
   const pickHistory = useCallback((text) => setAi(p => ({ ...p, text })), []);
+  const toggleSerial = useCallback(() => setSerialHidden(p => { const n = !p; localStorage.setItem("serialHidden", n); return n; }), []);
+  const clearSerial = useCallback(() => setSerialLines([]), []);
+
+  // Backtick toggles the serial monitor (ignored while typing in a field).
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "`" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      e.preventDefault(); toggleSerial();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSerial]);
 
   return html`
     <${React.Fragment}>
@@ -375,6 +431,8 @@ function App() {
           <${AIPanel} ai=${ai} tts=${tts} onAnalyze=${analyze} onToggleTts=${toggleTts} onPick=${pickHistory} />
           <${Logs} logs=${logs} />
         </div>
+
+        <${SerialMonitor} lines=${serialLines} hidden=${serialHidden} onToggle=${toggleSerial} onClear=${clearSerial} />
       </main>
 
       <${Toasts} items=${toasts} />

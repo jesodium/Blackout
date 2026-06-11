@@ -35,25 +35,14 @@ app.get("/api/ports", async (req, res) => {
   res.json({ ports, current: serialPort?.path || null });
 });
 
-app.post("/api/ports/switch", async (req, res) => {
-  const { path } = req.body;
-  if (!path) return res.status(400).json({ error: "path required" });
-  selectedPortPath = path;
-  if (serialPort) {
-    serialPort.removeAllListeners("close");
-    serialPort.close();
-  }
-  serialPort = new SerialPort({ path, baudRate: SERIAL_BAUD }, (err) => {
-    if (err) {
-      console.error(`Failed to open ${path}: ${err.message}`);
-      return res.status(500).json({ error: err.message });
-    }
-    console.log(`Switched to ${path}`);
-    res.json({ ok: true, path });
-  });
-  const parser = serialPort.pipe(new ReadlineParser({ delimiter: "\n" }));
-  parser.on("data", (line) => {
-    line = line.trim();
+// Pipe a readline parser onto a port: stream every raw line to the serial
+// monitor, then parse the "S:" telemetry packets for the dashboard.
+function attachParser(sp) {
+  const parser = sp.pipe(new ReadlineParser({ delimiter: "\n" }));
+  parser.on("data", (raw) => {
+    const line = raw.trim();
+    if (!line) return;
+    io.emit("serial-line", { line, timestamp: Date.now() });
     if (!line.startsWith("S:")) return;
     const parts = line.slice(2).split(",");
     if (parts.length < 8) return;
@@ -75,6 +64,25 @@ app.post("/api/ports/switch", async (req, res) => {
     if (dataHistory.length > 1000) dataHistory.shift();
     io.emit("sensor-data", data);
   });
+}
+
+app.post("/api/ports/switch", async (req, res) => {
+  const { path } = req.body;
+  if (!path) return res.status(400).json({ error: "path required" });
+  selectedPortPath = path;
+  if (serialPort) {
+    serialPort.removeAllListeners("close");
+    serialPort.close();
+  }
+  serialPort = new SerialPort({ path, baudRate: SERIAL_BAUD }, (err) => {
+    if (err) {
+      console.error(`Failed to open ${path}: ${err.message}`);
+      return res.status(500).json({ error: err.message });
+    }
+    console.log(`Switched to ${path}`);
+    res.json({ ok: true, path });
+  });
+  attachParser(serialPort);
   serialPort.on("error", (err) => {
     console.error("Serial error:", err.message);
   });
@@ -210,30 +218,7 @@ async function connectSerial(path) {
     }
   });
 
-  const parser = serialPort.pipe(new ReadlineParser({ delimiter: "\n" }));
-  parser.on("data", (line) => {
-    line = line.trim();
-    if (!line.startsWith("S:")) return;
-    const parts = line.slice(2).split(",");
-    if (parts.length < 8) return;
-    const data = {
-      temp: parseFloat(parts[0]),
-      humid: parseFloat(parts[1]),
-      dist: parseFloat(parts[2]),
-      smoke: parseFloat(parts[3]),
-      airq: parseFloat(parts[4]),
-      roll: parseFloat(parts[5]),
-      pitch: parseFloat(parts[6]),
-      yaw: parseFloat(parts[7]),
-      co: parts.length > 8 ? parseFloat(parts[8]) : 0,
-      co_alert: parts.length > 9 ? parts[9].trim() === "1" : false,
-      timestamp: Date.now(),
-    };
-    latestData = data;
-    dataHistory.push(data);
-    if (dataHistory.length > 1000) dataHistory.shift();
-    io.emit("sensor-data", data);
-  });
+  attachParser(serialPort);
 
   serialPort.on("error", (err) => {
     console.error("Serial error:", err.message);
