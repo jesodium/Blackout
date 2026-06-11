@@ -85,12 +85,12 @@ function Gauge({ s, value, delay }) {
         <h2 class="gauge-name">${s.name}</h2>
         <span class=${"pill " + (kind ? "is-" + kind : "")}>${label}</span>
       </div>
+      <div class="gauge-read">
+        <span class="bar-num">${fmt(value, s.d)}</span><span class="bar-unit">${s.unit}</span>
+      </div>
       <div class="bar" role="meter" aria-label=${s.name}
         aria-valuenow=${has ? Number(value) : undefined} aria-valuemin=${s.min} aria-valuemax=${s.max}>
-        <div class=${"bar-fill " + (kind ? "is-" + kind : "")} style=${{ height: pct + "%" }}></div>
-        <div class="bar-val">
-          <span class="bar-num">${fmt(value, s.d)}</span><span class="bar-unit">${s.unit}</span>
-        </div>
+        <div class=${"bar-fill " + (kind ? "is-" + kind : "")} style=${{ width: pct + "%" }}></div>
       </div>
     </article>`;
 }

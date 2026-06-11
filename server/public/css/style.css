@@ -155,9 +155,10 @@ body {
 .bay { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--gap); }
 @media (max-width: 540px) { .bay { grid-template-columns: 1fr 1fr; } }
 
-.gauge { padding: 14px; min-height: 280px; display: flex; flex-direction: column; }
+.gauge { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .gauge-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .gauge-name { font-size: 0.8rem; font-weight: 500; color: var(--text-2); }
+.gauge-read { display: flex; align-items: baseline; gap: 3px; }
 
 .pill { font-size: 0.66rem; font-weight: 600; padding: 2px 9px; border-radius: 2px;
   background: var(--inset); color: var(--text-3); border: 1px solid var(--border); white-space: nowrap; }
@@ -165,17 +166,15 @@ body {
 .pill.is-warn  { color: var(--warn);   background: var(--warn-bg);   border-color: transparent; }
 .pill.is-abort { color: var(--danger); background: var(--danger-bg); border-color: transparent; }
 
-/* Vertical level bar */
-.bar { position: relative; flex: 1; margin-top: 12px; min-height: 96px;
+/* Horizontal level bar */
+.bar { position: relative; height: 6px; margin-top: auto;
   background: var(--inset); border: 1px solid var(--border); border-radius: var(--rc); overflow: hidden; }
-.bar-fill { position: absolute; left: 0; right: 0; bottom: 0; --c: var(--accent);
-  background: linear-gradient(to top, rgba(0,0,0,0), var(--c));
-  transition: height 0.45s cubic-bezier(.2,.7,.2,1); opacity: 0.9; }
+.bar-fill { position: absolute; left: 0; top: 0; bottom: 0; --c: var(--accent);
+  background: linear-gradient(to right, rgba(0,0,0,0), var(--c));
+  transition: width 0.45s cubic-bezier(.2,.7,.2,1); opacity: 0.9; }
 .bar-fill.is-go    { --c: var(--ok); }
 .bar-fill.is-warn  { --c: var(--warn); }
 .bar-fill.is-abort { --c: var(--danger); }
-.bar-val { position: absolute; right: 8px; bottom: 8px; display: flex; align-items: baseline; gap: 3px;
-  padding: 3px 8px; background: rgba(28,32,39,0.85); border: 1px solid var(--border); border-radius: 0; }
 .bar-num { font-family: var(--mono); font-size: 1.3rem; font-weight: 600; line-height: 1;
   color: var(--text); font-variant-numeric: tabular-nums; }
 .bar-unit { font-family: var(--mono); font-size: 0.66rem; color: var(--text-3); }
