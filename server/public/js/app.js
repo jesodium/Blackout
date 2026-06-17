@@ -8,7 +8,7 @@ const html = htm.bind(React.createElement);
 /* ---------------- sensor model ---------------- */
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
 
-// min/max define the bar's full travel.
+// min/max define the meter's full travel.
 const SENSORS = [
   { key: "temp",  name: "Temp",       unit: "°C",  d: 1, min: 0, max: 60,   st: v => v > 45 ? ["Critical", "abort"] : v > 35 ? ["High", "warn"] : ["Normal", "go"] },
   { key: "humid", name: "Humidity",   unit: "%",   d: 1, min: 0, max: 100,  st: v => (v > 75 || v < 20) ? ["Out of range", "warn"] : ["Good", "go"] },
@@ -18,9 +18,9 @@ const SENSORS = [
 ];
 
 const TRENDS = [
-  { key: "dist", name: "Dist", color: "#778da9" },
-  { key: "airq", name: "Air",  color: "#4ade80" },
-  { key: "temp", name: "Temp", color: "#f87171" },
+  { key: "dist", name: "Dist", color: "#9a9384" },
+  { key: "airq", name: "Air",  color: "#44cf86" },
+  { key: "temp", name: "Temp", color: "#ff3b2f" },
 ];
 
 /* ---------------- TTS ---------------- */
@@ -38,6 +38,18 @@ function speak(text) {
   speechSynthesis.speak(u);
 }
 
+/* ---------------- zone header (folio · title · tag) ---------------- */
+function Head({ folio, title, tag, children }) {
+  return html`
+    <div class="zone-head">
+      <div class="zone-head-l">
+        <span class="folio">${folio}</span>
+        <h2 class="zone-title">${title}</h2>
+      </div>
+      ${tag ? html`<span class="tag">${tag}</span>` : children}
+    </div>`;
+}
+
 /* ---------------- canvas: trends ---------------- */
 function Trends({ packet }) {
   const ref = useRef(null);
@@ -49,12 +61,14 @@ function Trends({ packet }) {
     cv.width = r.width * devicePixelRatio; cv.height = r.height * devicePixelRatio;
     const ctx = cv.getContext("2d"), w = cv.width, h = cv.height, H = hist.current;
     ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = "rgba(119,141,169,0.10)"; ctx.lineWidth = 1;
-    for (let i = 1; i < 8; i++) { ctx.beginPath(); ctx.moveTo((i / 8) * w, 0); ctx.lineTo((i / 8) * w, h); ctx.stroke(); }
+    ctx.strokeStyle = "rgba(236,229,214,0.06)"; ctx.lineWidth = 1;
+    for (let i = 1; i < 12; i++) { ctx.beginPath(); ctx.moveTo((i / 12) * w, 0); ctx.lineTo((i / 12) * w, h); ctx.stroke(); }
     for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(0, (i / 4) * h); ctx.lineTo(w, (i / 4) * h); ctx.stroke(); }
     if (H.length < 2) {
-      ctx.fillStyle = "rgba(119,141,169,0.6)"; ctx.font = `${11 * devicePixelRatio}px 'IBM Plex Sans', sans-serif`;
-      ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("Awaiting telemetry", w / 2, h / 2); return;
+      ctx.fillStyle = "rgba(99,93,81,0.9)"; ctx.font = `600 ${10 * devicePixelRatio}px 'Archivo', sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.save(); ctx.translate(w / 2, h / 2);
+      ctx.fillText("A W A I T I N G   T E L E M E T R Y", 0, 0); ctx.restore(); return;
     }
     TRENDS.forEach(s => {
       const vals = H.map(d => d[s.key]).filter(v => v != null && !isNaN(v));
@@ -73,29 +87,31 @@ function Trends({ packet }) {
   return html`<canvas ref=${ref}></canvas>`;
 }
 
-/* ---------------- gauge (vertical level bar) ---------------- */
-function Gauge({ s, value, delay }) {
+/* ---------------- reading row (sensor index) ---------------- */
+function Reading({ s, value, index }) {
   const has = value != null && !isNaN(value);
   const [label, kind] = has ? s.st(value) : ["—", ""];
   const raw = has ? Math.max(0, Math.min(100, ((value - s.min) / (s.max - s.min)) * 100)) : 0;
   const pct = s.invert ? 100 - raw : raw;
   return html`
-    <article class="panel gauge reveal" style=${{ animationDelay: delay + "ms" }}>
-      <div class="gauge-top">
-        <h2 class="gauge-name">${s.name}</h2>
+    <div class="reading">
+      <div class="reading-head">
+        <span class="reading-folio">${index}</span>
+        <span class="reading-name">${s.name}</span>
         <span class=${"pill " + (kind ? "is-" + kind : "")}>${label}</span>
       </div>
-      <div class="gauge-read">
-        <span class="bar-num">${fmt(value, s.d)}</span><span class="bar-unit">${s.unit}</span>
+      <div class="reading-body">
+        <span class="reading-num">${fmt(value, s.d)}</span>
+        <span class="reading-unit">${s.unit}</span>
       </div>
-      <div class="bar" role="meter" aria-label=${s.name}
+      <div class="meter" role="meter" aria-label=${s.name}
         aria-valuenow=${has ? Number(value) : undefined} aria-valuemin=${s.min} aria-valuemax=${s.max}>
-        <div class=${"bar-fill " + (kind ? "is-" + kind : "")} style=${{ width: pct + "%" }}></div>
+        <div class=${"meter-fill " + (kind ? "is-" + kind : "")} style=${{ width: pct + "%" }}></div>
       </div>
-    </article>`;
+    </div>`;
 }
 
-/* ---------------- orientation ---------------- */
+/* ---------------- orientation (stage) ---------------- */
 function Orientation({ packet, onLog }) {
   const canvasRef = useRef(null);
   const compassRef = useRef(null);
@@ -122,36 +138,48 @@ function Orientation({ packet, onLog }) {
   const cams = ["isometric", "front", "top", "side", "free"];
 
   return html`
-    <section class="panel reveal" style=${{ animationDelay: "260ms" }} aria-labelledby="vis-h">
-      <div class="panel-head">
-        <h2 id="vis-h">Orientation</h2>
-        <span class="tag">${packet ? "Gyro · Locked" : "Gyro · Standby"}</span>
-      </div>
-      <div class="viewport">
-        <canvas id="vis-canvas" ref=${canvasRef}></canvas>
-        ${failed && html`<div class="viewport-fallback">3D view unavailable<br/><small>${failed} — telemetry below is live</small></div>`}
-        <div class="hud">
-          <div class="hud-cams" role="group" aria-label="Camera angle">
-            ${cams.map(c => html`<button key=${c} type="button"
-              class=${"btn btn--ghost" + (cam === c ? " is-active" : "")}
-              onClick=${() => pick(c)}>${c}</button>`)}
+    <section class="zone stage reveal" style=${{ animationDelay: "60ms" }} aria-labelledby="vis-h">
+      <${Head} folio="01" title="Orientation" tag=${packet ? "Gyro · Locked" : "Gyro · Standby"} />
+      <div class="zone-body">
+        <div class="viewport">
+          <span class="stage-mark" aria-hidden="true">RVR</span>
+          <canvas id="vis-canvas" ref=${canvasRef}></canvas>
+          ${failed && html`<div class="viewport-fallback">3D View Unavailable<br/><small>${failed} — telemetry below is live</small></div>`}
+          <div class="hud">
+            <div class="hud-cams" role="group" aria-label="Camera angle">
+              ${cams.map(c => html`<button key=${c} type="button"
+                class=${"btn btn--ghost" + (cam === c ? " is-active" : "")}
+                onClick=${() => pick(c)}>${c}</button>`)}
+            </div>
+            <div class="compass" aria-hidden="true">
+              <svg ref=${compassRef} viewBox="0 0 100 100">
+                <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(236,229,214,0.28)" stroke-width="1.5"/>
+                <text x="50" y="25" fill="#ece5d6" font-size="13" font-weight="700" text-anchor="middle" font-family="Archivo, sans-serif">N</text>
+                <polygon points="50,15 45,50 55,50" fill="#ff3b2f"/>
+                <polygon points="50,85 45,50 55,50" fill="rgba(236,229,214,0.4)"/>
+              </svg>
+              <span>Heading</span>
+            </div>
+            <dl class="hud-tele">
+              <div><dt>Dist</dt><dd>${fmt(packet?.dist, 0)} cm</dd></div>
+              <div><dt>Roll</dt><dd>${fmt(packet?.roll, 1)}°</dd></div>
+              <div><dt>Pitch</dt><dd>${fmt(packet?.pitch, 1)}°</dd></div>
+              <div><dt>Yaw</dt><dd>${fmt(packet?.yaw, 1)}°</dd></div>
+            </dl>
           </div>
-          <div class="compass" aria-hidden="true">
-            <svg ref=${compassRef} viewBox="0 0 100 100">
-              <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(119,141,169,0.45)" stroke-width="1.5"/>
-              <text x="50" y="25" fill="#778da9" font-size="12" font-weight="700" text-anchor="middle" font-family="IBM Plex Sans, sans-serif">N</text>
-              <polygon points="50,15 45,50 55,50" fill="#f87171"/>
-              <polygon points="50,85 45,50 55,50" fill="rgba(224,225,221,0.4)"/>
-            </svg>
-            <span>Heading</span>
-          </div>
-          <dl class="hud-tele">
-            <div><dt>Dist</dt><dd>${fmt(packet?.dist, 0)} cm</dd></div>
-            <div><dt>Roll</dt><dd>${fmt(packet?.roll, 1)}°</dd></div>
-            <div><dt>Pitch</dt><dd>${fmt(packet?.pitch, 1)}°</dd></div>
-            <div><dt>Yaw</dt><dd>${fmt(packet?.yaw, 1)}°</dd></div>
-          </dl>
         </div>
+      </div>
+    </section>`;
+}
+
+/* ---------------- readings panel ---------------- */
+function ReadingsPanel({ packet }) {
+  return html`
+    <section class="zone readings reveal" style=${{ animationDelay: "120ms" }} aria-labelledby="env-h">
+      <${Head} folio="02" title="Environment" tag="05 ch" />
+      <div class="zone-body">
+        ${SENSORS.map((s, i) => html`<${Reading} key=${s.key} s=${s}
+          value=${packet?.[s.key]} index=${String(i + 1).padStart(2, "0")} />`)}
       </div>
     </section>`;
 }
@@ -159,30 +187,26 @@ function Orientation({ packet, onLog }) {
 /* ---------------- trends panel ---------------- */
 function TrendsPanel({ packet }) {
   return html`
-    <section class="panel reveal" style=${{ animationDelay: "320ms" }} aria-labelledby="tr-h">
-      <div class="panel-head">
-        <h2 id="tr-h">Trends</h2>
+    <section class="zone reveal" style=${{ animationDelay: "200ms" }} aria-labelledby="tr-h">
+      <${Head} folio="03" title="Trends">
         <div class="legend" aria-label="Series">
           ${TRENDS.map(s => html`<span key=${s.key}><i style=${{ background: s.color }}></i>${s.name}</span>`)}
         </div>
-      </div>
+      <//>
       <div class="trend-body"><${Trends} packet=${packet} /></div>
     </section>`;
 }
 
-/* ---------------- AI panel ---------------- */
+/* ---------------- dispatch (AI) ---------------- */
 function AIPanel({ ai, tts, onAnalyze, onToggleTts, onPick }) {
   return html`
-    <section class=${"panel reveal" + (ai.analyzing ? " is-analyzing" : "")} style=${{ animationDelay: "380ms" }} aria-labelledby="ai-h">
-      <div class="panel-head">
-        <h2 id="ai-h">AI Analysis</h2>
-        <span class="tag">${ai.badge}</span>
-      </div>
-      <div class="panel-body ai-body">
+    <section class=${"zone dispatch reveal" + (ai.analyzing ? " is-analyzing" : "")} style=${{ animationDelay: "260ms" }} aria-labelledby="ai-h">
+      <${Head} folio="04" title="Field Analysis" tag=${ai.badge} />
+      <div class="zone-body">
         <p class="ai-out" role="status" aria-live="polite">${ai.text}</p>
         <div class="ai-foot">
-          <button class="btn btn--go" type="button" onClick=${onAnalyze} disabled=${ai.analyzing}>
-            ${ai.analyzing ? "Analyzing…" : "Analyze now"}
+          <button class="btn btn--primary" type="button" onClick=${onAnalyze} disabled=${ai.analyzing}>
+            ${ai.analyzing ? "Analyzing…" : "Run Analysis"}
           </button>
           <label class="switch">
             <input type="checkbox" checked=${tts} onChange=${onToggleTts} />
@@ -195,7 +219,8 @@ function AIPanel({ ai, tts, onAnalyze, onToggleTts, onPick }) {
           <div class="ai-hist-list">
             ${ai.history.map(h => html`
               <div key=${h.id} class="ai-hist-item" onClick=${() => onPick(h.text)}>
-                <span class="ai-hist-time">${h.time}</span>${h.text.length > 90 ? h.text.slice(0, 90) + "…" : h.text}
+                <span class="ai-hist-time">${h.time}</span>
+                <span>${h.text.length > 90 ? h.text.slice(0, 90) + "…" : h.text}</span>
               </div>`)}
           </div>
         </details>
@@ -209,15 +234,17 @@ function Logs({ logs }) {
   const tabs = [["all", "All"], ["system", "System"], ["alerts", "Alerts"], ["ai", "AI"]];
   const view = logs.filter(l => f === "all" ? true : f === "alerts" ? (l.type === "warn" || l.type === "danger") : l.type === f);
   return html`
-    <section class="panel logs reveal" style=${{ animationDelay: "440ms" }} aria-labelledby="log-h">
-      <div class="panel-head"><h2 id="log-h">Activity Log</h2></div>
-      <div class="log-tabs" role="tablist">
-        ${tabs.map(([k, lbl]) => html`<button key=${k} type="button" role="tab" aria-selected=${f === k}
-          class=${"log-tab" + (f === k ? " is-active" : "")} onClick=${() => setF(k)}>${lbl}</button>`)}
-      </div>
-      <div class="log-stream" role="log" aria-live="polite">
-        ${view.map(l => html`<div key=${l.id} class=${"log-line k-" + l.type}>
-          <span class="t">${l.time}</span><span class="m">${l.text}</span></div>`)}
+    <section class="zone logs reveal" style=${{ animationDelay: "320ms" }} aria-labelledby="log-h">
+      <${Head} folio="05" title="Activity Log" tag=${logs.length + " ev"} />
+      <div class="zone-body">
+        <div class="log-tabs" role="tablist">
+          ${tabs.map(([k, lbl]) => html`<button key=${k} type="button" role="tab" aria-selected=${f === k}
+            class=${"log-tab" + (f === k ? " is-active" : "")} onClick=${() => setF(k)}>${lbl}</button>`)}
+        </div>
+        <div class="log-stream" role="log" aria-live="polite">
+          ${view.map(l => html`<div key=${l.id} class=${"log-line k-" + l.type}>
+            <span class="t">${l.time}</span><span class="m">${l.text}</span></div>`)}
+        </div>
       </div>
     </section>`;
 }
@@ -232,9 +259,8 @@ function SerialMonitor({ lines, hidden, onToggle, onClear }) {
     const el = streamRef.current; if (el) el.scrollTop = el.scrollHeight;
   }, [lines, hidden, paused]);
   return html`
-    <section class=${"panel serial reveal" + (hidden ? " is-collapsed" : "")} style=${{ animationDelay: "500ms" }} aria-labelledby="ser-h">
-      <div class="panel-head">
-        <h2 id="ser-h">Serial Monitor</h2>
+    <section class=${"zone serial reveal" + (hidden ? " is-collapsed" : "")} style=${{ animationDelay: "380ms" }} aria-labelledby="ser-h">
+      <${Head} folio="06" title="Serial Monitor">
         <div class="serial-tools">
           <span class="tag">${lines.length}</span>
           ${!hidden && html`<button type="button" class="serial-btn" onClick=${() => setPaused(p => !p)}
@@ -243,7 +269,7 @@ function SerialMonitor({ lines, hidden, onToggle, onClear }) {
           <button type="button" class="serial-btn" onClick=${onToggle} aria-expanded=${!hidden}
             title="Toggle (backtick \`)">${hidden ? "Show" : "Hide"}</button>
         </div>
-      </div>
+      <//>
       ${!hidden && html`
         <div class="serial-stream" role="log" aria-live="off" ref=${streamRef}>
           ${lines.length === 0
@@ -254,32 +280,63 @@ function SerialMonitor({ lines, hidden, onToggle, onClear }) {
     </section>`;
 }
 
-/* ---------------- top bar ---------------- */
-function TopBar({ connected, ports, currentPort, ping, packets, uptime, onPort }) {
+/* ---------------- masthead ---------------- */
+function Masthead({ connected, ports, currentPort, ping, packets, uptime, onPort }) {
   return html`
-    <header class="panel console-top reveal">
-      <div class="brand">
-        <div class="brand-text"><h1>BLACKOUT</h1></div>
+    <header class="masthead reveal">
+      <div class="mast-top">
+        <div class="mast-id">
+          <span class="folio-sm">BLK-01</span>
+          <span class="label">Flight Console · WRO 2026</span>
+        </div>
+        <div class="mast-strip">
+          <p class="lamp" role="status" aria-live="polite">
+            <span class=${"lamp-dot " + (connected ? "is-go" : "is-abort")}></span>
+            <span class="lamp-label">${connected ? "Link Live" : "No Signal"}</span>
+          </p>
+          <label class="port-field">
+            <span class="label">Port</span>
+            <select class="port-select" value=${currentPort || ""} onChange=${e => onPort(e.target.value)}>
+              ${ports.length === 0 && html`<option value="">no ports</option>`}
+              ${ports.map(p => html`<option key=${p} value=${p}>${p}</option>`)}
+            </select>
+          </label>
+          <dl class="stat"><dt>Ping</dt><dd>${ping}</dd></dl>
+          <dl class="stat"><dt>Packets</dt><dd>${packets}</dd></dl>
+          <dl class="stat"><dt>Uptime</dt><dd>${uptime}</dd></dl>
+        </div>
       </div>
-      <div class="console-status">
-        <p class="lamp" role="status" aria-live="polite">
-          <span class=${"lamp-dot " + (connected ? "is-go" : "is-abort")}></span>
-          <span class="lamp-label">${connected ? "Link Live" : "No Signal"}</span>
-        </p>
-        <label class="lamp">
-          <span class="visually-hidden">Serial port</span>
-          <select class="port-select" value=${currentPort || ""} onChange=${e => onPort(e.target.value)}>
-            ${ports.length === 0 && html`<option value="">no ports</option>`}
-            ${ports.map(p => html`<option key=${p} value=${p}>${p}</option>`)}
-          </select>
-        </label>
-        <dl class="readouts">
-          <div class="readout"><dt>Ping</dt><dd>${ping}</dd></div>
-          <div class="readout"><dt>Packets</dt><dd>${packets}</dd></div>
-          <div class="readout"><dt>Uptime</dt><dd>${uptime}</dd></div>
-        </dl>
+      <div class="mast-title">
+        <h1>Blackout<span class="ver">V1</span></h1>
+        <div class="mast-sub">
+          <span>Sensor-Hub Telemetry</span>
+          <span class="dim">Mega 2560 · Uno R3</span>
+        </div>
       </div>
     </header>`;
+}
+
+/* ---------------- ticker ---------------- */
+function Ticker({ packet, connected }) {
+  const items = [
+    ["Temp", fmt(packet?.temp, 1) + "°C"],
+    ["Humid", fmt(packet?.humid, 0) + "%"],
+    ["Dist", fmt(packet?.dist, 0) + "cm"],
+    ["Smoke", fmt(packet?.smoke, 0) + "ppm"],
+    ["Air", fmt(packet?.airq, 0) + "ppm"],
+    ["Roll", fmt(packet?.roll, 0) + "°"],
+    ["Pitch", fmt(packet?.pitch, 0) + "°"],
+    ["Yaw", fmt(packet?.yaw, 0) + "°"],
+    ["Link", connected ? "Live" : "Down"],
+  ];
+  const seq = [...items, ...items];
+  return html`
+    <div class="ticker" aria-hidden="true">
+      <div class="ticker-track">
+        ${seq.map((it, i) => html`<span key=${i} class="ticker-item">
+          <i class="ticker-sep">/</i><span class="ticker-k">${it[0]}</span> <b>${it[1]}</b></span>`)}
+      </div>
+    </div>`;
 }
 
 /* ---------------- toasts ---------------- */
@@ -414,26 +471,39 @@ function App() {
 
   return html`
     <${React.Fragment}>
-      <${TopBar} connected=${connected} ports=${ports} currentPort=${currentPort}
-        ping=${ping} packets=${packets} uptime=${uptime} onPort=${switchPort} />
+      <div class="console">
+        <${Masthead} connected=${connected} ports=${ports} currentPort=${currentPort}
+          ping=${ping} packets=${packets} uptime=${uptime} onPort=${switchPort} />
+        <${Ticker} packet=${packet} connected=${connected} />
 
-      <main class="deck">
-        <section class="bay" id="sensors" aria-label="Live sensor readings">
-          ${SENSORS.map((s, i) => html`<${Gauge} key=${s.key} s=${s} value=${packet?.[s.key]} delay=${60 + i * 45} />`)}
-        </section>
+        <main class="deck" id="sensors">
+          <div class="row row--stage">
+            <${Orientation} packet=${packet} onLog=${addLog} />
+            <${ReadingsPanel} packet=${packet} />
+          </div>
 
-        <div class="deck-row deck-row--mid">
-          <${Orientation} packet=${packet} onLog=${addLog} />
-          <${TrendsPanel} packet=${packet} />
-        </div>
+          <div class="row">
+            <${TrendsPanel} packet=${packet} />
+          </div>
 
-        <div class="deck-row deck-row--bot">
-          <${AIPanel} ai=${ai} tts=${tts} onAnalyze=${analyze} onToggleTts=${toggleTts} onPick=${pickHistory} />
-          <${Logs} logs=${logs} />
-        </div>
+          <div class="row row--report">
+            <${AIPanel} ai=${ai} tts=${tts} onAnalyze=${analyze} onToggleTts=${toggleTts} onPick=${pickHistory} />
+            <${Logs} logs=${logs} />
+          </div>
 
-        <${SerialMonitor} lines=${serialLines} hidden=${serialHidden} onToggle=${toggleSerial} onClear=${clearSerial} />
-      </main>
+          <div class="row">
+            <${SerialMonitor} lines=${serialLines} hidden=${serialHidden} onToggle=${toggleSerial} onClear=${clearSerial} />
+          </div>
+        </main>
+
+        <footer class="colophon">
+          <span><b>Blackout V1</b></span><span class="dot">/</span>
+          <span>WRO 2026</span><span class="dot">/</span>
+          <span>Sensor Hub <b>Mega 2560</b></span><span class="dot">/</span>
+          <span>Motor <b>Uno R3</b></span><span class="dot">/</span>
+          <span>Field Console</span>
+        </footer>
+      </div>
 
       <${Toasts} items=${toasts} />
     <//>`;

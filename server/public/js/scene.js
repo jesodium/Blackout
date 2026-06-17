@@ -2,19 +2,19 @@
 // Uses global THREE / THREE.GLTFLoader loaded via <script> in index.html.
 // createRoverScene(canvas, { onLog }) -> { setData, setCamera, dispose }
 
-const ACCENT = 0x778da9;
-const ACCENT_DARK = 0x415a77;
-const GRID2 = 0x1b263b;
-const RED = 0xff5c4d;
+const ACCENT = 0x948979;       // bone-gray rim / dust
+const ACCENT_DARK = 0x39362f;  // grid major
+const GRID2 = 0x171715;        // grid minor
+const RED = 0xff3b2f;          // signal red — obstacle
 
 export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   const THREE = window.THREE;
   let width = canvas.parentElement?.clientWidth || 600;
-  const height = 395;
+  const height = 460;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a1622);
-  scene.fog = new THREE.Fog(0x0a1622, 7, 14);
+  scene.background = new THREE.Color(0x060607);
+  scene.fog = new THREE.Fog(0x060607, 7, 14);
 
   const cam = { x: 3.2, y: 2.4, z: 4.8, tx: 3.2, ty: 2.4, tz: 4.8 };
   const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 30);
@@ -27,7 +27,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-  scene.add(new THREE.AmbientLight(0xcdd8e6, 0.75));
+  scene.add(new THREE.AmbientLight(0xe6ddcc, 0.7));
   const key = new THREE.DirectionalLight(0xffffff, 1.4);
   key.position.set(4, 8, 3);
   key.castShadow = true;
@@ -55,7 +55,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
 
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(20, 20),
-    new THREE.MeshStandardMaterial({ color: 0x0f1c2b, roughness: 0.95 })
+    new THREE.MeshStandardMaterial({ color: 0x0c0c0d, roughness: 0.95 })
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
@@ -141,7 +141,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
       model.scale.setScalar(scale);
       model.position.sub(center.clone().multiplyScalar(scale));
       model.position.y += 0.28;
-      const mat = new THREE.MeshStandardMaterial({ color: 0x8b97a8, roughness: 0.5, metalness: 0.4 });
+      const mat = new THREE.MeshStandardMaterial({ color: 0xb8b0a0, roughness: 0.5, metalness: 0.4 });
       model.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; c.material = mat; } });
       group.add(model);
       scene.add(group);
