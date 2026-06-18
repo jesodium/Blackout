@@ -28,14 +28,40 @@ let voices = [];
 const loadVoices = () => { voices = window.speechSynthesis?.getVoices() || []; };
 loadVoices();
 if (window.speechSynthesis) speechSynthesis.onvoiceschanged = loadVoices;
-function speak(text) {
-  if (!text || !window.speechSynthesis || !voices.length) return;
+function browserSpeak(text, { onStart, onEnd } = {}) {
+  if (!text || !window.speechSynthesis || !voices.length) { onEnd?.(); return; }
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.rate = 0.9; u.lang = "en-US";
   u.voice = voices.find(v => v.lang.startsWith("en") && /samantha|alex|google|enhanced/i.test(v.name))
     || voices.find(v => v.lang.startsWith("en")) || voices[0];
+  u.onstart = () => onStart?.();
+  u.onend = () => onEnd?.();
+  u.onerror = () => onEnd?.();
   speechSynthesis.speak(u);
+}
+
+// ElevenLabs flash v2.5 via server proxy; falls back to browser TTS on failure.
+let ttsAudio = null;
+async function speak(text, { onStart, onEnd } = {}) {
+  if (!text) { onEnd?.(); return; }
+  ttsAudio?.pause();
+  window.speechSynthesis?.cancel();
+  try {
+    const r = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const url = URL.createObjectURL(await r.blob());
+    ttsAudio = new Audio(url);
+    ttsAudio.onplay = () => onStart?.();
+    ttsAudio.onended = ttsAudio.onerror = () => { URL.revokeObjectURL(url); onEnd?.(); };
+    await ttsAudio.play();
+  } catch {
+    browserSpeak(text, { onStart, onEnd }); // ponytail: graceful fallback if key unset/offline
+  }
 }
 
 /* ---------------- zone header (folio · title · tag) ---------------- */
@@ -176,7 +202,7 @@ function Orientation({ packet, onLog }) {
 function ReadingsPanel({ packet }) {
   return html`
     <section class="zone readings reveal" style=${{ animationDelay: "120ms" }} aria-labelledby="env-h">
-      <${Head} folio="02" title="Environment" tag="05 ch" />
+      <${Head} folio="03" title="Environment" tag="05 ch" />
       <div class="zone-body">
         ${SENSORS.map((s, i) => html`<${Reading} key=${s.key} s=${s}
           value=${packet?.[s.key]} index=${String(i + 1).padStart(2, "0")} />`)}
@@ -188,7 +214,7 @@ function ReadingsPanel({ packet }) {
 function TrendsPanel({ packet }) {
   return html`
     <section class="zone reveal" style=${{ animationDelay: "200ms" }} aria-labelledby="tr-h">
-      <${Head} folio="03" title="Trends">
+      <${Head} folio="04" title="Trends">
         <div class="legend" aria-label="Series">
           ${TRENDS.map(s => html`<span key=${s.key}><i style=${{ background: s.color }}></i>${s.name}</span>`)}
         </div>
@@ -197,16 +223,128 @@ function TrendsPanel({ packet }) {
     </section>`;
 }
 
-/* ---------------- dispatch (AI) ---------------- */
-function AIPanel({ ai, tts, onAnalyze, onToggleTts, onPick }) {
+/* ---------------- agent (AI) ----------------
+   The agent has a "mood" derived from what it's saying + live sensor state.
+   That mood drives an animated glyph so the analysis reads as intent, not just text. */
+const INTENTS = {
+  idle:     { key: "idle",     label: "Standby",   color: "var(--ink-3)" },
+  scanning: { key: "scanning", label: "Scanning",  color: "var(--ink-2)" },
+  thinking: { key: "thinking", label: "Analyzing", color: "var(--ink)"   },
+  clear:    { key: "clear",    label: "All Clear", color: "var(--go)"     },
+  caution:  { key: "caution",  label: "Caution",   color: "var(--warn)"   },
+  alert:    { key: "alert",    label: "Alert",     color: "var(--accent)" },
+};
+
+// Worst pill across all live readings: 0 go · 1 warn · 2 abort · null no data.
+function worstSensor(packet) {
+  if (!packet) return null;
+  let rank = -1;
+  for (const s of SENSORS) {
+    const v = packet[s.key];
+    if (v == null || isNaN(v)) continue;
+    const k = s.st(v)[1];
+    rank = Math.max(rank, k === "abort" ? 2 : k === "warn" ? 1 : 0);
+  }
+  return rank < 0 ? null : rank;
+}
+
+// Go/no-go verdict for the operator: worst sensor decides, named so the reason
+// is visible. Mirrors the project pitch — "can a human safely enter?"
+function assess(packet) {
+  const rank = worstSensor(packet);
+  if (rank == null) return { kind: "idle", label: "Awaiting Data", cause: "No telemetry yet" };
+  let cause = "All readings nominal";
+  if (rank > 0) {
+    for (const s of SENSORS) {
+      const v = packet[s.key];
+      if (v == null || isNaN(v)) continue;
+      const [lbl, k] = s.st(v);
+      if ((k === "abort" ? 2 : k === "warn" ? 1 : 0) === rank) { cause = `${s.name} · ${lbl}`; break; }
+    }
+  }
+  if (rank === 2) return { kind: "abort", label: "Danger", cause };
+  if (rank === 1) return { kind: "warn",  label: "Caution", cause };
+  return { kind: "go", label: "Safe", cause };
+}
+
+// Intent: analysis-in-flight wins, then keywords in what the agent said, then sensors.
+function deriveIntent(ai, packet, connected) {
+  if (ai.analyzing) return INTENTS.thinking;
+  const t = (ai.text || "").toLowerCase();
+  if (/\b(danger|abort|critical|hazard|emergency|collision|evacuat|fire|stop)\b/.test(t)) return INTENTS.alert;
+  if (/\b(caution|warning|careful|slow|obstacle|approach|elevated|moderate|watch)\b/.test(t)) return INTENTS.caution;
+  if (/\b(clear|safe|normal|nominal|stable|good|proceed|no threat|all systems)\b/.test(t)) return INTENTS.clear;
+  const w = worstSensor(packet);
+  if (w === 2) return INTENTS.alert;
+  if (w === 1) return INTENTS.caution;
+  if (w === 0) return INTENTS.clear;
+  return connected ? INTENTS.scanning : INTENTS.idle;
+}
+
+/* animated glyph — one SVG per intent, parts animated via CSS (see .ai-glyph) */
+function AgentIcon({ intent }) {
+  const k = intent.key;
+  if (k === "thinking") return html`<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true">
+    <circle class="g-faint" cx="60" cy="60" r="40"/>
+    <g class="g-spin g-orbit">
+      <circle class="g-fill" cx="60" cy="20" r="6"/>
+      <circle class="g-fill" cx="60" cy="20" r="4.5" transform="rotate(120 60 60)"/>
+      <circle class="g-fill" cx="60" cy="20" r="4.5" transform="rotate(240 60 60)"/>
+    </g>
+    <circle class="g-fill g-core" cx="60" cy="60" r="8"/>
+  </svg>`;
+  if (k === "scanning") return html`<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true">
+    <circle class="g-faint" cx="60" cy="60" r="40"/>
+    <circle class="g-faint" cx="60" cy="60" r="24"/>
+    <g class="g-spin g-sweep"><path class="g-fill g-wedge" d="M60 60 L60 22 A38 38 0 0 1 92 41 Z"/></g>
+    <circle class="g-fill g-core" cx="60" cy="60" r="4"/>
+    <circle class="g-fill g-blip" cx="84" cy="42" r="3.6"/>
+  </svg>`;
+  if (k === "clear") return html`<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true">
+    <circle class="g-ring2" cx="60" cy="60" r="34"/>
+    <path class="g-check" d="M44 61 L55 72 L78 47"/>
+  </svg>`;
+  if (k === "caution" || k === "alert") return html`<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true">
+    <path class="g-tri" d="M60 22 L94 84 L26 84 Z"/>
+    <line class="g-bang" x1="60" y1="46" x2="60" y2="66"/>
+    <circle class="g-fill g-dot2" cx="60" cy="75" r="3.2"/>
+  </svg>`;
+  return html`<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true">
+    <circle class="g-ring g-faint" cx="60" cy="60" r="34"/>
+    <circle class="g-fill g-core" cx="60" cy="60" r="7"/>
+  </svg>`;
+}
+
+function Agent({ ai, tts, packet, connected, speaking, onAnalyze, onToggleTts, onPick, onMock }) {
+  const intent = deriveIntent(ai, packet, connected);
+  const v = assess(packet);
   return html`
-    <section class=${"zone dispatch reveal" + (ai.analyzing ? " is-analyzing" : "")} style=${{ animationDelay: "260ms" }} aria-labelledby="ai-h">
-      <${Head} folio="04" title="Field Analysis" tag=${ai.badge} />
-      <div class="zone-body">
-        <p class="ai-out" role="status" aria-live="polite">${ai.text}</p>
-        <div class="ai-foot">
+    <section class=${"zone agent reveal is-" + intent.key + (ai.analyzing ? " is-analyzing" : "") + (speaking ? " is-speaking" : "")}
+      style=${{ animationDelay: "120ms", "--agent-c": intent.color }} aria-labelledby="agent-h">
+      <${Head} folio="02" title="Agent" tag=${ai.badge} />
+      <div class="agent-body">
+        <div class="agent-stage">
+          <span class="agent-grid" aria-hidden="true"></span>
+          <span class="agent-mark" aria-hidden="true">AGT</span>
+          <div class="agent-orb"><${AgentIcon} intent=${intent} /></div>
+          ${speaking
+            ? html`<div class="agent-eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>`
+            : html`<span class="agent-state-label">${intent.label}</span>`}
+        </div>
+        <div class="agent-speech">
+          <p class="agent-text" key=${ai.text} role="status" aria-live="polite">${ai.text}</p>
+        </div>
+        <div class=${"verdict is-" + v.kind} role="status" aria-live="polite">
+          <span class="verdict-k">Entry Status</span>
+          <strong class="verdict-label">${v.label}</strong>
+          <span class="verdict-cause">${v.cause}</span>
+        </div>
+        <div class="agent-foot">
           <button class="btn btn--primary" type="button" onClick=${onAnalyze} disabled=${ai.analyzing}>
             ${ai.analyzing ? "Analyzing…" : "Run Analysis"}
+          </button>
+          <button class="btn" type="button" onClick=${onMock} disabled=${ai.analyzing} title="Inject random sensor data — no Arduino needed">
+            Mock Data
           </button>
           <label class="switch">
             <input type="checkbox" checked=${tts} onChange=${onToggleTts} />
@@ -214,7 +352,7 @@ function AIPanel({ ai, tts, onAnalyze, onToggleTts, onPick }) {
             Voice
           </label>
         </div>
-        <details class="ai-hist">
+        <details class="ai-hist agent-hist">
           <summary>History · ${ai.history.length}</summary>
           <div class="ai-hist-list">
             ${ai.history.map(h => html`
@@ -359,6 +497,7 @@ function App() {
   const [uptime, setUptime] = useState("00:00:00");
   const [serialLines, setSerialLines] = useState([]);
   const [serialHidden, setSerialHidden] = useState(() => localStorage.getItem("serialHidden") === "true");
+  const [speaking, setSpeaking] = useState(false);
 
   const socketRef = useRef(null);
   const ttsRef = useRef(localStorage.getItem("tts") !== "false");
@@ -412,7 +551,7 @@ function App() {
         text: d.analysis, badge: "Online", analyzing: false,
         history: [...p.history, { text: d.analysis, time: new Date(d.timestamp || Date.now()).toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-20),
       }));
-      if (ttsRef.current) speak(d.analysis);
+      if (ttsRef.current) speak(d.analysis, { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false) });
     });
     addLog("Console booted. Standing by.", "system");
     return () => socket.close();
@@ -452,7 +591,15 @@ function App() {
     setAi(p => ({ ...p, analyzing: true, badge: "Analyzing…" }));
     socketRef.current?.emit("request-analysis");
   }, []);
-  const toggleTts = useCallback(() => setTts(p => { const n = !p; ttsRef.current = n; localStorage.setItem("tts", n); return n; }), []);
+  const mockData = useCallback(() => {
+    setAi(p => ({ ...p, analyzing: true, badge: "Analyzing…" }));
+    socketRef.current?.emit("mock-data");
+  }, []);
+  const toggleTts = useCallback(() => setTts(p => {
+    const n = !p; ttsRef.current = n; localStorage.setItem("tts", n);
+    if (!n) { ttsAudio?.pause(); window.speechSynthesis?.cancel(); setSpeaking(false); }
+    return n;
+  }), []);
   const pickHistory = useCallback((text) => setAi(p => ({ ...p, text })), []);
   const toggleSerial = useCallback(() => setSerialHidden(p => { const n = !p; localStorage.setItem("serialHidden", n); return n; }), []);
   const clearSerial = useCallback(() => setSerialLines([]), []);
@@ -479,6 +626,8 @@ function App() {
         <main class="deck" id="sensors">
           <div class="row row--stage">
             <${Orientation} packet=${packet} onLog=${addLog} />
+            <${Agent} ai=${ai} tts=${tts} packet=${packet} connected=${connected} speaking=${speaking}
+              onAnalyze=${analyze} onToggleTts=${toggleTts} onPick=${pickHistory} onMock=${mockData} />
             <${ReadingsPanel} packet=${packet} />
           </div>
 
@@ -486,8 +635,7 @@ function App() {
             <${TrendsPanel} packet=${packet} />
           </div>
 
-          <div class="row row--report">
-            <${AIPanel} ai=${ai} tts=${tts} onAnalyze=${analyze} onToggleTts=${toggleTts} onPick=${pickHistory} />
+          <div class="row">
             <${Logs} logs=${logs} />
           </div>
 

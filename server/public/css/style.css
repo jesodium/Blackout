@@ -171,9 +171,18 @@ body {
    ============================================================ */
 .deck { display: flex; flex-direction: column; }
 .row { display: grid; gap: var(--gap); align-items: start; padding-top: var(--gap); }
-.row--stage  { grid-template-columns: minmax(0, 1.62fr) minmax(300px, 1fr); }
+/* stage: 3D viewport · agent · environment column */
+.row--stage  { grid-template-columns: minmax(0, 1.55fr) minmax(270px, 0.96fr) minmax(230px, 0.8fr); }
 .row--report { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-@media (max-width: 980px) { .row--stage, .row--report { grid-template-columns: 1fr; } }
+/* at mid widths drop to 3D + agent, environment wraps full-width below */
+@media (max-width: 1280px) {
+  .row--stage { grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr); }
+  .row--stage > .readings { grid-column: 1 / -1; }
+}
+@media (max-width: 880px) {
+  .row--stage, .row--report { grid-template-columns: 1fr; }
+  .row--stage > .readings { grid-column: auto; }
+}
 
 /* ---- zone shell ---- */
 .zone { background: var(--panel); border: 1px solid var(--line); }
@@ -315,20 +324,136 @@ body {
 .legend i { width: 16px; height: 2px; display: inline-block; }
 
 /* ============================================================
-   DISPATCH — AI field analysis (editorial lede)
+   AGENT — autonomous field analyst (animated, intent-driven)
+   The icon reacts to what the agent is "saying" + live sensor state.
    ============================================================ */
-.dispatch .zone-body { display: flex; flex-direction: column; gap: 16px; padding: 18px 20px; }
-.ai-out {
-  position: relative; min-height: 104px; padding: 6px 0 6px 22px;
-  border-left: 2px solid var(--accent);
-  font: 400 clamp(15px, 1.4vw, 18px)/1.55 var(--grotesk); color: var(--ink);
+.agent { display: flex; flex-direction: column; }
+.agent-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+.agent-stage {
+  position: relative; flex: 1; min-height: 232px; overflow: hidden;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+  padding: 26px 18px; background: var(--inset); border-bottom: 1px solid var(--line);
+  color: var(--agent-c, var(--ink-2));               /* glyph color follows intent */
+  transition: color 0.45s ease;
 }
-.ai-out::before {
-  content: "“"; position: absolute; left: -2px; top: -18px;
-  font-family: var(--display); font-size: 40px; color: var(--accent); opacity: 0.5;
+/* faint dot-field behind the orb */
+.agent-grid {
+  position: absolute; inset: 0; z-index: 0; opacity: 0.08; color: currentColor;
+  background-image: radial-gradient(circle, currentColor 0.6px, transparent 0.7px);
+  background-size: 16px 16px;
+  -webkit-mask-image: radial-gradient(circle at center, #000 28%, transparent 72%);
+          mask-image: radial-gradient(circle at center, #000 28%, transparent 72%);
 }
-.ai-foot { display: flex; align-items: center; gap: 16px; }
-.ai-foot .btn--primary { flex: 1; }
+.agent-mark {
+  position: absolute; bottom: -0.16em; right: 8px; z-index: 0; pointer-events: none; user-select: none;
+  font-family: var(--display); font-size: clamp(86px, 11vw, 144px); line-height: 0.8;
+  color: currentColor; opacity: 0.06; letter-spacing: -0.03em;
+}
+
+/* halo rings pulsing out behind the glyph */
+.agent-orb { position: relative; z-index: 1; width: 168px; height: 168px; display: grid; place-items: center; }
+.agent-orb::before, .agent-orb::after {
+  content: ""; position: absolute; inset: 22px; border: 1px solid currentColor; border-radius: 50%;
+  opacity: 0; animation: orb-halo 3.2s ease-out infinite;
+}
+.agent-orb::after { animation-delay: 1.6s; }
+@keyframes orb-halo { 0% { transform: scale(0.6); opacity: 0.3; } 100% { transform: scale(1.3); opacity: 0; } }
+.agent.is-alert .agent-orb::before, .agent.is-alert .agent-orb::after { animation-duration: 1.4s; }
+
+/* the glyph itself */
+.ai-glyph { position: relative; z-index: 1; width: 92px; height: 92px; display: block; overflow: visible; }
+.ai-glyph * {
+  fill: none; stroke: currentColor; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round;
+  transform-box: fill-box; transform-origin: center;
+}
+.ai-glyph .g-fill { fill: currentColor; stroke: none; }
+.ai-glyph .g-faint { opacity: 0.22; }
+/* rotate about the true SVG center, not each part's own box */
+.ai-glyph .g-spin { transform-box: view-box; transform-origin: 60px 60px; }
+
+@keyframes spin    { to { transform: rotate(360deg); } }
+@keyframes breathe { 0%, 100% { transform: scale(0.86); opacity: 0.6; } 50% { transform: scale(1.1); opacity: 1; } }
+@keyframes blink   { 0%, 100% { opacity: 1; } 50% { opacity: 0.32; } }
+@keyframes bob     { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes draw    { to { stroke-dashoffset: 0; } }
+@keyframes shake   { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+@keyframes pop     { 0% { transform: scale(0.7); opacity: 0; } 60% { transform: scale(1.08); } 100% { transform: scale(1); opacity: 1; } }
+
+/* idle — slow breathing */
+.agent.is-idle .g-core, .agent.is-idle .g-ring { animation: breathe 2.6s ease-in-out infinite; }
+.agent.is-idle .g-ring { animation-duration: 3.4s; }
+
+/* thinking — dots orbit the pulsing core */
+.agent.is-thinking .g-orbit { animation: spin 1.5s linear infinite; }
+.agent.is-thinking .g-core  { animation: breathe 1s ease-in-out infinite; }
+
+/* scanning — radar wedge sweeps, blip blinks */
+.agent.is-scanning .g-sweep { animation: spin 2.6s linear infinite; }
+.agent.is-scanning .g-wedge { opacity: 0.5; }
+.agent.is-scanning .g-blip  { animation: blink 1.1s ease-in-out infinite; }
+
+/* clear — ring + check draw in, then gentle bob */
+.agent.is-clear .g-ring2 { stroke-dasharray: 214; stroke-dashoffset: 214; animation: draw 0.6s ease forwards; }
+.agent.is-clear .g-check {
+  stroke-dasharray: 60; stroke-dashoffset: 60;
+  animation: draw 0.45s 0.3s ease forwards, bob 2.6s 0.9s ease-in-out infinite;
+}
+
+/* caution — amber pulse */
+.agent.is-caution .g-tri  { animation: pop 0.4s ease, blink 1.3s 0.4s ease-in-out infinite; }
+.agent.is-caution .g-bang, .agent.is-caution .g-dot2 { animation: blink 1.3s ease-in-out infinite; }
+
+/* alert — red, faster, shaking */
+.agent.is-alert .ai-glyph { animation: shake 0.5s ease-in-out infinite; }
+.agent.is-alert .g-tri    { animation: pop 0.3s ease, blink 0.6s 0.3s steps(2, jump-none) infinite; }
+.agent.is-alert .g-bang, .agent.is-alert .g-dot2 { animation: blink 0.6s steps(2, jump-none) infinite; }
+
+.agent-state-label {
+  position: relative; z-index: 1; color: currentColor;
+  font: 700 11px/1 var(--grotesk); letter-spacing: 0.3em; text-transform: uppercase;
+  animation: agent-text-in 0.4s ease;
+}
+
+/* voice equalizer (shown while speaking) */
+.agent-eq { position: relative; z-index: 1; display: flex; align-items: flex-end; gap: 3px; height: 15px; color: currentColor; }
+.agent-eq i { width: 3px; height: 100%; background: currentColor; transform-origin: bottom; animation: eq 0.8s ease-in-out infinite; }
+.agent-eq i:nth-child(2) { animation-delay: 0.16s; }
+.agent-eq i:nth-child(3) { animation-delay: 0.32s; }
+.agent-eq i:nth-child(4) { animation-delay: 0.48s; }
+.agent-eq i:nth-child(5) { animation-delay: 0.22s; }
+@keyframes eq { 0%, 100% { transform: scaleY(0.28); } 50% { transform: scaleY(1); } }
+
+/* what the agent says */
+.agent-speech { padding: 15px 18px 4px; }
+.agent-text {
+  margin: 0; padding-left: 16px; border-left: 2px solid var(--agent-c, var(--accent)); color: var(--ink);
+  font: 400 clamp(13.5px, 1.05vw, 15.5px)/1.55 var(--grotesk);
+  min-height: 3.1em; animation: agent-text-in 0.4s ease;
+  transition: border-color 0.45s ease;
+}
+.agent.is-analyzing .agent-text { color: var(--ink-2); }
+@keyframes agent-text-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* go/no-go entry verdict — the headline answer: can a human enter? */
+.verdict {
+  margin: 12px 18px 4px; padding: 11px 14px; display: flex; flex-direction: column; gap: 3px;
+  border: 1px solid var(--line); border-left: 2px solid var(--ink-3);
+  background: rgba(236, 229, 214, 0.03);
+}
+.verdict-k { font: 600 10px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+.verdict-label { font: 700 16px/1 var(--grotesk); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink); }
+.verdict-cause { font: 500 11px/1.3 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-2); }
+.verdict.is-go    { border-left-color: var(--go);     background: var(--go-bg);    } .verdict.is-go    .verdict-label { color: var(--go); }
+.verdict.is-warn  { border-left-color: var(--warn);   background: var(--warn-bg);  } .verdict.is-warn  .verdict-label { color: var(--warn); }
+.verdict.is-abort { border-left-color: var(--accent); background: var(--abort-bg); } .verdict.is-abort .verdict-label { color: var(--accent); }
+
+.agent-foot { display: flex; align-items: center; gap: 14px; padding: 12px 18px 14px; }
+.agent-foot .btn--primary { flex: 1; }
+.agent-hist { padding: 0 18px 16px; }
+
+.is-analyzing .folio { animation: pulse 0.9s ease-in-out infinite; }
+
 .ai-hist > summary {
   font: 600 10px/1 var(--grotesk); letter-spacing: 0.2em; text-transform: uppercase;
   color: var(--ink-3); cursor: pointer; padding: 6px 0; list-style: none;
@@ -344,8 +469,6 @@ body {
 }
 .ai-hist-item:hover { border-color: var(--line-2); background: var(--panel-2); color: var(--ink); }
 .ai-hist-time { font: 500 10px/1.45 var(--mono); color: var(--accent); flex-shrink: 0; }
-
-.is-analyzing .folio { animation: pulse 0.9s ease-in-out infinite; }
 
 /* ============================================================
    LOGS — activity terminal

@@ -4,6 +4,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
+const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
 const keypress = require("keypress");
 
@@ -33,6 +34,21 @@ async function listSerialPorts() {
 app.get("/api/ports", async (req, res) => {
   const ports = await listSerialPorts();
   res.json({ ports, current: serialPort?.path || null });
+});
+
+// TTS proxy via Microsoft Edge neural voices (free, no key). Streams MP3 back.
+app.post("/api/tts", async (req, res) => {
+  const voice = req.body?.voice || process.env.TTS_VOICE || "en-US-AndrewNeural";
+  const text = (req.body?.text || "").trim();
+  if (!text) return res.status(400).json({ error: "text required" });
+  try {
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    res.setHeader("Content-Type", "audio/mpeg");
+    tts.toStream(text).audioStream.pipe(res);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Pipe a readline parser onto a port: stream every raw line to the serial
@@ -156,8 +172,29 @@ function selectPortMenu(ports) {
 let latestData = null;
 let dataHistory = [];
 
+const AI_SYSTEM = `You are BLACKOUT, the onboard AI of a search-and-rescue rover pushing into a hazardous, blacked-out environment. You are the operator's eyes down there.
+
+Personality: sharp, dry, a little battle-worn — like a veteran field scout who has seen worse. Confident, never panicked, but blunt when something's wrong. You talk TO the operator, not about yourself in the third person.
+
+Hazard thresholds — judge ONLY against these, never invent danger:
+- Temp: ok <35°C, warn 35-45, danger >45
+- Humidity: ok 20-75%, else off-nominal
+- Distance ahead: clear >55cm, caution 20-55, alert <20 (obstacle close)
+- Smoke/gas: ok <300, warn 300-600, danger >600
+- Air quality: good <450, moderate 450-800, poor >800
+- CO: watch if rising; the ALERT flag means real combustible-gas danger
+- Roll/Pitch: fine within ±15°, sketchy beyond
+
+Rules:
+- 2-3 sentences, spoken aloud (this is read by TTS) — no lists, no markdown, no emojis.
+- Read the ACTUAL numbers. If everything is within safe limits, say so plainly and confidently — do NOT manufacture hazards that aren't in the data.
+- Lead with the worst real hazard if one exists; if it's all clear, lead with that.
+- Be decisive — give a recommendation (push on / hold / back out) that matches the readings.
+- Reference readings naturally in plain speech ("air's getting thick", "wall about half a meter out"), don't recite raw values.
+- Earn the personality through word choice, not filler. Stay mission-focused.`;
+
 function buildAiPrompt(data) {
-  return `You are a rover exploration AI. Analyze this sensor data from a robot exploring a hazardous environment and give a 2-3 sentence overview of the area conditions.
+  return `Latest telemetry from your sensors — read the room and report to the operator.
 
 Temperature: ${data.temp}°C
 Humidity: ${data.humid}%
@@ -174,10 +211,10 @@ async function runAiAnalysis() {
     const resp = await openai.chat.completions.create({
       model: process.env.CEREBRAS_MODEL || "gpt-oss-120b",
       messages: [
-        { role: "system", content: "You are a rover exploration AI assistant. Keep responses concise, 2-3 sentences." },
+        { role: "system", content: AI_SYSTEM },
         { role: "user", content: buildAiPrompt(latestData) },
       ],
-      max_tokens: 200,
+      max_tokens: 400,
     });
     const analysis = resp.choices[0]?.message?.content || "No analysis returned.";
     io.emit("ai-analysis", { analysis, timestamp: Date.now() });
@@ -241,6 +278,21 @@ io.on("connection", (socket) => {
   if (latestData) socket.emit("sensor-data", latestData);
   socket.on("request-analysis", () => {
     console.log("On-demand analysis requested");
+    runAiAnalysis();
+  });
+  // Debug: fake a sensor packet so the dashboard + AI work without the Arduino.
+  socket.on("mock-data", () => {
+    const r = (lo, hi, d = 0) => +(lo + Math.random() * (hi - lo)).toFixed(d);
+    latestData = {
+      temp: r(20, 50, 1), humid: r(20, 90, 1), dist: r(10, 200),
+      smoke: r(0, 800), airq: r(50, 900), co: r(0, 600),
+      co_alert: Math.random() > 0.7,
+      roll: r(-8, 8, 1), pitch: r(-8, 8, 1), yaw: r(0, 30, 1), // keep rover ~level
+
+      timestamp: Date.now(),
+    };
+    console.log("Mock data injected");
+    io.emit("sensor-data", latestData);
     runAiAnalysis();
   });
 });
