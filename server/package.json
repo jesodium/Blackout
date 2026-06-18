@@ -15,7 +15,7 @@
     "glob": "^13.0.6",
     "keypress": "^0.2.1",
     "msedge-tts": "^2.0.5",
-    "openai": "^6.42.0",
+    "openai": "^6.44.0",
     "serialport": "^13.0.0",
     "socket.io": "^4.8.1"
   }
