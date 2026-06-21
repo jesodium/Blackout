@@ -2,33 +2,20 @@
 
 ## Architecture
 
-Two independent Arduino boards, **no direct link yet**:
-
 | Board | Role | Code | Notes |
 |-------|------|------|-------|
-| **Mega 2560** | Sensor hub — reads environment, sends data via Bluetooth + Serial USB | `arduino-mega/main/` | HC-06 Bluetooth on Serial1 |
-| **Uno R3** | Motor controller — runs pre‑programmed movement sequence | `arduino-uno/main/` | Standalone demo sequence |
+| **Mega 2560** | Sensor hub — reads environment, sends CSV over Serial1 | `arduino-mega/main/` | Mega TX1 (D18) → voltage divider → ESP32 GPIO3 |
+| **ESP32-CAM** | Bluetooth serial relay + camera | `arduino-mega/esp32-cam/` | Reads Mega from UART0, forwards over BT as "BLACKOUT-V1" |
+| **Uno R3** | Motor controller — runs pre‑programmed sequence | `arduino-uno/main/` | Standalone demo |
 
-**Current flow:** Mega reads sensors → sends CSV over **Serial1 to HC-06 Bluetooth** + Serial USB for debug. Node.js server on PC receives BT data, serves dashboard, and sends to OpenRouter AI for area analysis.
+**Current flow:** Mega reads sensors → sends CSV over Serial1 (D18) → voltage divider
+→ ESP32 GPIO3. ESP32 forwards over Bluetooth SPP to the Mac. Node server reads the
+BT serial port (`/dev/cu.BLACKOUT-V1-SPP`) and serves the dashboard.
 
-### Wireless to the PC — two paths
+**Power:** Mega Vin → battery 7-12V. Mega 5V pin powers the ESP32-CAM. Motor battery
+(4xAA/6V) powers Uno + motors via L293D shield.
 
-Sensor data reaches the Mac one of two ways. **Test Path A first; fall back to
-Path B only if HC-06 won't work.**
-
-| | Path A — HC-06 (primary) | Path B — ESP32 over WiFi (fallback) |
-|---|---|---|
-| Link | HC-06 Bluetooth on Serial1 | Mega serial → ESP32-CAM → WiFi |
-| Server side | works **as-is** — `serialport` reads `/dev/cu.HC-06-SPP` | **rewrite** input to WiFi/TCP receive |
-| Extra wiring | none (HC-06 RX wired direct) | level shift Mega TX1 (5V) → ESP32 RX (3.3V) |
-| When to use | default | only if HC-06 is unreliable |
-
-The **camera (ESP32-CAM) streams over its own WiFi regardless of which path** —
-see the Camera section. In Path B the same ESP32 also relays the sensor CSV, so
-one board carries both; in Path A the ESP32 does camera only and the Mega never
-links to it.
-
-**Later (Phase 2):** Mega Serial2/Serial3 for Uno communication for sensor‑driven navigation.
+**Phase 2:** Mega Serial2/Serial3 for Uno communication for sensor‑driven navigation.
 
 ---
 
@@ -48,43 +35,39 @@ links to it.
 | A2 | Microphone (MAX9814/KY-038) | Analog |
 | A3 | MQ-9 (CO/combustible gas) | Analog read |
 | D29 | MQ-9 | Digital out |
-| D18 (TX1) | → HC-06 RX | Bluetooth TX (Mega → BT) |
-| D19 (RX1) | ← HC-06 TX | Bluetooth RX (BT → Mega) |
-| D27 | HC-06 STATE | Connection-detect input (HIGH = paired) |
-| D28 | HC-06 EN / KEY | Enable/AT-mode output (held LOW in firmware) |
-| D0 (RX0) / D1 (TX0) | USB ↔ PC | Wired serial link — Node server reads `S:` packets here |
+| D18 (TX1) | → ESP32 GPIO3 (via voltage divider) | Mega serial TX to ESP32 UART0 |
+| D0 (RX0) / D1 (TX0) | USB ↔ PC | Wired serial link / debug |
+| 5V | → ESP32 5V | Powers ESP32-CAM from Mega's Vin regulator |
+| GND | → ESP32 GND | Common ground |
 
-### HC-06 Bluetooth Wiring
+### Mega → ESP32-CAM Wiring
 
-| HC-06 Pin | Mega Pin | Notes |
-|-----------|----------|-------|
-| VCC | 5V | |
-| GND | GND | |
-| TX | D19 (RX1) | BT → Mega receive |
-| RX | D18 (TX1) | Mega → BT send — **wire direct (default)**. 5V into the HC-06's 3.3V RX is out of spec but the module tolerates it; modules survive it for years. If it acts flaky, drop in a 1kΩ series resistor (or 1kΩ + 2kΩ divider) to get 3.3V. |
-| STATE | D27 | Connection status — HIGH when paired |
-| EN/KEY | D28 | Enable / AT-command mode (firmware holds LOW for normal operation) |
+| Mega | | ESP32-CAM |
+|------|-|-----------|
+| D18 (TX1) | 1kΩ → node → 2kΩ → GND | node → GPIO3 (U0RXD, 4th pin on programming header) |
+| 5V | wire direct | 5V pin (programming header) |
+| GND | wire direct | GND pin (programming header) |
 
-HC-06 is slave-only, no AT commands needed. Pairs as serial port on PC (/dev/cu.HC-06-SPP or similar).
+Add **1000µF electrolytic cap** across ESP32 5V/GND (striped leg = GND).
 
-### Camera (ESP32-CAM) — separate WiFi link, NOT through the Mega
+**Voltage divider:** drops Mega TX1 5V to ~3.3V (5 × 2k / (1k+2k) = 3.33V).
+ESP32 GPIO is NOT 5V-tolerant — do NOT wire D18 direct.
 
-The camera does **not** route through the Mega or HC-06: the Mega has no RAM to
-buffer a frame (8KB) and HC-06's ~1–14 KB/s serial would take seconds per JPEG
-and block the sensor stream. Instead the **ESP32-CAM (AI-Thinker, OV2640)**
-streams over its **own WiFi** straight to the Mac, independent of the Mega.
+### ESP32-CAM — Bluetooth serial relay
 
-- **No USB port** on the ESP32-CAM — flash it with a **CP2102 USB-TTL adapter**
-  (or an ESP32-CAM-MB programmer shield). Flashing uses 3.3V TTL → no level
-  shift needed for programming.
-- **If the Mega is ever serial-linked to the ESP32 later:** Mega TX1 (5V) →
-  ESP32 RX (3.3V, NOT 5V-tolerant) needs a level shift — 1kΩ+2kΩ divider or a
-  4-channel logic level converter (BSS138). ESP32 TX → Mega RX wires direct.
-  Not wired today.
+The **ESP32-CAM (AI-Thinker, OV2640)** reads Mega CSV from UART0 and forwards
+over **Bluetooth Classic SPP** as **"BLACKOUT-V1"**.
 
-Sourcing note: Electronica Caribe (Panama) stocks HC-06, ESP32-CAM, and the
-CP2102, but **no standalone logic level converter** (checked full catalog) —
-buy that elsewhere or use resistors.
+- **No soldering needed** — GPIO3 (U0RXD) is on the 6-pin programming header.
+- **Flash first** via CP2102 shield (before wiring Mega). CP2102 TX shares GPIO3.
+- **After flashing**, remove CP2102 shield, wire voltage divider + power from Mega.
+- On the Mac, pair with "BLACKOUT-V1" — port is `/dev/cu.BLACKOUT-V1-SPP`.
+
+### Power
+
+Mega Vin → battery 7-12V (or USB for dev). Mega's onboard regulator (~1A) handles
+both Mega (~200mA) + ESP32-CAM (~300mA). The 500mA USB polyfuse only applies when
+on USB — use Vin (battery) for competition.
 
 ## Mega Sensors
 
@@ -171,20 +154,22 @@ cd arduino-mega/main
 arduino-cli compile
 arduino-cli upload
 ```
-Board: `arduino:avr:mega:cpu=atmega2560`, Port: `/dev/cu.usbserial-140`
+Board: `arduino:avr:mega:cpu=atmega2560`, Port: `/dev/cu.usbserial-XXX`
 
-### Uno
+### ESP32-CAM
 ```
-cd arduino-uno/main
-arduino-cli compile --fqbn arduino:avr:uno
+cd arduino-mega/esp32-cam
+arduino-cli compile --fqbn esp32:esp32:esp32cam
 arduino-cli upload --port /dev/cu.usbserial-XXX
 ```
+Flash **before** wiring Mega to ESP32 (CP2102 TX shares GPIO3). After flashing,
+remove CP2102 shield, then wire voltage divider + power from Mega.
 
 ---
 
 ## Node.js Server (`server/`)
 
-Receives Bluetooth data from Mega, serves real-time dashboard, sends to Cerebras AI for analysis.
+Receives sensor data from the ESP32-CAM Bluetooth serial port, serves real-time dashboard, sends to Cerebras AI for analysis.
 
 ### Setup
 
@@ -201,7 +186,7 @@ Opens at `http://localhost:3000`.
 
 | Component | Library |
 |-----------|---------|
-| Serial port | `serialport` — reads from HC-06 |
+| Bluetooth serial | `serialport` — reads from `/dev/cu.BLACKOUT-V1-SPP` |
 | Web server | `express` — serves dashboard |
 | Real-time | `socket.io` — pushes sensor data to browser |
 | AI | `openai` SDK with Cerebras base URL — analyzes environment |
@@ -222,12 +207,14 @@ Get a key at https://cloud.cerebras.ai (generous free tier).
 ```
 WRO2026/
 ├── advanced-project-context/
-├── arduino-mega/             ← Mega: sensors + Bluetooth
+├── arduino-mega/             ← Mega: sensors + Serial1 → ESP32
 │   ├── AGENTS.md
 │   ├── README.md
 │   ├── main/
 │   │   ├── main.ino
-│   │   ├── sensors.h/.cpp
+│   │   └── sketch.yaml
+│   ├── esp32-cam/           ← ESP32-CAM: BT serial relay
+│   │   ├── esp32-cam.ino
 │   │   └── sketch.yaml
 │   └── ref-images/
 ├── arduino-uno/              ← Uno: motors only
