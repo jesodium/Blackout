@@ -6,6 +6,9 @@
 #define TRIG_PIN A6
 #define ECHO_PIN A5
 #define SONAR_MAX 400
+#define SONAR_ITER 3      // pings per reading; NewPing returns the median, drops spikes
+                          // (~29ms between pings, so ~60-90ms blocking per reading)
+#define DIST_ALPHA 0.25   // EMA smoothing on distance (lower = smoother, more lag)
 #define DHT_INTERVAL 1000
 #define SONAR_INTERVAL 50
 
@@ -51,6 +54,7 @@ unsigned long lastDht = 0;
 unsigned long lastSonar = 0;
 float temp = 0, humid = 0;
 float smokeF = -1, airqF = -1, coF = -1; // EMA state, -1 = uninitialised
+float distF = -1;                        // EMA state for distance, -1 = uninitialised
 float mq9_R0 = 0;                        // clean-air baseline, set after warm-up
 bool mq9Calibrated = false;
 
@@ -91,7 +95,14 @@ void loop() {
 
   if (now - lastSonar >= SONAR_INTERVAL) {
     lastSonar = now;
-    float dist = sonar.ping_cm();
+    // Median of SONAR_ITER pings drops spikes; EMA on top smooths the stream.
+    // ping_median returns microseconds (0 = no echo / out of range).
+    unsigned int us = sonar.ping_median(SONAR_ITER);
+    if (us > 0) {
+      float raw = sonar.convert_cm(us);
+      distF = (distF < 0) ? raw : distF + DIST_ALPHA * (raw - distF);
+    }
+    float dist = (distF < 0) ? 0 : distF;
     int smokeRaw = readAvg(MQ2_AO);
     int airqRaw  = readAvg(MQ135_AO);
     int coRaw    = readAvg(MQ9_AO);

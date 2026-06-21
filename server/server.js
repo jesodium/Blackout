@@ -28,7 +28,6 @@ app.use(express.static("public"));
 
 const PORT = process.env.PORT || 3000;
 const SERIAL_BAUD = parseInt(process.env.SERIAL_BAUD || "9600", 10);
-const AI_INTERVAL = parseInt(process.env.AI_INTERVAL || "30", 10) * 1000;
 
 async function listSerialPorts() {
   const { glob } = await import("glob");
@@ -43,14 +42,33 @@ app.get("/api/ports", async (req, res) => {
 // TTS proxy. Deepgram Aura-2 (low-latency streaming) when DEEPGRAM_API_KEY is
 // set, else / on failure falls back to Microsoft Edge neural voices (free, no key).
 // GET form lets an <audio> element play progressively (starts on first chunk).
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const DG_RETRIES = parseInt(process.env.DEEPGRAM_RETRIES || "3", 10);
+
 async function speakDeepgram(text, res) {
   const model = process.env.DEEPGRAM_VOICE || "aura-2-orion-en";
-  const r = await fetch(`https://api.deepgram.com/v1/speak?model=${model}&encoding=mp3`, {
-    method: "POST",
-    headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
-  });
-  if (!r.ok || !r.body) throw new Error(`Deepgram ${r.status}: ${await r.text().catch(() => "")}`);
+  const url = `https://api.deepgram.com/v1/speak?model=${model}&encoding=mp3`;
+  // Retry the fetch (transient 429/5xx/network blips) BEFORE we start streaming —
+  // once audio is piping we can't retry. 4xx other than 429 is permanent, bail fast.
+  let r, lastErr;
+  for (let i = 0; i <= DG_RETRIES; i++) {
+    try {
+      r = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (r.ok && r.body) break;
+      const body = await r.text().catch(() => "");
+      lastErr = new Error(`Deepgram ${r.status}: ${body}`);
+      if (r.status < 500 && r.status !== 429) throw lastErr; // permanent (401/402/400) — don't retry, fall back now
+    } catch (e) {
+      if (e === lastErr) throw e; // permanent error — stop, let caller fall back to Edge
+      lastErr = e;               // network/transient error — keep retrying
+    }
+    if (i < DG_RETRIES) await sleep(250 * (i + 1)); // 250/500/750ms backoff
+  }
+  if (!r || !r.ok || !r.body) throw lastErr || new Error("Deepgram failed");
   res.setHeader("Content-Type", "audio/mpeg");
   Readable.fromWeb(r.body).on("error", () => res.destroy()).pipe(res);
 }
@@ -128,6 +146,7 @@ function processLine(raw) {
   dataHistory.push(data);
   if (dataHistory.length > 1000) dataHistory.shift();
   io.emit("sensor-data", data);
+  maybeAutoAnalyze(data);
 }
 
 // Pipe a readline parser onto a port.
@@ -234,35 +253,145 @@ function selectPortMenu(ports) {
 
 let latestData = null;
 let dataHistory = [];
+let currentMission = "";   // operator's briefing — colors all agent replies until changed
 
 // System prompts live in prompts/*.md so they're easy to tweak without touching code.
 const loadPrompt = (name) => fs.readFileSync(path.join(__dirname, "prompts", name), "utf8").trim();
 const AI_SYSTEM = loadPrompt("analysis.md");
 const CHAT_SYSTEM = loadPrompt("chat.md");
 
+// ponytail: status thresholds live here (server), single source of truth. The
+// model only verbalizes the tag — it must NOT re-judge from the raw number.
+function band(v, warn, danger) {
+  if (v == null || isNaN(v)) return "UNKNOWN";
+  return v >= danger ? "DANGER" : v >= warn ? "CAUTION" : "NORMAL";
+}
+function statuses(d) {
+  return {
+    temp: band(d.temp, 35, 45),
+    dist: d.dist < 10 ? "NEAR" : "CLEAR",
+    smoke: band(d.smoke, 300, 600),
+    airq: band(d.airq, 450, 800),
+    // MQ-9 raw: ~250-300 is normal room air, danger >=350.
+    // ponytail: hardware DO flag (d.co_alert) is IGNORED — the module's digital out is
+    // active-low and pot-tuned, so it false-fires DANGER in clean air. Judge from raw.
+    // Re-enable only after fixing the pin polarity in the Mega firmware.
+    co: band(d.co, 300, 350),
+  };
+}
+
+// Severity rank so we can tell when a reading got WORSE (not just changed).
+const RANK = { CLEAR: 0, NORMAL: 0, UNKNOWN: 0, NEAR: 1, CAUTION: 1, DANGER: 2 };
+
+// Instant in-character one-liners fired the moment a reading worsens — no LLM
+// round-trip, so the agent reacts immediately while the full analysis catches up.
+const BLURTS = {
+  dist:  { NEAR: "Wall's right up on us — easing around it." },
+  smoke: { CAUTION: "Smoke's picking up in here.", DANGER: "Heavy smoke now — this is getting bad." },
+  airq:  { CAUTION: "Air's getting thick.", DANGER: "Air's gone foul down here." },
+  co:    { CAUTION: "Gas reading's climbing.", DANGER: "Gas pocket — that's real danger." },
+  temp:  { CAUTION: "Heat's coming up.", DANGER: "It's cooking down here." },
+};
+
+// Short memory line so replies reference the recent past, not just this instant.
+function buildTrend(d) {
+  const h = dataHistory;
+  if (h.length < 8) return "";
+  const old = h[Math.max(0, h.length - 20)];
+  const dir = (now, then, eps) => (now - then > eps ? "rising" : then - now > eps ? "falling" : null);
+  const bits = [];
+  const push = (k, label, eps) => { const x = dir(d[k], old[k], eps); if (x) bits.push(`${label} ${x}`); };
+  push("temp", "temperature", 1);
+  push("airq", "air quality", 30);
+  push("smoke", "smoke", 30);
+  push("co", "gas", 30);
+  return bits.length ? `Trend over the last little while: ${bits.join(", ")}.` : "";
+}
+
+// Edge-triggered analysis: fire only when a status actually changes, blurt the
+// instant the change is for the worse, and rate-limit the full LLM analysis.
+let lastStatuses = null;
+let lastAutoAnalysis = 0;
+let lastBlurt = 0;
+let pendingAnalysis = null;
+const AUTO_MIN_GAP = parseInt(process.env.AUTO_ANALYSIS_GAP || "12", 10) * 1000;
+const BLURT_MIN_GAP = 6000; // don't let a flapping sensor spam instant reactions
+
+function emitBlurt(prev, cur) {
+  if (!prev || Date.now() - lastBlurt < BLURT_MIN_GAP) return;
+  let best = null;
+  for (const k of Object.keys(cur)) {
+    if (RANK[cur[k]] > RANK[prev[k]] && BLURTS[k]?.[cur[k]]) {
+      if (!best || RANK[cur[k]] > RANK[cur[best]]) best = k;
+    }
+  }
+  if (best) { lastBlurt = Date.now(); io.emit("agent-blurt", { text: BLURTS[best][cur[best]], timestamp: Date.now() }); }
+}
+
+function maybeAutoAnalyze(data) {
+  const s = statuses(data);
+  const changed = lastStatuses && Object.keys(s).some(k => lastStatuses[k] !== s[k]);
+  if (changed) emitBlurt(lastStatuses, s);
+  lastStatuses = s;
+  if (!changed) return;
+  const now = Date.now();
+  if (now - lastAutoAnalysis < AUTO_MIN_GAP) return; // don't spam the LLM on flapping
+  lastAutoAnalysis = now;
+  clearTimeout(pendingAnalysis);
+  pendingAnalysis = setTimeout(runAiAnalysis, 600); // debounce a burst of changes into one
+}
+
+// Agent acknowledges the operator's mission briefing in character.
+async function ackMission(text) {
+  const fallback = "Copy that. Mission's locked in — heading in.";
+  if (!process.env.CEREBRAS_API_KEY) {
+    io.emit("mission-ack", { text: fallback, timestamp: Date.now() });
+    return;
+  }
+  try {
+    const resp = await openai.chat.completions.create({
+      model: process.env.CEREBRAS_MODEL || "gpt-oss-120b",
+      messages: [
+        { role: "system", content: CHAT_SYSTEM },
+        { role: "user", content: `The operator is briefing you on the mission before you head in: "${text}". Acknowledge it back in character in one or two sentences — confirm you've got it and you're ready. Don't ask questions, just lock it in.` },
+      ],
+      max_tokens: 150,
+    });
+    io.emit("mission-ack", { text: resp.choices[0]?.message?.content || fallback, timestamp: Date.now() });
+  } catch (err) {
+    console.error("Mission ack error:", err.message);
+    io.emit("mission-ack", { text: fallback, timestamp: Date.now() });
+  }
+}
+
 // Plain-language readings for chat — no sensor part names to parrot, keeps the
-// model inside the cave fiction.
+// model inside the cave fiction. Each reading carries a pre-judged status tag.
+const missionLine = () => (currentMission ? `Your mission, briefed by the operator: ${currentMission}\n\n` : "");
+const trendLine = (data) => { const t = buildTrend(data); return t ? `\n${t}` : ""; };
+
 function buildChatContext(data) {
-  return `Current readings from the rover right now:
-Temperature: ${data.temp}°C
+  const s = statuses(data);
+  return `${missionLine()}Current readings from the rover right now (each line is already judged — trust the [STATUS] tag, do NOT re-judge from the number, and do NOT recite the raw number):
+Temperature: ${data.temp}°C [${s.temp}]
 Humidity: ${data.humid}%
-Distance to the rock face ahead: ${data.dist} cm
-Smoke/gas level: ${data.smoke}
-Air quality: ${data.airq}
-Combustible gas: ${data.co}${data.co_alert ? " — DANGER, gas pocket detected" : ""}
-Tilt: roll ${data.roll}°, pitch ${data.pitch}°, yaw ${data.yaw}°`;
+Distance to the rock face ahead: ${data.dist} cm [${s.dist}]
+Smoke/gas level: ${data.smoke} [${s.smoke}]
+Air quality: ${data.airq} [${s.airq}]
+Combustible gas: ${data.co} [${s.co}]
+Tilt: roll ${data.roll}°, pitch ${data.pitch}°, yaw ${data.yaw}°${trendLine(data)}`;
 }
 
 function buildAiPrompt(data) {
-  return `Latest telemetry from your sensors — read the room and report to the operator.
+  const s = statuses(data);
+  return `${missionLine()}Latest telemetry from your sensors — read the room and report to the operator. Each line is already judged: trust the [STATUS] tag, do NOT re-judge from the raw number, and do NOT recite the raw number aloud.
 
-Temperature: ${data.temp}°C
+Temperature: ${data.temp}°C [${s.temp}]
 Humidity: ${data.humid}%
-Distance ahead: ${data.dist} cm
-Smoke/gas level: ${data.smoke}
-Air quality (CO2/etc): ${data.airq}
-CO/combustible gas (MQ-9 raw): ${data.co}${data.co_alert ? " ⚠ ALERT" : ""}
-Roll: ${data.roll}°  Pitch: ${data.pitch}°  Yaw: ${data.yaw}°`;
+Distance ahead: ${data.dist} cm [${s.dist}]
+Smoke/gas level: ${data.smoke} [${s.smoke}]
+Air quality (CO2/etc): ${data.airq} [${s.airq}]
+CO/combustible gas: ${data.co} [${s.co}]
+Roll: ${data.roll}°  Pitch: ${data.pitch}°  Yaw: ${data.yaw}°${trendLine(data)}`;
 }
 
 async function runAiAnalysis() {
@@ -329,9 +458,7 @@ async function connectSerial(path) {
 
 connectSerial();
 
-if (AI_INTERVAL > 0) {
-  setInterval(runAiAnalysis, AI_INTERVAL);
-}
+// Analysis is on-demand only (request-analysis below) — no auto interval.
 
 io.on("connection", (socket) => {
   console.log("Client connected");
@@ -339,6 +466,14 @@ io.on("connection", (socket) => {
   socket.on("request-analysis", () => {
     console.log("On-demand analysis requested");
     runAiAnalysis();
+  });
+  // Send the agent the current mission so a freshly-connected dashboard shows it.
+  socket.emit("mission-set", { mission: currentMission });
+  socket.on("set-mission", (text) => {
+    currentMission = String(text || "").trim();
+    console.log("Mission set:", currentMission || "(cleared)");
+    io.emit("mission-set", { mission: currentMission });
+    if (currentMission) ackMission(currentMission);
   });
   // Debug: fake a sensor packet so the dashboard + AI work without the Arduino.
   socket.on("mock-data", () => {

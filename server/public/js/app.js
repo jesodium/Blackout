@@ -12,9 +12,9 @@ const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
 const SENSORS = [
   { key: "temp",  name: "Temp",       unit: "°C",  d: 1, min: 0, max: 60,   st: v => v > 45 ? ["Critical", "abort"] : v > 35 ? ["High", "warn"] : ["Normal", "go"] },
   { key: "humid", name: "Humidity",   unit: "%",   d: 1, min: 0, max: 100,  st: v => v > 75 ? ["Highly humid", "warn"] : v < 20 ? ["Too dry", "warn"] : ["Good", "go"] },
-  // Distance is a navigation cue: warn-level for a near wall (steer around it),
-  // but <10cm goes red — about to bump it.
-  { key: "dist",  name: "Distance",   unit: "cm",  d: 0, min: 0, max: 200,  invert: true, st: v => v < 10 ? ["Too close", "abort"] : v < 20 ? ["Obstacle", "warn"] : v < 55 ? ["Caution", "warn"] : ["Clear", "go"] },
+  // Distance is a navigation cue, never a hazard: only caution when right up on a
+  // wall (<10cm), clear otherwise — it's something to steer around, not a danger.
+  { key: "dist",  name: "Distance",   unit: "cm",  d: 0, min: 0, max: 200,  invert: true, st: v => v < 10 ? ["Too close", "warn"] : ["Clear", "go"] },
   { key: "smoke", name: "Smoke / Gas",unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 600 ? ["Hazard", "abort"] : v > 300 ? ["Warning", "warn"] : ["Normal", "go"] },
   { key: "airq",  name: "Air Qual",   unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 800 ? ["Poor", "abort"] : v > 450 ? ["Moderate", "warn"] : ["Good", "go"] },
 ];
@@ -327,14 +327,21 @@ function AgentTiming({ ai }) {
   return null;
 }
 
-function Agent({ ai, tts, packet, connected, speaking, onAnalyze, onToggleTts, onPick, onMock, onAsk }) {
+function Agent({ ai, tts, packet, connected, speaking, chats, activeChat, onNewChat, onSelectChat, onDeleteChat, onBrief, onAnalyze, onToggleTts, onPick, onMock, onAsk }) {
   const intent = deriveIntent(ai, packet, connected);
   const v = assess(packet);
+  const briefed = activeChat && activeChat.mission;
   return html`
     <section class=${"zone agent reveal is-" + intent.key + (ai.analyzing ? " is-analyzing" : "") + (speaking ? " is-speaking" : "")}
       style=${{ animationDelay: "120ms", "--agent-c": intent.color }} aria-labelledby="agent-h">
       <${Head} folio="02" title="Agent" tag=${ai.badge} />
       <div class="agent-body">
+        ${!activeChat
+          ? html`<${ChatSelect} chats=${chats} onNew=${onNewChat} onSelect=${onSelectChat} onDelete=${onDeleteChat} />`
+          : !briefed
+          ? html`<${Briefing} onBrief=${onBrief} onBack=${() => onSelectChat("")} busy=${ai.analyzing} />`
+          : html`<${React.Fragment}>
+        <button type="button" class="brief-back agent-back" onClick=${() => onSelectChat("")}>← Sessions · ${activeChat.title}</button>
         <div class="agent-stage">
           <span class="agent-grid" aria-hidden="true"></span>
           <span class="agent-mark" aria-hidden="true">AGT</span>
@@ -376,33 +383,122 @@ function Agent({ ai, tts, packet, connected, speaking, onAnalyze, onToggleTts, o
               </div>`)}
           </div>
         </details>
+          </${React.Fragment}>`}
       </div>
     </section>`;
 }
 
-/* ---------------- ask blackout (voice, in agent box) ---------------- */
+/* ---------------- chat sessions (in agent box) ---------------- */
+function ChatSelect({ chats, onNew, onSelect, onDelete }) {
+  return html`
+    <div class="chat-select">
+      <div class="mission-head"><span class="mission-k">Sessions</span></div>
+      ${chats.length === 0
+        ? html`<p class="chat-empty">No chats created.</p>`
+        : html`<div class="chat-list">
+            ${chats.slice().reverse().map(c => html`
+              <div key=${c.id} class="chat-item">
+                <button type="button" class="chat-item-main" onClick=${() => onSelect(c.id)}>
+                  <span class="chat-item-title">${c.title || "Untitled"}</span>
+                  <span class="chat-item-sub">${c.mission ? "Briefed" : "Not briefed"}</span>
+                </button>
+                <button type="button" class="chat-del" onClick=${() => onDelete(c.id)} title="Delete chat" aria-label="Delete chat">×</button>
+              </div>`)}
+          </div>`}
+      <button type="button" class="btn btn--primary chat-new" onClick=${onNew}>+ New Chat</button>
+    </div>`;
+}
+
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-// Predetermined prompts — give the operator ideas and keep questions on-telemetry.
-const ASK_SUGGESTIONS = ["What's ahead?", "Is the air breathable?", "Any gas danger?", "Are we level?", "Push on or back out?"];
-function Ask({ onAsk, busy }) {
+
+// Shared speech-to-text. onText gets the recognized transcript.
+function useMic(onText) {
   const [listening, setListening] = useState(false);
   const recRef = useRef(null);
-
-  const startMic = useCallback(() => {
+  const toggle = useCallback(() => {
     if (!SpeechRec) return;
     if (listening) { recRef.current?.stop(); return; }
     const rec = new SpeechRec();
     rec.lang = "en-US"; rec.interimResults = false; rec.maxAlternatives = 1;
-    rec.onresult = (e) => onAsk(e.results[0][0].transcript);
+    rec.onresult = (e) => onText(e.results[0][0].transcript);
     rec.onend = () => setListening(false);
     rec.onerror = () => setListening(false);
     recRef.current = rec; setListening(true); rec.start();
-  }, [listening, onAsk]);
+  }, [listening, onText]);
+  return { listening, toggle, supported: !!SpeechRec };
+}
+
+const INTRO = "Hey — I'm Blackout, the recon unit you're sending into the dark. Walk me through the job, one thing at a time.";
+const BRIEF_STEPS = [
+  { key: "objective",   label: "Objective",   q: "What's the job down there — what am I going in to do?",   ph: "e.g. find a route through the collapsed section, check for survivors" },
+  { key: "environment", label: "Environment", q: "What kind of place am I dropping into?",                   ph: "e.g. flooded mine shaft, tight passages, unstable ceiling" },
+  { key: "watch",       label: "Watch for",   q: "What should I be watching for down there?",                ph: "e.g. gas pockets, sudden drop-offs, rising water" },
+];
+
+function Briefing({ onBrief, onBack, busy }) {
+  const [step, setStep] = useState(0);
+  const [answers, setAnswers] = useState({});
+  const review = step >= BRIEF_STEPS.length;
+  const cur = BRIEF_STEPS[step];
+  const setCur = (val) => setAnswers(a => ({ ...a, [cur.key]: val }));
+  const mic = useMic((t) => setAnswers(a => {
+    const k = BRIEF_STEPS[step]?.key; if (!k) return a;
+    return { ...a, [k]: (a[k] ? a[k] + " " : "") + t };
+  }));
+  const curVal = (answers[cur?.key] || "");
+  const next = () => { if (curVal.trim()) setStep(s => s + 1); };
+  const start = () => onBrief(BRIEF_STEPS.map(s => `${s.label}: ${answers[s.key] || "—"}`).join("\n"));
+
+  if (review) {
+    return html`
+      <div class="briefing">
+        <button type="button" class="brief-back" onClick=${() => setStep(BRIEF_STEPS.length - 1)}>← Back</button>
+        <div class="brief-orb"><span class="agent-face">^_^</span></div>
+        <p class="brief-greeting">Got it — here's the rundown. Good to go?</p>
+        <div class="brief-summary">
+          ${BRIEF_STEPS.map(s => html`<div key=${s.key} class="brief-sum-row">
+            <span class="brief-sum-k">${s.label}</span>
+            <span class="brief-sum-v">${answers[s.key] || "—"}</span>
+          </div>`)}
+        </div>
+        <button type="button" class="btn btn--primary" onClick=${start} disabled=${busy}>
+          ${busy ? "Heading in…" : "Start Recon"}
+        </button>
+      </div>`;
+  }
 
   return html`
+    <div class="briefing">
+      <button type="button" class="brief-back" onClick=${step === 0 ? onBack : () => setStep(s => s - 1)}>
+        ${step === 0 ? "← Sessions" : "← Back"}
+      </button>
+      <div class="brief-orb"><span class="agent-face">o_o</span></div>
+      ${step === 0 ? html`<p class="brief-greeting">${INTRO}</p>` : null}
+      <div class="brief-step-k">Step ${step + 1} of ${BRIEF_STEPS.length} · ${cur.label}</div>
+      <p class="brief-q">${cur.q}</p>
+      <div class="brief-field">
+        <textarea class="mission-input" rows="3" placeholder=${cur.ph}
+          value=${curVal} onInput=${e => setCur(e.target.value)} disabled=${busy} autoFocus
+          onKeyDown=${e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) next(); }}></textarea>
+        ${mic.supported ? html`<button type="button" class=${"ask-mic brief-mic" + (mic.listening ? " is-live" : "")}
+          onClick=${mic.toggle} disabled=${busy} aria-pressed=${mic.listening}>
+          ${mic.listening ? "● Listening…" : "🎤 Speak"}</button>` : null}
+      </div>
+      <button type="button" class="btn btn--primary" onClick=${next} disabled=${busy || !curVal.trim()}>
+        ${step === BRIEF_STEPS.length - 1 ? "Review" : "Next"}
+      </button>
+    </div>`;
+}
+
+/* ---------------- ask blackout (voice, in agent box) ---------------- */
+// Predetermined prompts — give the operator ideas and keep questions on-telemetry.
+const ASK_SUGGESTIONS = ["What's ahead?", "Is the air breathable?", "Any gas danger?", "Are we level?", "Push on or back out?"];
+function Ask({ onAsk, busy }) {
+  const mic = useMic(onAsk);
+  return html`
     <div class="agent-ask">
-      ${SpeechRec ? html`<button type="button" class=${"ask-mic" + (listening ? " is-live" : "")} onClick=${startMic}
-        disabled=${busy} aria-pressed=${listening}>${listening ? "● Listening…" : "🎤 Ask Blackout"}</button>` : null}
+      ${mic.supported ? html`<button type="button" class=${"ask-mic" + (mic.listening ? " is-live" : "")} onClick=${mic.toggle}
+        disabled=${busy} aria-pressed=${mic.listening}>${mic.listening ? "● Listening…" : "🎤 Ask Blackout"}</button>` : null}
       <div class="ask-chips">
         ${ASK_SUGGESTIONS.map(q => html`<button key=${q} type="button" class="ask-chip"
           onClick=${() => onAsk(q)} disabled=${busy}>${q}</button>`)}
@@ -542,6 +638,14 @@ function App() {
   const [serialLines, setSerialLines] = useState([]);
   const [serialHidden, setSerialHidden] = useState(() => localStorage.getItem("serialHidden") === "true");
   const [speaking, setSpeaking] = useState(false);
+  // Chats = briefed recon sessions. Each holds its own mission + conversation.
+  const [chats, setChats] = useState(() => { try { return JSON.parse(localStorage.getItem("chats") || "[]"); } catch { return []; } });
+  const [activeId, setActiveId] = useState(() => localStorage.getItem("activeChat") || "");
+  const activeChat = chats.find(c => c.id === activeId) || null;
+  const activeRef = useRef(null);
+  useEffect(() => { activeRef.current = activeChat; }, [activeChat]);
+  useEffect(() => { localStorage.setItem("chats", JSON.stringify(chats)); }, [chats]);
+  useEffect(() => { localStorage.setItem("activeChat", activeId); }, [activeId]);
 
   const socketRef = useRef(null);
   const ttsRef = useRef(localStorage.getItem("tts") !== "false");
@@ -587,7 +691,10 @@ function App() {
     const socket = window.io(url);
     socketRef.current = socket;
 
-    socket.on("connect", () => { setConnected(true); addLog("Link established. Awaiting telemetry…", "system"); });
+    socket.on("connect", () => {
+      setConnected(true); addLog("Link established. Awaiting telemetry…", "system");
+      socket.emit("set-mission", activeRef.current?.mission || ""); // sync server to active session
+    });
     socket.on("disconnect", () => { setConnected(false); setPing("—"); addLog("Link lost. Reconnecting…", "danger"); });
     socket.on("sensor-data", d => {
       if (!d) return;
@@ -612,16 +719,19 @@ function App() {
         id: Date.now() + Math.random(),
       }].slice(-300));
     });
-    socket.on("ai-analysis", d => {
-      if (!d?.analysis) return;
-      addLog("AI analysis received.", "ai");
+    // The agent says something on its own (analysis, instant reaction, or mission ack).
+    const sayAgent = (text, ts, logMsg, logKind) => {
+      addLog(logMsg, logKind);
       setAi(p => ({
-        text: d.analysis, badge: "Online", analyzing: false,
+        text, badge: "Online", analyzing: false,
         phase: null, since: 0, llm: p.since ? Date.now() - p.since : null, tts: null,
-        history: [...p.history, { text: d.analysis, time: new Date(d.timestamp || Date.now()).toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-20),
+        history: [...p.history, { text, time: new Date(ts || Date.now()).toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-20),
       }));
-      if (ttsRef.current) speakTimed(d.analysis);
-    });
+      if (ttsRef.current) speakTimed(text);
+    };
+    socket.on("ai-analysis", d => { if (d?.analysis) sayAgent(d.analysis, d.timestamp, "AI analysis received.", "ai"); });
+    socket.on("agent-blurt", d => { if (d?.text) sayAgent(d.text, d.timestamp, "Blackout: " + d.text, "warn"); });
+    socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, "Mission acknowledged.", "ai"); });
     addLog("Console booted. Standing by.", "system");
     return () => socket.close();
   }, [addLog, speakTimed]);
@@ -664,17 +774,17 @@ function App() {
     setAi(p => ({ ...p, analyzing: true, badge: "Analyzing…", phase: "thinking", since: Date.now(), llm: null, tts: null }));
     socketRef.current?.emit("mock-data");
   }, []);
-  // Ask Blackout: reply lands in the agent's speech bubble + is spoken. askCtx
-  // keeps a short rolling history so follow-up questions have context.
-  const askCtx = useRef([]);
+  // Ask Blackout: reply lands in the agent's speech bubble + is spoken. Each chat
+  // keeps its own rolling message history so follow-ups have context.
   const ask = useCallback(async (text) => {
     text = (text || "").trim();
-    if (!text) return;
+    const chat = activeRef.current;
+    if (!text || !chat) return;
     addLog(`Operator: ${text}`, "system");
     const t0 = Date.now();
     setAi(p => ({ ...p, analyzing: true, badge: "Thinking…", phase: "thinking", since: t0, llm: null, tts: null }));
-    const next = [...askCtx.current, { role: "user", content: text }].slice(-12);
-    askCtx.current = next;
+    const next = [...(chat.messages || []), { role: "user", content: text }].slice(-12);
+    setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: next } : c));
     try {
       const r = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -682,7 +792,7 @@ function App() {
       });
       const data = await r.json();
       const reply = data.reply || data.error || "No response.";
-      if (data.reply) askCtx.current = [...next, { role: "assistant", content: reply }].slice(-12);
+      if (data.reply) setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...next, { role: "assistant", content: reply }].slice(-12) } : c));
       addLog("Blackout replied.", "ai");
       setAi(p => ({
         text: reply, badge: "Online", analyzing: false, phase: null, since: 0, llm: Date.now() - t0, tts: null,
@@ -698,6 +808,29 @@ function App() {
     if (!n) { ttsAudio?.pause(); window.speechSynthesis?.cancel(); setSpeaking(false); }
     return n;
   }), []);
+  const newChat = useCallback(() => {
+    const id = "c" + Date.now();
+    setChats(cs => [...cs, { id, title: "New Recon", mission: "", messages: [], created: Date.now() }]);
+    setActiveId(id);
+    socketRef.current?.emit("set-mission", ""); // no mission until briefed
+  }, []);
+  const selectChat = useCallback((id) => {
+    setActiveId(id);
+    socketRef.current?.emit("set-mission", (chats.find(c => c.id === id)?.mission) || "");
+  }, [chats]);
+  const deleteChat = useCallback((id) => {
+    setChats(cs => cs.filter(c => c.id !== id));
+    setActiveId(a => (a === id ? "" : a));
+  }, []);
+  const briefMission = useCallback((text) => {
+    text = (text || "").trim();
+    const chat = activeRef.current;
+    if (!text || !chat) return;
+    addLog(`Mission briefing sent: ${text}`, "system");
+    setChats(cs => cs.map(c => c.id === chat.id ? { ...c, mission: text, title: text.length > 30 ? text.slice(0, 30) + "…" : text } : c));
+    setAi(p => ({ ...p, analyzing: true, badge: "Copying…", phase: "thinking", since: Date.now() }));
+    socketRef.current?.emit("set-mission", text);
+  }, [addLog]);
   const pickHistory = useCallback((text) => setAi(p => ({ ...p, text })), []);
   const toggleSerial = useCallback(() => setSerialHidden(p => { const n = !p; localStorage.setItem("serialHidden", n); return n; }), []);
   const clearSerial = useCallback(() => setSerialLines([]), []);
@@ -725,6 +858,8 @@ function App() {
           <div class="row row--stage">
             <${Orientation} packet=${packet} onLog=${addLog} />
             <${Agent} ai=${ai} tts=${tts} packet=${packet} connected=${connected} speaking=${speaking}
+              chats=${chats} activeChat=${activeChat} onNewChat=${newChat} onSelectChat=${selectChat}
+              onDeleteChat=${deleteChat} onBrief=${briefMission}
               onAnalyze=${analyze} onToggleTts=${toggleTts} onPick=${pickHistory} onMock=${mockData} onAsk=${ask} />
             <${ReadingsPanel} packet=${view} />
           </div>

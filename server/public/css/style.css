@@ -411,10 +411,11 @@ body {
 
 .agent-state-label {
   position: relative; z-index: 1; color: currentColor;
+  display: flex; flex-direction: column; align-items: center; gap: 16px;
   font: 700 11px/1 var(--grotesk); letter-spacing: 0.3em; text-transform: uppercase;
   animation: agent-text-in 0.4s ease;
 }
-.agent-face { font-family: var(--mono, monospace); font-size: 13px; letter-spacing: 0; }
+.agent-face { font-family: var(--mono, monospace); font-size: 34px; line-height: 1; letter-spacing: 0; }
 
 /* voice equalizer (shown while speaking) */
 .agent-eq { position: relative; z-index: 1; display: flex; align-items: flex-end; gap: 3px; height: 15px; color: currentColor; }
@@ -567,6 +568,55 @@ body {
 }
 .ask-chip:hover { color: var(--ink); border-color: var(--line-2); background: var(--panel-2); }
 .ask-chip:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* shared bits */
+.mission-k { font: 600 9px/1 var(--grotesk); letter-spacing: 0.24em; text-transform: uppercase; color: var(--ink-3); }
+.mission-input {
+  width: 100%; resize: vertical; padding: 9px 11px;
+  background: var(--inset); border: 1px solid var(--line-2); color: var(--ink);
+  font: 400 13px/1.45 var(--grotesk);
+}
+.mission-input:focus { outline: none; border-color: var(--ink); }
+
+/* chat sessions */
+.chat-select { padding: 18px; display: flex; flex-direction: column; gap: 12px; min-height: 220px; }
+.mission-head { display: flex; align-items: center; justify-content: space-between; }
+.chat-empty { margin: auto 0; text-align: center; color: var(--ink-3); font: 400 13px var(--grotesk); }
+.chat-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.chat-item { display: flex; align-items: stretch; gap: 6px; }
+.chat-item-main {
+  flex: 1; text-align: left; cursor: pointer; padding: 9px 11px;
+  background: var(--inset); border: 1px solid var(--line); color: var(--ink);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.chat-item-main:hover { border-color: var(--line-2); background: var(--panel-2); }
+.chat-item-title { font: 600 13px var(--grotesk); }
+.chat-item-sub { font: 500 10px var(--mono); letter-spacing: 0.04em; color: var(--ink-3); text-transform: uppercase; }
+.chat-del {
+  cursor: pointer; width: 34px; flex-shrink: 0;
+  background: transparent; border: 1px solid var(--line); color: var(--ink-3); font-size: 18px; line-height: 1;
+}
+.chat-del:hover { color: #fff; background: var(--accent); border-color: var(--accent); }
+.chat-new { margin-top: auto; }
+
+/* briefing step */
+.briefing { padding: 18px; display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
+.brief-back, .agent-back {
+  align-self: flex-start; cursor: pointer; padding: 4px 9px; background: transparent;
+  border: 1px solid var(--line-2); color: var(--ink-2); font: 600 10px var(--mono); letter-spacing: 0.04em;
+}
+.brief-back:hover, .agent-back:hover { color: var(--ink); border-color: var(--ink); }
+.agent-back { margin: 14px 18px 0; }
+.brief-orb { align-self: center; font-family: var(--mono, monospace); font-size: 40px; line-height: 1; color: var(--agent-c, var(--ink)); margin-top: 6px; }
+.brief-greeting { margin: 0; text-align: center; font: 400 14px/1.5 var(--grotesk); color: var(--ink); }
+.brief-step-k { font: 600 9px/1 var(--grotesk); letter-spacing: 0.22em; text-transform: uppercase; color: var(--ink-3); }
+.brief-q { margin: 0; font: 500 15px/1.4 var(--grotesk); color: var(--ink); }
+.brief-field { display: flex; flex-direction: column; gap: 8px; }
+.brief-mic { width: 100%; }
+.brief-summary { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); padding: 12px; background: var(--inset); }
+.brief-sum-row { display: flex; flex-direction: column; gap: 2px; }
+.brief-sum-k { font: 600 9px/1 var(--grotesk); letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-3); }
+.brief-sum-v { font: 400 13px/1.45 var(--grotesk); color: var(--ink); }
 
 /* ============================================================
    REVEAL
