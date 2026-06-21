@@ -11,6 +11,23 @@ Two independent Arduino boards, **no direct link yet**:
 
 **Current flow:** Mega reads sensors → sends CSV over **Serial1 to HC-06 Bluetooth** + Serial USB for debug. Node.js server on PC receives BT data, serves dashboard, and sends to OpenRouter AI for area analysis.
 
+### Wireless to the PC — two paths
+
+Sensor data reaches the Mac one of two ways. **Test Path A first; fall back to
+Path B only if HC-06 won't work.**
+
+| | Path A — HC-06 (primary) | Path B — ESP32 over WiFi (fallback) |
+|---|---|---|
+| Link | HC-06 Bluetooth on Serial1 | Mega serial → ESP32-CAM → WiFi |
+| Server side | works **as-is** — `serialport` reads `/dev/cu.HC-06-SPP` | **rewrite** input to WiFi/TCP receive |
+| Extra wiring | none (HC-06 RX wired direct) | level shift Mega TX1 (5V) → ESP32 RX (3.3V) |
+| When to use | default | only if HC-06 is unreliable |
+
+The **camera (ESP32-CAM) streams over its own WiFi regardless of which path** —
+see the Camera section. In Path B the same ESP32 also relays the sensor CSV, so
+one board carries both; in Path A the ESP32 does camera only and the Mega never
+links to it.
+
 **Later (Phase 2):** Mega Serial2/Serial3 for Uno communication for sensor‑driven navigation.
 
 ---
@@ -21,7 +38,7 @@ Two independent Arduino boards, **no direct link yet**:
 |----------|-----------------|----------|
 | A0 | MQ-2 (smoke) | Analog read |
 | D22 | MQ-2 | Digital out |
-| D23 | DHT11/DHT22 | Temp + humidity signal |
+| D42 | DHT11/DHT22 | Temp + humidity signal |
 | 20 (SDA) | MPU6050 | I2C data |
 | 21 (SCL) | MPU6050 | I2C clock |
 | A6 | HC-SR04 | TRIG |
@@ -44,18 +61,37 @@ Two independent Arduino boards, **no direct link yet**:
 | VCC | 5V | |
 | GND | GND | |
 | TX | D19 (RX1) | BT → Mega receive |
-| RX | D18 (TX1) | Mega → BT send — use voltage divider (1kΩ + 2kΩ) or 1kΩ series resistor to drop 5V→3.3V |
+| RX | D18 (TX1) | Mega → BT send — **wire direct (default)**. 5V into the HC-06's 3.3V RX is out of spec but the module tolerates it; modules survive it for years. If it acts flaky, drop in a 1kΩ series resistor (or 1kΩ + 2kΩ divider) to get 3.3V. |
 | STATE | D27 | Connection status — HIGH when paired |
 | EN/KEY | D28 | Enable / AT-command mode (firmware holds LOW for normal operation) |
 
 HC-06 is slave-only, no AT commands needed. Pairs as serial port on PC (/dev/cu.HC-06-SPP or similar).
+
+### Camera (ESP32-CAM) — separate WiFi link, NOT through the Mega
+
+The camera does **not** route through the Mega or HC-06: the Mega has no RAM to
+buffer a frame (8KB) and HC-06's ~1–14 KB/s serial would take seconds per JPEG
+and block the sensor stream. Instead the **ESP32-CAM (AI-Thinker, OV2640)**
+streams over its **own WiFi** straight to the Mac, independent of the Mega.
+
+- **No USB port** on the ESP32-CAM — flash it with a **CP2102 USB-TTL adapter**
+  (or an ESP32-CAM-MB programmer shield). Flashing uses 3.3V TTL → no level
+  shift needed for programming.
+- **If the Mega is ever serial-linked to the ESP32 later:** Mega TX1 (5V) →
+  ESP32 RX (3.3V, NOT 5V-tolerant) needs a level shift — 1kΩ+2kΩ divider or a
+  4-channel logic level converter (BSS138). ESP32 TX → Mega RX wires direct.
+  Not wired today.
+
+Sourcing note: Electronica Caribe (Panama) stocks HC-06, ESP32-CAM, and the
+CP2102, but **no standalone logic level converter** (checked full catalog) —
+buy that elsewhere or use resistors.
 
 ## Mega Sensors
 
 | Sensor | Measures | Interface |
 |--------|----------|-----------|
 | MQ-2 | Smoke/gas (LPG, propane, H2) | Analog A0 + digital D22 |
-| DHT11/DHT22 | Temperature + humidity | Digital D23 |
+| DHT11/DHT22 | Temperature + humidity | Digital D42 |
 | MPU6050 | Gyroscope (roll, pitch, yaw) | I2C (20/21) |
 | HC-SR04 | Distance (ultrasonic) | TRIG A6, ECHO A5 |
 | MQ-135 | Air quality (CO2, NH3, benzene) | Analog A1 + digital D26 |

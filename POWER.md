@@ -20,9 +20,33 @@ clean regulated 5V and give the motors their own pack.
   -- GND stays common (the shield ties motor GND <-> Uno GND on-board) --
 ```
 
-Only **two** things need the power bank: the **Mega** and the **ESP32** link board.
+Only **two** things need the power bank: the **Mega** and the **ESP32-CAM**.
 The **Uno rides on the motor shield** (PWR jumper on, motor battery feeds the Uno's
 Vin) — see the jumper section for the tradeoff.
+
+### Feeding both off one power bank (separate ports, NOT daisy-chained)
+
+Each board gets its **own line from the bank** — do **not** power the ESP32 off
+the Mega's 5V pin. The Mega's USB polyfuse caps ~500mA, and the ESP32-CAM's WiFi
+current spikes (~700mA bursts) would sag the shared rail and **reset the Mega**.
+Same source, separate wires = isolation.
+
+```
+Power bank (USB-A ports, >=2A)
+ ├─ USB-A → USB-B cable ─────────────→ Mega        (Mega has a USB-B port)
+ └─ USB-A → DuPont (red=5V/black=GND) → ESP32-CAM 5V/GND  (+1000uF cap)
+```
+
+- **ESP32-CAM has no USB port** → power its **5V pin** via a **USB-A-to-DuPont
+  cable**. Use a USB-A bank port (always outputs 5V); a USB-C port needs a 5.1kΩ
+  CC resistor in the cable or it stays dead. Verify red=5V/black=GND with a meter
+  before plugging in. Never feed the ESP32 from the Mega's 3.3V pin (~50mA, far
+  too weak).
+- **The 1000uF cap** is an electrolytic capacitor across the ESP32's 5V/GND. It's
+  a tiny local energy reservoir: when the WiFi radio spikes current for a few
+  milliseconds, the cap dumps charge to hold the voltage up instead of letting it
+  brown out. Cheap insurance against random ESP32 reboots. Mind polarity — the
+  striped/short leg is GND (−).
 
 ## Why a power bank (and no buck converter)
 

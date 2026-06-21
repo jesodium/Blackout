@@ -1,2 +1,2 @@
 default_fqbn: arduino:avr:mega:cpu=atmega2560
-default_port: /dev/cu.usbserial-1140
+default_port: /dev/cu.usbserial-1110

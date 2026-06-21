@@ -435,6 +435,14 @@ body {
 .agent.is-analyzing .agent-text { color: var(--ink-2); }
 @keyframes agent-text-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
+.agent-timing {
+  margin-top: 8px; padding-left: 16px;
+  font: 500 10px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3);
+}
+.agent-timing b { color: var(--ink-2); font-weight: 700; }
+.agent-timing.is-live { color: var(--agent-c, var(--accent)); }
+.agent-timing.is-live b { color: var(--agent-c, var(--accent)); }
+
 /* go/no-go entry verdict — the headline answer: can a human enter? */
 .verdict {
   margin: 12px 18px 4px; padding: 11px 14px; display: flex; flex-direction: column; gap: 3px;
@@ -536,6 +544,28 @@ body {
 .toast.k-ok     { color: var(--go);    border-left-color: var(--go); }
 .toast.k-danger { color: var(--accent); border-left-color: var(--accent); }
 @keyframes toast-in { from { transform: translateX(40px); opacity: 0; } }
+
+/* ============================================================
+   AGENT · ASK BLACKOUT (mic + suggestion chips, in agent box)
+   ============================================================ */
+.agent-ask { padding: 0 18px 16px; display: flex; flex-direction: column; gap: 8px; }
+.ask-mic {
+  width: 100%; height: 38px; cursor: pointer;
+  background: var(--inset); border: 1px solid var(--line-2); color: var(--ink);
+  font: 600 12px var(--mono); letter-spacing: 0.04em;
+}
+.ask-mic:hover { border-color: var(--ink); }
+.ask-mic:disabled { opacity: 0.4; cursor: not-allowed; }
+.ask-mic.is-live { color: #fff; background: var(--accent); border-color: var(--accent); animation: chat-rec 1s steps(2) infinite; }
+@keyframes chat-rec { 50% { opacity: 0.55; } }
+.ask-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-chip {
+  cursor: pointer; padding: 5px 9px; background: transparent;
+  border: 1px solid var(--line); color: var(--ink-2);
+  font: 500 11px var(--grotesk);
+}
+.ask-chip:hover { color: var(--ink); border-color: var(--line-2); background: var(--panel-2); }
+.ask-chip:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ============================================================
    REVEAL

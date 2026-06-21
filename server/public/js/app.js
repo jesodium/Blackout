@@ -41,26 +41,22 @@ function browserSpeak(text, { onStart, onEnd } = {}) {
   speechSynthesis.speak(u);
 }
 
-// ElevenLabs flash v2.5 via server proxy; falls back to browser TTS on failure.
+// MS Edge neural TTS via server proxy; falls back to browser TTS on failure.
+// Streams from the GET endpoint so playback starts on the first chunk (low delay)
+// instead of waiting for the whole MP3 to download.
 let ttsAudio = null;
 async function speak(text, { onStart, onEnd } = {}) {
   if (!text) { onEnd?.(); return; }
   ttsAudio?.pause();
   window.speechSynthesis?.cancel();
   try {
-    const r = await fetch("/api/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    if (!r.ok) throw new Error(await r.text());
-    const url = URL.createObjectURL(await r.blob());
-    ttsAudio = new Audio(url);
+    ttsAudio = new Audio("/api/tts?text=" + encodeURIComponent(text));
     ttsAudio.onplay = () => onStart?.();
-    ttsAudio.onended = ttsAudio.onerror = () => { URL.revokeObjectURL(url); onEnd?.(); };
+    ttsAudio.onended = () => onEnd?.();
+    ttsAudio.onerror = () => browserSpeak(text, { onStart, onEnd }); // ponytail: fallback if proxy/offline
     await ttsAudio.play();
   } catch {
-    browserSpeak(text, { onStart, onEnd }); // ponytail: graceful fallback if key unset/offline
+    browserSpeak(text, { onStart, onEnd });
   }
 }
 
@@ -315,7 +311,21 @@ function AgentIcon({ intent }) {
   </svg>`;
 }
 
-function Agent({ ai, tts, packet, connected, speaking, onAnalyze, onToggleTts, onPick, onMock }) {
+// Live ticking elapsed counter (since a timestamp), ~10fps.
+function Stopwatch({ since }) {
+  const [, tick] = useState(0);
+  useEffect(() => { const id = setInterval(() => tick(n => n + 1), 90); return () => clearInterval(id); }, [since]);
+  return html`${((Date.now() - since) / 1000).toFixed(1)}s`;
+}
+
+function AgentTiming({ ai }) {
+  if (ai.phase === "thinking") return html`<div class="agent-timing is-live">Thinking… <b><${Stopwatch} since=${ai.since} /></b></div>`;
+  if (ai.phase === "speaking") return html`<div class="agent-timing is-live">Synthesizing voice… <b><${Stopwatch} since=${ai.since} /></b></div>`;
+  if (ai.llm != null) return html`<div class="agent-timing">LLM <b>${(ai.llm / 1000).toFixed(1)}s</b> · TTS <b>${ai.tts != null ? (ai.tts / 1000).toFixed(1) + "s" : "—"}</b></div>`;
+  return null;
+}
+
+function Agent({ ai, tts, packet, connected, speaking, onAnalyze, onToggleTts, onPick, onMock, onAsk }) {
   const intent = deriveIntent(ai, packet, connected);
   const v = assess(packet);
   return html`
@@ -333,6 +343,7 @@ function Agent({ ai, tts, packet, connected, speaking, onAnalyze, onToggleTts, o
         </div>
         <div class="agent-speech">
           <p class="agent-text" key=${ai.text} role="status" aria-live="polite">${ai.text}</p>
+          <${AgentTiming} ai=${ai} />
         </div>
         <div class=${"verdict is-" + v.kind} role="status" aria-live="polite">
           <span class="verdict-k">Entry Status</span>
@@ -352,6 +363,7 @@ function Agent({ ai, tts, packet, connected, speaking, onAnalyze, onToggleTts, o
             Voice
           </label>
         </div>
+        <${Ask} onAsk=${onAsk} busy=${ai.analyzing} />
         <details class="ai-hist agent-hist">
           <summary>History · ${ai.history.length}</summary>
           <div class="ai-hist-list">
@@ -364,6 +376,36 @@ function Agent({ ai, tts, packet, connected, speaking, onAnalyze, onToggleTts, o
         </details>
       </div>
     </section>`;
+}
+
+/* ---------------- ask blackout (voice, in agent box) ---------------- */
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+// Predetermined prompts — give the operator ideas and keep questions on-telemetry.
+const ASK_SUGGESTIONS = ["What's ahead?", "Is the air breathable?", "Any gas danger?", "Are we level?", "Push on or back out?"];
+function Ask({ onAsk, busy }) {
+  const [listening, setListening] = useState(false);
+  const recRef = useRef(null);
+
+  const startMic = useCallback(() => {
+    if (!SpeechRec) return;
+    if (listening) { recRef.current?.stop(); return; }
+    const rec = new SpeechRec();
+    rec.lang = "en-US"; rec.interimResults = false; rec.maxAlternatives = 1;
+    rec.onresult = (e) => onAsk(e.results[0][0].transcript);
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recRef.current = rec; setListening(true); rec.start();
+  }, [listening, onAsk]);
+
+  return html`
+    <div class="agent-ask">
+      ${SpeechRec ? html`<button type="button" class=${"ask-mic" + (listening ? " is-live" : "")} onClick=${startMic}
+        disabled=${busy} aria-pressed=${listening}>${listening ? "● Listening…" : "🎤 Ask Blackout"}</button>` : null}
+      <div class="ask-chips">
+        ${ASK_SUGGESTIONS.map(q => html`<button key=${q} type="button" class="ask-chip"
+          onClick=${() => onAsk(q)} disabled=${busy}>${q}</button>`)}
+      </div>
+    </div>`;
 }
 
 /* ---------------- logs ---------------- */
@@ -489,7 +531,7 @@ function App() {
   const [ping, setPing] = useState("—");
   const [packets, setPackets] = useState(0);
   const [logs, setLogs] = useState([]);
-  const [ai, setAi] = useState({ text: "Awaiting telemetry…", badge: "Standby", analyzing: false, history: [] });
+  const [ai, setAi] = useState({ text: "Awaiting telemetry…", badge: "Standby", analyzing: false, history: [], phase: null, since: 0, llm: null, tts: null });
   const [tts, setTts] = useState(() => localStorage.getItem("tts") !== "false");
   const [ports, setPorts] = useState([]);
   const [currentPort, setCurrentPort] = useState(null);
@@ -511,6 +553,16 @@ function App() {
     const id = Date.now() + Math.random();
     setToasts(p => [...p, { msg, kind, id }]);
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 3600);
+  }, []);
+
+  // Speak with timing: clock starts now, stops when first audio plays (tts ms).
+  const speakTimed = useCallback((text) => {
+    const t = Date.now();
+    setAi(p => ({ ...p, phase: "speaking", since: t, tts: null }));
+    speak(text, {
+      onStart: () => { setSpeaking(true); setAi(p => ({ ...p, phase: null, tts: Date.now() - t })); },
+      onEnd: () => setSpeaking(false),
+    });
   }, []);
 
   // socket
@@ -549,13 +601,14 @@ function App() {
       addLog("AI analysis received.", "ai");
       setAi(p => ({
         text: d.analysis, badge: "Online", analyzing: false,
+        phase: null, since: 0, llm: p.since ? Date.now() - p.since : null, tts: null,
         history: [...p.history, { text: d.analysis, time: new Date(d.timestamp || Date.now()).toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-20),
       }));
-      if (ttsRef.current) speak(d.analysis, { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false) });
+      if (ttsRef.current) speakTimed(d.analysis);
     });
     addLog("Console booted. Standing by.", "system");
     return () => socket.close();
-  }, [addLog]);
+  }, [addLog, speakTimed]);
 
   // uptime
   useEffect(() => {
@@ -588,13 +641,42 @@ function App() {
   }, [addLog, toast, loadPorts]);
 
   const analyze = useCallback(() => {
-    setAi(p => ({ ...p, analyzing: true, badge: "Analyzing…" }));
+    setAi(p => ({ ...p, analyzing: true, badge: "Analyzing…", phase: "thinking", since: Date.now(), llm: null, tts: null }));
     socketRef.current?.emit("request-analysis");
   }, []);
   const mockData = useCallback(() => {
-    setAi(p => ({ ...p, analyzing: true, badge: "Analyzing…" }));
+    setAi(p => ({ ...p, analyzing: true, badge: "Analyzing…", phase: "thinking", since: Date.now(), llm: null, tts: null }));
     socketRef.current?.emit("mock-data");
   }, []);
+  // Ask Blackout: reply lands in the agent's speech bubble + is spoken. askCtx
+  // keeps a short rolling history so follow-up questions have context.
+  const askCtx = useRef([]);
+  const ask = useCallback(async (text) => {
+    text = (text || "").trim();
+    if (!text) return;
+    addLog(`Operator: ${text}`, "system");
+    const t0 = Date.now();
+    setAi(p => ({ ...p, analyzing: true, badge: "Thinking…", phase: "thinking", since: t0, llm: null, tts: null }));
+    const next = [...askCtx.current, { role: "user", content: text }].slice(-12);
+    askCtx.current = next;
+    try {
+      const r = await fetch("/api/chat", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: next }),
+      });
+      const data = await r.json();
+      const reply = data.reply || data.error || "No response.";
+      if (data.reply) askCtx.current = [...next, { role: "assistant", content: reply }].slice(-12);
+      addLog("Blackout replied.", "ai");
+      setAi(p => ({
+        text: reply, badge: "Online", analyzing: false, phase: null, since: 0, llm: Date.now() - t0, tts: null,
+        history: [...p.history, { text: reply, time: new Date().toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-20),
+      }));
+      if (ttsRef.current && data.reply) speakTimed(reply);
+    } catch (e) {
+      setAi(p => ({ ...p, text: "Comms error: " + e.message, badge: "Online", analyzing: false, phase: null }));
+    }
+  }, [addLog, speakTimed]);
   const toggleTts = useCallback(() => setTts(p => {
     const n = !p; ttsRef.current = n; localStorage.setItem("tts", n);
     if (!n) { ttsAudio?.pause(); window.speechSynthesis?.cancel(); setSpeaking(false); }
@@ -627,7 +709,7 @@ function App() {
           <div class="row row--stage">
             <${Orientation} packet=${packet} onLog=${addLog} />
             <${Agent} ai=${ai} tts=${tts} packet=${packet} connected=${connected} speaking=${speaking}
-              onAnalyze=${analyze} onToggleTts=${toggleTts} onPick=${pickHistory} onMock=${mockData} />
+              onAnalyze=${analyze} onToggleTts=${toggleTts} onPick=${pickHistory} onMock=${mockData} onAsk=${ask} />
             <${ReadingsPanel} packet=${packet} />
           </div>
 

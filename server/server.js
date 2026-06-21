@@ -1,4 +1,7 @@
 require("dotenv").config();
+const fs = require("fs");
+const path = require("path");
+const { Readable } = require("stream");
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -36,16 +39,64 @@ app.get("/api/ports", async (req, res) => {
   res.json({ ports, current: serialPort?.path || null });
 });
 
-// TTS proxy via Microsoft Edge neural voices (free, no key). Streams MP3 back.
-app.post("/api/tts", async (req, res) => {
-  const voice = req.body?.voice || process.env.TTS_VOICE || "en-US-AndrewNeural";
-  const text = (req.body?.text || "").trim();
+// TTS proxy. Deepgram Aura-2 (low-latency streaming) when DEEPGRAM_API_KEY is
+// set, else / on failure falls back to Microsoft Edge neural voices (free, no key).
+// GET form lets an <audio> element play progressively (starts on first chunk).
+async function speakDeepgram(text, res) {
+  const model = process.env.DEEPGRAM_VOICE || "aura-2-orion-en";
+  const r = await fetch(`https://api.deepgram.com/v1/speak?model=${model}&encoding=mp3`, {
+    method: "POST",
+    headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!r.ok || !r.body) throw new Error(`Deepgram ${r.status}: ${await r.text().catch(() => "")}`);
+  res.setHeader("Content-Type", "audio/mpeg");
+  Readable.fromWeb(r.body).on("error", () => res.destroy()).pipe(res);
+}
+
+async function speakEdge(text, voice, res) {
+  const tts = new MsEdgeTTS();
+  await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+  res.setHeader("Content-Type", "audio/mpeg");
+  tts.toStream(text).audioStream.on("error", () => res.destroy()).pipe(res);
+}
+
+async function ttsHandler(req, res) {
+  const src = req.method === "GET" ? req.query : req.body;
+  const voice = src?.voice || process.env.TTS_VOICE || "en-US-AndrewNeural";
+  const text = (src?.text || "").trim();
   if (!text) return res.status(400).json({ error: "text required" });
   try {
-    const tts = new MsEdgeTTS();
-    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-    res.setHeader("Content-Type", "audio/mpeg");
-    tts.toStream(text).audioStream.pipe(res);
+    if (process.env.DEEPGRAM_API_KEY) {
+      try { return await speakDeepgram(text, res); }
+      catch (e) { console.error("Deepgram TTS failed, falling back to Edge:", e.message); }
+    }
+    await speakEdge(text, voice, res);
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+}
+app.get("/api/tts", ttsHandler);
+app.post("/api/tts", ttsHandler);
+
+// Ask-questions mode: operator chats with BLACKOUT. Client sends the running
+// message array (no server-side history); we prepend persona + live telemetry.
+app.post("/api/chat", async (req, res) => {
+  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-12) : [];
+  if (!msgs.length) return res.status(400).json({ error: "messages required" });
+  try {
+    const ctx = latestData ? buildChatContext(latestData) : "No live readings yet — running dark.";
+    const resp = await openai.chat.completions.create({
+      model: process.env.CEREBRAS_MODEL || "gpt-oss-120b",
+      messages: [
+        { role: "system", content: CHAT_SYSTEM },
+        { role: "system", content: ctx },
+        ...msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") })),
+      ],
+      max_tokens: 400,
+    });
+    res.json({ reply: resp.choices[0]?.message?.content || "No response." });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -172,26 +223,23 @@ function selectPortMenu(ports) {
 let latestData = null;
 let dataHistory = [];
 
-const AI_SYSTEM = `You are BLACKOUT, the onboard AI of a search-and-rescue rover pushing into a hazardous, blacked-out environment. You are the operator's eyes down there.
+// System prompts live in prompts/*.md so they're easy to tweak without touching code.
+const loadPrompt = (name) => fs.readFileSync(path.join(__dirname, "prompts", name), "utf8").trim();
+const AI_SYSTEM = loadPrompt("analysis.md");
+const CHAT_SYSTEM = loadPrompt("chat.md");
 
-Personality: sharp, dry, a little battle-worn — like a veteran field scout who has seen worse. Confident, never panicked, but blunt when something's wrong. You talk TO the operator, not about yourself in the third person.
-
-Hazard thresholds — judge ONLY against these, never invent danger:
-- Temp: ok <35°C, warn 35-45, danger >45
-- Humidity: ok 20-75%, else off-nominal
-- Distance ahead: clear >55cm, caution 20-55, alert <20 (obstacle close)
-- Smoke/gas: ok <300, warn 300-600, danger >600
-- Air quality: good <450, moderate 450-800, poor >800
-- CO: watch if rising; the ALERT flag means real combustible-gas danger
-- Roll/Pitch: fine within ±15°, sketchy beyond
-
-Rules:
-- 2-3 sentences, spoken aloud (this is read by TTS) — no lists, no markdown, no emojis.
-- Read the ACTUAL numbers. If everything is within safe limits, say so plainly and confidently — do NOT manufacture hazards that aren't in the data.
-- Lead with the worst real hazard if one exists; if it's all clear, lead with that.
-- Be decisive — give a recommendation (push on / hold / back out) that matches the readings.
-- Reference readings naturally in plain speech ("air's getting thick", "wall about half a meter out"), don't recite raw values.
-- Earn the personality through word choice, not filler. Stay mission-focused.`;
+// Plain-language readings for chat — no sensor part names to parrot, keeps the
+// model inside the cave fiction.
+function buildChatContext(data) {
+  return `Current readings from the rover right now:
+Temperature: ${data.temp}°C
+Humidity: ${data.humid}%
+Distance to the rock face ahead: ${data.dist} cm
+Smoke/gas level: ${data.smoke}
+Air quality: ${data.airq}
+Combustible gas: ${data.co}${data.co_alert ? " — DANGER, gas pocket detected" : ""}
+Tilt: roll ${data.roll}°, pitch ${data.pitch}°, yaw ${data.yaw}°`;
+}
 
 function buildAiPrompt(data) {
   return `Latest telemetry from your sensors — read the room and report to the operator.

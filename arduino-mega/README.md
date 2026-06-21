@@ -8,7 +8,7 @@ Exploration rover inspired by Mars rovers. Reads environment sensors and prints 
 
 | Sensor | Pin | Function |
 |--------|-----|----------|
-| DHT11/DHT22 | D23 | Temp + humidity |
+| DHT11/DHT22 | D42 | Temp + humidity |
 | MPU6050 | SDA/SCL (20/21) | Gyro + accelerometer (roll, pitch, yaw) |
 | HC-SR04 | A6/A5 (TRIG/ECHO) | Ultrasonic distance |
 | MQ-2 | A0/D22 | Smoke/gas detection (analog + digital) |
