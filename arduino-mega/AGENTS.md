@@ -1,5 +1,35 @@
 # AGENTS — Blackout V1 (Presentation Phase)
 
+## Current Status
+
+**Done**
+- Mega firmware: DHT11, HC-SR04, MQ-2 (smoke), MQ-135 (air quality), MQ-9 (CO),
+  MPU6050 gyro. CSV out: `S:temp,humid,dist,smoke,airq,roll,pitch,yaw,co,co_alert`
+- ESP32 BT relay sketch (UART0 → BluetoothSerial "BLACKOUT-V1"). No WiFi, no camera.
+- ESP32 camera test (OV2640 MJPEG @ QVGA) confirmed working — dev-only, not in comp.
+- Server: BT serial read, dashboard (React/htm, Three.js rover, gauges, trends),
+  Cerebras AI analysis, TTS, voice chat.
+- Uno firmware: L293D shield, 4WD skid-steer demo sequence.
+
+**Blocked**
+- Resistors not yet obtained — need 1kΩ + 2kΩ (or logic level converter) before
+  Mega→ESP32 wiring is safe. GPIO3 is NOT 5V-tolerant; direct wire fries it.
+- Boot loop on BT sketches after full flash erase — root cause unclear (suspected
+  brownout/NVS). Workaround: power cycle after flash.
+
+**Todo**
+1. [BLOCKED] Wire Mega → voltage divider → ESP32, test full chain to server.
+2. Finish MQ-9 CO calibration (`TODO.md`) — currently auto-cals every boot,
+   should use hardcoded R₀.
+3. Final wiring: 1000µF cap across ESP32 5V/GND, battery power.
+
+**Gotchas**
+- HC-06 is dead (fried UART pins) — not reusable.
+- Server reads `/dev/cu.BLACKOUT-V1` (NOT `-SPP`).
+- AI/TTS features are optional (env-gated); dashboard works without them.
+
+---
+
 ## Architecture
 
 | Board | Role | Code | Notes |
@@ -10,7 +40,7 @@
 
 **Current flow:** Mega reads sensors → sends CSV over Serial1 (D18) → voltage divider
 → ESP32 GPIO3. ESP32 forwards over Bluetooth SPP to the Mac. Node server reads the
-BT serial port (`/dev/cu.BLACKOUT-V1-SPP`) and serves the dashboard.
+BT serial port (`/dev/cu.BLACKOUT-V1`) and serves the dashboard.
 
 **Power:** Mega Vin → battery 7-12V. Mega 5V pin powers the ESP32-CAM. Motor battery
 (4xAA/6V) powers Uno + motors via L293D shield.
@@ -61,7 +91,7 @@ over **Bluetooth Classic SPP** as **"BLACKOUT-V1"**.
 - **No soldering needed** — GPIO3 (U0RXD) is on the 6-pin programming header.
 - **Flash first** via CP2102 shield (before wiring Mega). CP2102 TX shares GPIO3.
 - **After flashing**, remove CP2102 shield, wire voltage divider + power from Mega.
-- On the Mac, pair with "BLACKOUT-V1" — port is `/dev/cu.BLACKOUT-V1-SPP`.
+- On the Mac, pair with "BLACKOUT-V1" — port is `/dev/cu.BLACKOUT-V1`.
 
 ### Power
 
@@ -186,7 +216,7 @@ Opens at `http://localhost:3000`.
 
 | Component | Library |
 |-----------|---------|
-| Bluetooth serial | `serialport` — reads from `/dev/cu.BLACKOUT-V1-SPP` |
+| Bluetooth serial | `serialport` — reads from `/dev/cu.BLACKOUT-V1` |
 | Web server | `express` — serves dashboard |
 | Real-time | `socket.io` — pushes sensor data to browser |
 | AI | `openai` SDK with Cerebras base URL — analyzes environment |

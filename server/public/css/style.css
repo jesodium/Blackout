@@ -414,6 +414,7 @@ body {
   font: 700 11px/1 var(--grotesk); letter-spacing: 0.3em; text-transform: uppercase;
   animation: agent-text-in 0.4s ease;
 }
+.agent-face { font-family: var(--mono, monospace); font-size: 13px; letter-spacing: 0; }
 
 /* voice equalizer (shown while speaking) */
 .agent-eq { position: relative; z-index: 1; display: flex; align-items: flex-end; gap: 3px; height: 15px; color: currentColor; }

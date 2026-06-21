@@ -11,8 +11,10 @@ const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
 // min/max define the meter's full travel.
 const SENSORS = [
   { key: "temp",  name: "Temp",       unit: "°C",  d: 1, min: 0, max: 60,   st: v => v > 45 ? ["Critical", "abort"] : v > 35 ? ["High", "warn"] : ["Normal", "go"] },
-  { key: "humid", name: "Humidity",   unit: "%",   d: 1, min: 0, max: 100,  st: v => (v > 75 || v < 20) ? ["Out of range", "warn"] : ["Good", "go"] },
-  { key: "dist",  name: "Distance",   unit: "cm",  d: 0, min: 0, max: 200,  invert: true, st: v => v < 20 ? ["Alert", "abort"] : v < 55 ? ["Caution", "warn"] : ["Clear", "go"] },
+  { key: "humid", name: "Humidity",   unit: "%",   d: 1, min: 0, max: 100,  st: v => v > 75 ? ["Highly humid", "warn"] : v < 20 ? ["Too dry", "warn"] : ["Good", "go"] },
+  // Distance is a navigation cue: warn-level for a near wall (steer around it),
+  // but <10cm goes red — about to bump it.
+  { key: "dist",  name: "Distance",   unit: "cm",  d: 0, min: 0, max: 200,  invert: true, st: v => v < 10 ? ["Too close", "abort"] : v < 20 ? ["Obstacle", "warn"] : v < 55 ? ["Caution", "warn"] : ["Clear", "go"] },
   { key: "smoke", name: "Smoke / Gas",unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 600 ? ["Hazard", "abort"] : v > 300 ? ["Warning", "warn"] : ["Normal", "go"] },
   { key: "airq",  name: "Air Qual",   unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 800 ? ["Poor", "abort"] : v > 450 ? ["Moderate", "warn"] : ["Good", "go"] },
 ];
@@ -223,12 +225,12 @@ function TrendsPanel({ packet }) {
    The agent has a "mood" derived from what it's saying + live sensor state.
    That mood drives an animated glyph so the analysis reads as intent, not just text. */
 const INTENTS = {
-  idle:     { key: "idle",     label: "Standby",   color: "var(--ink-3)" },
-  scanning: { key: "scanning", label: "Scanning",  color: "var(--ink-2)" },
-  thinking: { key: "thinking", label: "Analyzing", color: "var(--ink)"   },
-  clear:    { key: "clear",    label: "All Clear", color: "var(--go)"     },
-  caution:  { key: "caution",  label: "Caution",   color: "var(--warn)"   },
-  alert:    { key: "alert",    label: "Alert",     color: "var(--accent)" },
+  idle:     { key: "idle",     label: "Standby",   color: "var(--ink-3)", face: "-_-" },
+  scanning: { key: "scanning", label: "Scanning",  color: "var(--ink-2)", face: "o_o" },
+  thinking: { key: "thinking", label: "Analyzing", color: "var(--ink)",   face: "o_O" },
+  clear:    { key: "clear",    label: "All Clear", color: "var(--go)",     face: "^_^" },
+  caution:  { key: "caution",  label: "Caution",   color: "var(--warn)",   face: ":o"  },
+  alert:    { key: "alert",    label: "Alert",     color: "var(--accent)", face: "x_x" },
 };
 
 // Worst pill across all live readings: 0 go · 1 warn · 2 abort · null no data.
@@ -267,8 +269,8 @@ function assess(packet) {
 function deriveIntent(ai, packet, connected) {
   if (ai.analyzing) return INTENTS.thinking;
   const t = (ai.text || "").toLowerCase();
-  if (/\b(danger|abort|critical|hazard|emergency|collision|evacuat|fire|stop)\b/.test(t)) return INTENTS.alert;
-  if (/\b(caution|warning|careful|slow|obstacle|approach|elevated|moderate|watch)\b/.test(t)) return INTENTS.caution;
+  if (/\b(danger|abort|critical|hazard|emergency|evacuat|fire|toxic)\b/.test(t)) return INTENTS.alert;
+  if (/\b(caution|warning|careful|slow|obstacle|collision|bump|approach|elevated|moderate|watch|steer)\b/.test(t)) return INTENTS.caution;
   if (/\b(clear|safe|normal|nominal|stable|good|proceed|no threat|all systems)\b/.test(t)) return INTENTS.clear;
   const w = worstSensor(packet);
   if (w === 2) return INTENTS.alert;
@@ -339,7 +341,7 @@ function Agent({ ai, tts, packet, connected, speaking, onAnalyze, onToggleTts, o
           <div class="agent-orb"><${AgentIcon} intent=${intent} /></div>
           ${speaking
             ? html`<div class="agent-eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>`
-            : html`<span class="agent-state-label">${intent.label}</span>`}
+            : html`<span class="agent-state-label"><span class="agent-face">${intent.face}</span> ${intent.label}</span>`}
         </div>
         <div class="agent-speech">
           <p class="agent-text" key=${ai.text} role="status" aria-live="polite">${ai.text}</p>
@@ -546,6 +548,20 @@ function App() {
   const lastObstacle = useRef(0);
   const lastDist = useRef(0);
 
+  // Smoke/air gas readings are noisy MQ sensors — sample them every 5s so the
+  // display doesn't flicker. Everything else stays live.
+  const packetRef = useRef(null);
+  useEffect(() => { packetRef.current = packet; }, [packet]);
+  const [slowGas, setSlowGas] = useState({});
+  useEffect(() => {
+    const id = setInterval(() => {
+      const p = packetRef.current;
+      if (p) setSlowGas({ smoke: p.smoke, airq: p.airq });
+    }, 5000);
+    return () => clearInterval(id);
+  }, []);
+  const view = packet ? { ...packet, ...slowGas } : packet;
+
   const addLog = useCallback((text, type = "system") => {
     setLogs(p => [...p, { text, type, time: new Date().toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-80));
   }, []);
@@ -703,14 +719,14 @@ function App() {
       <div class="console">
         <${Masthead} connected=${connected} ports=${ports} currentPort=${currentPort}
           ping=${ping} packets=${packets} uptime=${uptime} onPort=${switchPort} />
-        <${Ticker} packet=${packet} connected=${connected} />
+        <${Ticker} packet=${view} connected=${connected} />
 
         <main class="deck" id="sensors">
           <div class="row row--stage">
             <${Orientation} packet=${packet} onLog=${addLog} />
             <${Agent} ai=${ai} tts=${tts} packet=${packet} connected=${connected} speaking=${speaking}
               onAnalyze=${analyze} onToggleTts=${toggleTts} onPick=${pickHistory} onMock=${mockData} onAsk=${ask} />
-            <${ReadingsPanel} packet=${packet} />
+            <${ReadingsPanel} packet=${view} />
           </div>
 
           <div class="row">
