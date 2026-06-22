@@ -331,9 +331,9 @@ function emitBlurt(prev, cur) {
 function maybeAutoAnalyze(data) {
   const s = statuses(data);
   const changed = lastStatuses && Object.keys(s).some(k => lastStatuses[k] !== s[k]);
-  if (changed) emitBlurt(lastStatuses, s);
+  if (changed && currentMission) emitBlurt(lastStatuses, s);
   lastStatuses = s;
-  if (!changed) return;
+  if (!changed || !currentMission) return; // no active mission → agent stays quiet
   const now = Date.now();
   if (now - lastAutoAnalysis < AUTO_MIN_GAP) return; // don't spam the LLM on flapping
   lastAutoAnalysis = now;

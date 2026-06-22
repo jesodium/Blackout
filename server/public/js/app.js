@@ -43,23 +43,59 @@ function browserSpeak(text, { onStart, onEnd } = {}) {
   speechSynthesis.speak(u);
 }
 
-// MS Edge neural TTS via server proxy; falls back to browser TTS on failure.
-// Streams from the GET endpoint so playback starts on the first chunk (low delay)
-// instead of waiting for the whole MP3 to download.
+// Mission findings: when a metric newly worsens, the Analysis panel logs a discovery.
+// Bands match the server's status thresholds so the agent and the panel agree.
+const FINDINGS = [
+  { k: "temp",  warn: 35,  danger: 45,  msg: { 1: "Temperature climbing", 2: "High temperature detected" } },
+  { k: "smoke", warn: 300, danger: 600, msg: { 1: "Smoke detected", 2: "Heavy smoke — hazard" } },
+  { k: "airq",  warn: 450, danger: 800, msg: { 1: "Air quality degraded", 2: "Air quality critical" } },
+  { k: "co",    warn: 300, danger: 350, msg: { 1: "Gas levels rising", 2: "High gas levels detected" } },
+  { k: "dist",  close: 10,              msg: { 1: "Obstacle / wall encountered" } },
+];
+const bandOf = (f, v) => {
+  if (v == null || isNaN(v)) return 0;
+  if (f.k === "dist") return v < f.close ? 1 : 0;
+  return v >= f.danger ? 2 : v >= f.warn ? 1 : 0;
+};
+
+// Split into sentences so we can start speaking the FIRST one immediately instead
+// of waiting for the whole reply's audio — big cut to time-to-first-sound.
+const splitSpeech = (t) => (t.match(/[^.!?]+[.!?]+|\S[^.!?]*$/g) || [t]).map(s => s.trim()).filter(Boolean);
+
+// MS Edge / Deepgram neural TTS via server proxy; falls back to browser TTS on failure.
+// Plays sentence-by-sentence, prefetching the next clip while the current one plays
+// (max 2 concurrent requests, so we don't trip Deepgram's rate limit).
 let ttsAudio = null;
+let ttsToken = 0;
 async function speak(text, { onStart, onEnd } = {}) {
-  if (!text) { onEnd?.(); return; }
   ttsAudio?.pause();
   window.speechSynthesis?.cancel();
-  try {
-    ttsAudio = new Audio("/api/tts?text=" + encodeURIComponent(text));
-    ttsAudio.onplay = () => onStart?.();
-    ttsAudio.onended = () => onEnd?.();
-    ttsAudio.onerror = () => browserSpeak(text, { onStart, onEnd }); // ponytail: fallback if proxy/offline
-    await ttsAudio.play();
-  } catch {
-    browserSpeak(text, { onStart, onEnd });
+  const myToken = ++ttsToken;
+  if (!text) { onEnd?.(); return; }
+  const parts = splitSpeech(text);
+  const mk = (p) => { const a = new Audio("/api/tts?text=" + encodeURIComponent(p)); a.preload = "auto"; return a; };
+  let started = false;
+  const firstStart = () => { if (!started) { started = true; onStart?.(); } };
+  let cur = mk(parts[0]);
+  for (let i = 0; i < parts.length; i++) {
+    if (myToken !== ttsToken) { cur?.pause(); return; } // newer speak() superseded us
+    const a = cur;
+    const next = i + 1 < parts.length ? mk(parts[i + 1]) : null; // prefetch next clip
+    ttsAudio = a;
+    try {
+      await new Promise((resolve, reject) => {
+        a.onended = resolve; a.onerror = reject;
+        a.onplay = firstStart;
+        a.play().catch(reject);
+      });
+    } catch {
+      if (myToken !== ttsToken) return;
+      browserSpeak(parts.slice(i).join(" "), { onStart: firstStart, onEnd }); // proxy/offline fallback
+      return;
+    }
+    cur = next;
   }
+  if (myToken === ttsToken) onEnd?.();
 }
 
 /* ---------------- zone header (folio · title · tag) ---------------- */
@@ -208,6 +244,27 @@ function ReadingsPanel({ packet }) {
     </section>`;
 }
 
+/* ---------------- analysis / mission memory ---------------- */
+function Memory({ chat }) {
+  const findings = (chat?.findings || []).slice().reverse();
+  const tag = !chat ? "—" : findings.length ? findings.length + " found" : "nominal";
+  return html`
+    <section class="zone memory reveal" style=${{ animationDelay: "180ms" }} aria-labelledby="mem-h">
+      <${Head} folio="07" title="Analysis" tag=${tag} />
+      <div class="memory-body">
+        ${!chat
+          ? html`<p class="memory-empty">No active session.</p>`
+          : findings.length === 0
+          ? html`<p class="memory-empty">No findings yet — conditions nominal.</p>`
+          : findings.map(f => html`<div key=${f.id} class=${"memory-item is-" + f.kind}>
+              <span class="memory-dot" aria-hidden="true"></span>
+              <span class="memory-text">${f.text}</span>
+              <span class="memory-time">${f.time}</span>
+            </div>`)}
+      </div>
+    </section>`;
+}
+
 /* ---------------- trends panel ---------------- */
 function TrendsPanel({ packet }) {
   return html`
@@ -336,12 +393,21 @@ function Agent({ ai, tts, packet, connected, speaking, chats, activeChat, onNewC
       style=${{ animationDelay: "120ms", "--agent-c": intent.color }} aria-labelledby="agent-h">
       <${Head} folio="02" title="Agent" tag=${ai.badge} />
       <div class="agent-body">
+        <div class="agent-topbar">
+          ${briefed
+            ? html`<button type="button" class="brief-back agent-back" onClick=${() => onSelectChat("")}>← Sessions · ${activeChat.title}</button>`
+            : html`<span class="agent-topbar-spacer"></span>`}
+          <label class="switch agent-voice" title="Toggle Blackout's voice">
+            <input type="checkbox" checked=${tts} onChange=${onToggleTts} />
+            <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+            Voice
+          </label>
+        </div>
         ${!activeChat
           ? html`<${ChatSelect} chats=${chats} onNew=${onNewChat} onSelect=${onSelectChat} onDelete=${onDeleteChat} />`
           : !briefed
           ? html`<${Briefing} onBrief=${onBrief} onBack=${() => onSelectChat("")} busy=${ai.analyzing} />`
           : html`<${React.Fragment}>
-        <button type="button" class="brief-back agent-back" onClick=${() => onSelectChat("")}>← Sessions · ${activeChat.title}</button>
         <div class="agent-stage">
           <span class="agent-grid" aria-hidden="true"></span>
           <span class="agent-mark" aria-hidden="true">AGT</span>
@@ -366,11 +432,6 @@ function Agent({ ai, tts, packet, connected, speaking, chats, activeChat, onNewC
           <button class="btn" type="button" onClick=${onMock} disabled=${ai.analyzing} title="Inject random sensor data — no Arduino needed">
             Mock Data
           </button>
-          <label class="switch">
-            <input type="checkbox" checked=${tts} onChange=${onToggleTts} />
-            <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
-            Voice
-          </label>
         </div>
         <${Ask} onAsk=${onAsk} busy=${ai.analyzing} />
         <details class="ai-hist agent-hist">
@@ -396,8 +457,8 @@ function ChatSelect({ chats, onNew, onSelect, onDelete }) {
       ${chats.length === 0
         ? html`<p class="chat-empty">No chats created.</p>`
         : html`<div class="chat-list">
-            ${chats.slice().reverse().map(c => html`
-              <div key=${c.id} class="chat-item">
+            ${chats.slice().reverse().map((c, i) => html`
+              <div key=${c.id} class="chat-item" style=${{ animationDelay: (i * 45) + "ms" }}>
                 <button type="button" class="chat-item-main" onClick=${() => onSelect(c.id)}>
                   <span class="chat-item-title">${c.title || "Untitled"}</span>
                   <span class="chat-item-sub">${c.mission ? "Briefed" : "Not briefed"}</span>
@@ -449,21 +510,30 @@ function Briefing({ onBrief, onBack, busy }) {
   const next = () => { if (curVal.trim()) setStep(s => s + 1); };
   const start = () => onBrief(BRIEF_STEPS.map(s => `${s.label}: ${answers[s.key] || "—"}`).join("\n"));
 
+  const dots = html`<div class="brief-dots" aria-hidden="true">
+    ${BRIEF_STEPS.map((s, i) => html`<span key=${s.key}
+      class=${"brief-dot" + (i === step ? " is-active" : "") + (i < step || review ? " is-done" : "")}></span>`)}
+    <span class=${"brief-dot" + (review ? " is-active" : "")}></span>
+  </div>`;
+
   if (review) {
     return html`
       <div class="briefing">
         <button type="button" class="brief-back" onClick=${() => setStep(BRIEF_STEPS.length - 1)}>← Back</button>
-        <div class="brief-orb"><span class="agent-face">^_^</span></div>
-        <p class="brief-greeting">Got it — here's the rundown. Good to go?</p>
-        <div class="brief-summary">
-          ${BRIEF_STEPS.map(s => html`<div key=${s.key} class="brief-sum-row">
-            <span class="brief-sum-k">${s.label}</span>
-            <span class="brief-sum-v">${answers[s.key] || "—"}</span>
-          </div>`)}
+        ${dots}
+        <div class="brief-orb is-happy"><span class="agent-face">^_^</span></div>
+        <div class="brief-step" key="review">
+          <p class="brief-greeting">Got it — here's the rundown. Good to go?</p>
+          <div class="brief-summary">
+            ${BRIEF_STEPS.map((s, i) => html`<div key=${s.key} class="brief-sum-row" style=${{ animationDelay: (i * 70) + "ms" }}>
+              <span class="brief-sum-k">${s.label}</span>
+              <span class="brief-sum-v">${answers[s.key] || "—"}</span>
+            </div>`)}
+          </div>
+          <button type="button" class="btn btn--primary btn--go" onClick=${start} disabled=${busy}>
+            ${busy ? "Heading in…" : "Start Recon"}
+          </button>
         </div>
-        <button type="button" class="btn btn--primary" onClick=${start} disabled=${busy}>
-          ${busy ? "Heading in…" : "Start Recon"}
-        </button>
       </div>`;
   }
 
@@ -472,21 +542,24 @@ function Briefing({ onBrief, onBack, busy }) {
       <button type="button" class="brief-back" onClick=${step === 0 ? onBack : () => setStep(s => s - 1)}>
         ${step === 0 ? "← Sessions" : "← Back"}
       </button>
+      ${dots}
       <div class="brief-orb"><span class="agent-face">o_o</span></div>
       ${step === 0 ? html`<p class="brief-greeting">${INTRO}</p>` : null}
-      <div class="brief-step-k">Step ${step + 1} of ${BRIEF_STEPS.length} · ${cur.label}</div>
-      <p class="brief-q">${cur.q}</p>
-      <div class="brief-field">
-        <textarea class="mission-input" rows="3" placeholder=${cur.ph}
-          value=${curVal} onInput=${e => setCur(e.target.value)} disabled=${busy} autoFocus
-          onKeyDown=${e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) next(); }}></textarea>
-        ${mic.supported ? html`<button type="button" class=${"ask-mic brief-mic" + (mic.listening ? " is-live" : "")}
-          onClick=${mic.toggle} disabled=${busy} aria-pressed=${mic.listening}>
-          ${mic.listening ? "● Listening…" : "🎤 Speak"}</button>` : null}
+      <div class="brief-step" key=${step}>
+        <div class="brief-step-k">Step ${step + 1} of ${BRIEF_STEPS.length} · ${cur.label}</div>
+        <p class="brief-q">${cur.q}</p>
+        <div class="brief-field">
+          <textarea class="mission-input" rows="3" placeholder=${cur.ph}
+            value=${curVal} onInput=${e => setCur(e.target.value)} disabled=${busy} autoFocus
+            onKeyDown=${e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) next(); }}></textarea>
+          ${mic.supported ? html`<button type="button" class=${"ask-mic brief-mic" + (mic.listening ? " is-live" : "")}
+            onClick=${mic.toggle} disabled=${busy} aria-pressed=${mic.listening}>
+            ${mic.listening ? "● Listening…" : "🎤 Speak"}</button>` : null}
+        </div>
+        <button type="button" class="btn btn--primary" onClick=${next} disabled=${busy || !curVal.trim()}>
+          ${step === BRIEF_STEPS.length - 1 ? "Review" : "Next"}
+        </button>
       </div>
-      <button type="button" class="btn btn--primary" onClick=${next} disabled=${busy || !curVal.trim()}>
-        ${step === BRIEF_STEPS.length - 1 ? "Review" : "Next"}
-      </button>
     </div>`;
 }
 
@@ -651,6 +724,8 @@ function App() {
   const ttsRef = useRef(localStorage.getItem("tts") !== "false");
   const lastObstacle = useRef(0);
   const lastDist = useRef(0);
+  const lastBands = useRef({}); // per-metric severity, to detect when something newly worsens
+  useEffect(() => { lastBands.current = {}; }, [activeId]); // fresh findings per session
 
   // Smoke/air gas readings are noisy MQ sensors — sample them every 5s so the
   // display doesn't flicker. Everything else stays live.
@@ -691,6 +766,22 @@ function App() {
     const socket = window.io(url);
     socketRef.current = socket;
 
+    // Log a discovery to the active session whenever a metric newly worsens.
+    function recordFindings(d) {
+      const chat = activeRef.current;
+      if (!chat || !chat.mission) return;
+      const added = [];
+      for (const f of FINDINGS) {
+        const b = bandOf(f, d[f.k]);
+        const prev = lastBands.current[f.k] ?? 0;
+        if (b > prev && f.msg[b]) {
+          added.push({ id: Date.now() + Math.random(), text: f.msg[b], kind: b === 2 ? "danger" : "warn", time: new Date().toLocaleTimeString() });
+        }
+        lastBands.current[f.k] = b;
+      }
+      if (added.length) setChats(cs => cs.map(c => c.id === chat.id ? { ...c, findings: [...(c.findings || []), ...added].slice(-40) } : c));
+    }
+
     socket.on("connect", () => {
       setConnected(true); addLog("Link established. Awaiting telemetry…", "system");
       socket.emit("set-mission", activeRef.current?.mission || ""); // sync server to active session
@@ -710,6 +801,7 @@ function App() {
           addLog(`Obstacle at ${d.dist.toFixed(0)} cm`, d.dist < 20 ? "danger" : d.dist < 55 ? "warn" : "system");
         }
       }
+      recordFindings(d);
     });
     socket.on("serial-line", d => {
       if (!d?.line) return;
@@ -729,8 +821,10 @@ function App() {
       }));
       if (ttsRef.current) speakTimed(text);
     };
-    socket.on("ai-analysis", d => { if (d?.analysis) sayAgent(d.analysis, d.timestamp, "AI analysis received.", "ai"); });
-    socket.on("agent-blurt", d => { if (d?.text) sayAgent(d.text, d.timestamp, "Blackout: " + d.text, "warn"); });
+    // Auto analysis + instant reactions only fire when a briefed session is open —
+    // otherwise the dashboard talks to itself on boot with no chat active.
+    socket.on("ai-analysis", d => { if (d?.analysis && activeRef.current?.mission) sayAgent(d.analysis, d.timestamp, "AI analysis received.", "ai"); });
+    socket.on("agent-blurt", d => { if (d?.text && activeRef.current?.mission) sayAgent(d.text, d.timestamp, "Blackout: " + d.text, "warn"); });
     socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, "Mission acknowledged.", "ai"); });
     addLog("Console booted. Standing by.", "system");
     return () => socket.close();
@@ -813,7 +907,8 @@ function App() {
     setChats(cs => [...cs, { id, title: "New Recon", mission: "", messages: [], created: Date.now() }]);
     setActiveId(id);
     socketRef.current?.emit("set-mission", ""); // no mission until briefed
-  }, []);
+    if (ttsRef.current) speakTimed(INTRO); // Blackout greets you out loud (user-gesture, so audio is allowed)
+  }, [speakTimed]);
   const selectChat = useCallback((id) => {
     setActiveId(id);
     socketRef.current?.emit("set-mission", (chats.find(c => c.id === id)?.mission) || "");
@@ -856,12 +951,15 @@ function App() {
 
         <main class="deck" id="sensors">
           <div class="row row--stage">
-            <${Orientation} packet=${packet} onLog=${addLog} />
+            <div class="stage-col">
+              <${Orientation} packet=${packet} onLog=${addLog} />
+              <${ReadingsPanel} packet=${view} />
+            </div>
             <${Agent} ai=${ai} tts=${tts} packet=${packet} connected=${connected} speaking=${speaking}
               chats=${chats} activeChat=${activeChat} onNewChat=${newChat} onSelectChat=${selectChat}
               onDeleteChat=${deleteChat} onBrief=${briefMission}
               onAnalyze=${analyze} onToggleTts=${toggleTts} onPick=${pickHistory} onMock=${mockData} onAsk=${ask} />
-            <${ReadingsPanel} packet=${view} />
+            <${Memory} chat=${activeChat} />
           </div>
 
           <div class="row">
