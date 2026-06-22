@@ -34,15 +34,16 @@
 
 | Board | Role | Code | Notes |
 |-------|------|------|-------|
-| **Mega 2560** | Sensor hub — reads environment, sends CSV over Serial1 | `arduino-mega/main/` | Mega TX1 (D18) → voltage divider → ESP32 GPIO3 |
-| **ESP32-CAM** | Bluetooth serial relay + camera | `arduino-mega/esp32-cam/` | Reads Mega from UART0, forwards over BT as "BLACKOUT-V1" |
+| **Mega 2560** | Sensor hub — reads environment, sends CSV over Serial1 | `arduino-mega/main/` | Mega TX1 (D18) → voltage divider → ESP32 GPIO16 |
+| **ESP32-WROOM** | Bluetooth serial relay (NodeMCU-32S) | `arduino-mega/esp32/` | Reads Mega on Serial2 (GPIO16), forwards over BT as "BLACKOUT-V1" |
 | **Uno R3** | Motor controller — runs pre‑programmed sequence | `arduino-uno/main/` | Standalone demo |
 
 **Current flow:** Mega reads sensors → sends CSV over Serial1 (D18) → voltage divider
-→ ESP32 GPIO3. ESP32 forwards over Bluetooth SPP to the Mac. Node server reads the
-BT serial port (`/dev/cu.BLACKOUT-V1`) and serves the dashboard.
+→ ESP32 GPIO16 (Serial2/RX2). ESP32 forwards over Bluetooth SPP to the Mac. Node server
+reads the BT serial port (`/dev/cu.BLACKOUT-V1`) and serves the dashboard. USB UART0
+stays free for debug.
 
-**Power:** Mega Vin → battery 7-12V. Mega 5V pin powers the ESP32-CAM. Motor battery
+**Power:** Mega Vin → battery 7-12V. Mega 5V pin powers the ESP32. Motor battery
 (4xAA/6V) powers Uno + motors via L293D shield.
 
 **Phase 2:** Mega Serial2/Serial3 for Uno communication for sensor‑driven navigation.
@@ -65,32 +66,32 @@ BT serial port (`/dev/cu.BLACKOUT-V1`) and serves the dashboard.
 | A2 | Microphone (MAX9814/KY-038) | Analog |
 | A3 | MQ-9 (CO/combustible gas) | Analog read |
 | D29 | MQ-9 | Digital out |
-| D18 (TX1) | → ESP32 GPIO3 (via voltage divider) | Mega serial TX to ESP32 UART0 |
+| D18 (TX1) | → ESP32 GPIO16 (via voltage divider) | Mega serial TX to ESP32 Serial2 |
 | D0 (RX0) / D1 (TX0) | USB ↔ PC | Wired serial link / debug |
-| 5V | → ESP32 5V | Powers ESP32-CAM from Mega's Vin regulator |
+| 5V | → ESP32 5V (VIN) | Powers ESP32 from Mega's Vin regulator |
 | GND | → ESP32 GND | Common ground |
 
-### Mega → ESP32-CAM Wiring
+### Mega → ESP32 Wiring
 
-| Mega | | ESP32-CAM |
+| Mega | | ESP32 (NodeMCU-32S) |
 |------|-|-----------|
-| D18 (TX1) | 1kΩ → node → 2kΩ → GND | node → GPIO3 (U0RXD, 4th pin on programming header) |
-| 5V | wire direct | 5V pin (programming header) |
-| GND | wire direct | GND pin (programming header) |
+| D18 (TX1) | 1kΩ → node → 2kΩ → GND | node → GPIO16 (RX2) |
+| 5V | wire direct | VIN (5V) pin |
+| GND | wire direct | GND pin |
 
 Add **1000µF electrolytic cap** across ESP32 5V/GND (striped leg = GND).
 
 **Voltage divider:** drops Mega TX1 5V to ~3.3V (5 × 2k / (1k+2k) = 3.33V).
 ESP32 GPIO is NOT 5V-tolerant — do NOT wire D18 direct.
 
-### ESP32-CAM — Bluetooth serial relay
+### ESP32-WROOM — Bluetooth serial relay
 
-The **ESP32-CAM (AI-Thinker, OV2640)** reads Mega CSV from UART0 and forwards
-over **Bluetooth Classic SPP** as **"BLACKOUT-V1"**.
+The **ESP32-WROOM (NodeMCU-32S)** reads Mega CSV on **Serial2 (GPIO16 @ 9600)** and
+forwards over **Bluetooth Classic SPP** as **"BLACKOUT-V1"**. USB UART0 is left free,
+so it can stay plugged in for debug while wired to the Mega.
 
-- **No soldering needed** — GPIO3 (U0RXD) is on the 6-pin programming header.
-- **Flash first** via CP2102 shield (before wiring Mega). CP2102 TX shares GPIO3.
-- **After flashing**, remove CP2102 shield, wire voltage divider + power from Mega.
+- **Flash over USB** — onboard CP2102, no shield/jumpers needed.
+- **Mega link on Serial2**, independent of the USB/flash UART — no contention.
 - On the Mac, pair with "BLACKOUT-V1" — port is `/dev/cu.BLACKOUT-V1`.
 
 ### Power
@@ -186,20 +187,20 @@ arduino-cli upload
 ```
 Board: `arduino:avr:mega:cpu=atmega2560`, Port: `/dev/cu.usbserial-XXX`
 
-### ESP32-CAM
+### ESP32-WROOM
 ```
-cd arduino-mega/esp32-cam
-arduino-cli compile --fqbn esp32:esp32:esp32cam
-arduino-cli upload --port /dev/cu.usbserial-XXX
+cd arduino-mega/esp32
+arduino-cli compile --fqbn esp32:esp32:esp32
+arduino-cli upload --port /dev/cu.usbserial-XXX --fqbn esp32:esp32:esp32
 ```
-Flash **before** wiring Mega to ESP32 (CP2102 TX shares GPIO3). After flashing,
-remove CP2102 shield, then wire voltage divider + power from Mega.
+Flash over USB (onboard CP2102). Mega link is on Serial2 (GPIO16), separate from the
+USB/flash UART, so no need to unwire to reflash.
 
 ---
 
 ## Node.js Server (`server/`)
 
-Receives sensor data from the ESP32-CAM Bluetooth serial port, serves real-time dashboard, sends to Cerebras AI for analysis.
+Receives sensor data from the ESP32 Bluetooth serial port, serves real-time dashboard, sends to Cerebras AI for analysis.
 
 ### Setup
 
@@ -243,9 +244,8 @@ WRO2026/
 │   ├── main/
 │   │   ├── main.ino
 │   │   └── sketch.yaml
-│   ├── esp32-cam/           ← ESP32-CAM: BT serial relay
-│   │   ├── esp32-cam.ino
-│   │   └── sketch.yaml
+│   ├── esp32/               ← ESP32-WROOM: BT serial relay
+│   │   └── esp32.ino
 │   └── ref-images/
 ├── arduino-uno/              ← Uno: motors only
 │   ├── README.md
