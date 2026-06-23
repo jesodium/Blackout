@@ -1,6 +1,6 @@
 # WRO 2026 — Blackout
 
-Exploration robot for WRO 2026 Future Engineers. Two Arduino boards + Node.js dashboard.
+Exploration robot for WRO 2026 Future Innovators. Two Arduino boards + Node.js dashboard.
 
 ## Quick start
 
