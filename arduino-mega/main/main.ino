@@ -73,7 +73,7 @@ float mq9Rs(int adc) {
 
 void setup() {
   Serial.begin(9600);
-  Serial1.begin(9600);
+  Serial3.begin(9600);  // TX3 = D14 -> series 1k -> ESP32 GPIO16
   pinMode(MQ2_DO, INPUT);
   pinMode(MQ135_DO, INPUT);
   pinMode(MQ9_DO, INPUT);
@@ -142,6 +142,6 @@ void loop() {
     line += coAlert;
 
     Serial.println(line);
-    Serial1.println(line);
+    Serial3.println(line);
   }
 }

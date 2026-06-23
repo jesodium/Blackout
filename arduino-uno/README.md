@@ -32,9 +32,9 @@ Drives 4WD skid-steer via L293D Motor Shield. Runs a pre‑programmed movement s
 ## Control (AFMotor)
 
 ```cpp
-AF_DCMotor motorL1(1);  // M1
-motorL1.setSpeed(200);
-motorL1.run(FORWARD);
+AF_DCMotor motorFL(1);  // M1 = front left
+motorFL.setSpeed(200);
+motorFL.run(FORWARD);
 ```
 
 ## Libraries

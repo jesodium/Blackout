@@ -9,6 +9,8 @@ server/node_modules/
 server/.env
 server/.env.local
 server/.env*.local
+# Pre-generated onboarding TTS clips (regenerated on boot)
+server/public/audio/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

@@ -34,11 +34,11 @@
 
 | Board | Role | Code | Notes |
 |-------|------|------|-------|
-| **Mega 2560** | Sensor hub — reads environment, sends CSV over Serial1 | `arduino-mega/main/` | Mega TX1 (D18) → voltage divider → ESP32 GPIO16 |
-| **ESP32-WROOM** | Bluetooth serial relay (NodeMCU-32S) | `arduino-mega/esp32/` | Reads Mega on Serial2 (GPIO16), forwards over BT as "BLACKOUT-V1" |
+| **Mega 2560** | Sensor hub — reads environment, sends CSV over Serial3 | `arduino-mega/main/` | Mega TX3 (D14) → voltage divider → ESP32 GPIO16 |
+| **ESP32-WROOM** | Bluetooth serial relay (NodeMCU-32S) | `arduino-mega/esp-32-extension/` | Reads Mega on Serial2 (GPIO16), forwards over BT as "BLACKOUT-V1" |
 | **Uno R3** | Motor controller — runs pre‑programmed sequence | `arduino-uno/main/` | Standalone demo |
 
-**Current flow:** Mega reads sensors → sends CSV over Serial1 (D18) → voltage divider
+**Current flow:** Mega reads sensors → sends CSV over Serial3 (D14) → voltage divider
 → ESP32 GPIO16 (Serial2/RX2). ESP32 forwards over Bluetooth SPP to the Mac. Node server
 reads the BT serial port (`/dev/cu.BLACKOUT-V1`) and serves the dashboard. USB UART0
 stays free for debug.
@@ -66,7 +66,7 @@ stays free for debug.
 | A2 | Microphone (MAX9814/KY-038) | Analog |
 | A3 | MQ-9 (CO/combustible gas) | Analog read |
 | D29 | MQ-9 | Digital out |
-| D18 (TX1) | → ESP32 GPIO16 (via voltage divider) | Mega serial TX to ESP32 Serial2 |
+| D14 (TX3) | → ESP32 GPIO16 (via voltage divider) | Mega serial TX to ESP32 Serial2 |
 | D0 (RX0) / D1 (TX0) | USB ↔ PC | Wired serial link / debug |
 | 5V | → ESP32 5V (VIN) | Powers ESP32 from Mega's Vin regulator |
 | GND | → ESP32 GND | Common ground |
@@ -75,14 +75,14 @@ stays free for debug.
 
 | Mega | | ESP32 (NodeMCU-32S) |
 |------|-|-----------|
-| D18 (TX1) | 1kΩ → node → 2kΩ → GND | node → GPIO16 (RX2) |
+| D14 (TX3) | 1kΩ → node → 2kΩ → GND | node → GPIO16 (RX2) |
 | 5V | wire direct | VIN (5V) pin |
 | GND | wire direct | GND pin |
 
 Add **1000µF electrolytic cap** across ESP32 5V/GND (striped leg = GND).
 
-**Voltage divider:** drops Mega TX1 5V to ~3.3V (5 × 2k / (1k+2k) = 3.33V).
-ESP32 GPIO is NOT 5V-tolerant — do NOT wire D18 direct.
+**Voltage divider:** drops Mega TX3 5V to ~3.3V (5 × 2k / (1k+2k) = 3.33V).
+ESP32 GPIO is NOT 5V-tolerant — do NOT wire D14 direct.
 
 ### ESP32-WROOM — Bluetooth serial relay
 
@@ -189,7 +189,7 @@ Board: `arduino:avr:mega:cpu=atmega2560`, Port: `/dev/cu.usbserial-XXX`
 
 ### ESP32-WROOM
 ```
-cd arduino-mega/esp32
+cd arduino-mega/esp-32-extension
 arduino-cli compile --fqbn esp32:esp32:esp32
 arduino-cli upload --port /dev/cu.usbserial-XXX --fqbn esp32:esp32:esp32
 ```
@@ -238,14 +238,14 @@ Get a key at https://cloud.cerebras.ai (generous free tier).
 ```
 WRO2026/
 ├── advanced-project-context/
-├── arduino-mega/             ← Mega: sensors + Serial1 → ESP32
+├── arduino-mega/             ← Mega: sensors + Serial3 → ESP32
 │   ├── AGENTS.md
 │   ├── README.md
 │   ├── main/
 │   │   ├── main.ino
 │   │   └── sketch.yaml
-│   ├── esp32/               ← ESP32-WROOM: BT serial relay
-│   │   └── esp32.ino
+│   ├── esp-32-extension/  ← ESP32-WROOM: BT serial relay
+│   │   └── esp-32-extension.ino
 │   └── ref-images/
 ├── arduino-uno/              ← Uno: motors only
 │   ├── README.md

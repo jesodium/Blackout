@@ -2,27 +2,29 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import htm from "htm";
 import { createRoverScene } from "./scene.js";
+import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./i18n.js";
 
 const html = htm.bind(React.createElement);
 
 /* ---------------- sensor model ---------------- */
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
 
-// min/max define the meter's full travel.
+// min/max define the meter's full travel. st() returns [labelKey, kind] — the
+// label is an i18n key resolved at render time so it follows the language.
 const SENSORS = [
-  { key: "temp",  name: "Temp",       unit: "°C",  d: 1, min: 0, max: 60,   st: v => v > 45 ? ["Critical", "abort"] : v > 35 ? ["High", "warn"] : ["Normal", "go"] },
-  { key: "humid", name: "Humidity",   unit: "%",   d: 1, min: 0, max: 100,  st: v => v > 75 ? ["Highly humid", "warn"] : v < 20 ? ["Too dry", "warn"] : ["Good", "go"] },
+  { key: "temp",  unit: "°C",  d: 1, min: 0, max: 60,   st: v => v > 45 ? ["st.critical", "abort"] : v > 35 ? ["st.high", "warn"] : ["st.normal", "go"] },
+  { key: "humid", unit: "%",   d: 1, min: 0, max: 100,  st: v => v > 75 ? ["st.humid", "warn"] : v < 20 ? ["st.dry", "warn"] : ["st.good", "go"] },
   // Distance is a navigation cue, never a hazard: only caution when right up on a
   // wall (<10cm), clear otherwise — it's something to steer around, not a danger.
-  { key: "dist",  name: "Distance",   unit: "cm",  d: 0, min: 0, max: 200,  invert: true, st: v => v < 10 ? ["Too close", "warn"] : ["Clear", "go"] },
-  { key: "smoke", name: "Smoke / Gas",unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 600 ? ["Hazard", "abort"] : v > 300 ? ["Warning", "warn"] : ["Normal", "go"] },
-  { key: "airq",  name: "Air Qual",   unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 800 ? ["Poor", "abort"] : v > 450 ? ["Moderate", "warn"] : ["Good", "go"] },
+  { key: "dist",  unit: "cm",  d: 0, min: 0, max: 200,  invert: true, st: v => v < 10 ? ["st.tooClose", "warn"] : ["st.clear", "go"] },
+  { key: "smoke", unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 600 ? ["st.hazard", "abort"] : v > 300 ? ["st.warning", "warn"] : ["st.normal", "go"] },
+  { key: "airq",  unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 800 ? ["st.poor", "abort"] : v > 450 ? ["st.moderate", "warn"] : ["st.good", "go"] },
 ];
 
 const TRENDS = [
-  { key: "dist", name: "Dist", color: "#9a9384" },
-  { key: "airq", name: "Air",  color: "#44cf86" },
-  { key: "temp", name: "Temp", color: "#ff3b2f" },
+  { key: "dist", tkey: "trend.dist", color: "#9a9384" },
+  { key: "airq", tkey: "trend.air",  color: "#44cf86" },
+  { key: "temp", tkey: "trend.temp", color: "#ff3b2f" },
 ];
 
 /* ---------------- TTS ---------------- */
@@ -34,9 +36,13 @@ function browserSpeak(text, { onStart, onEnd } = {}) {
   if (!text || !window.speechSynthesis || !voices.length) { onEnd?.(); return; }
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  u.rate = 0.9; u.lang = "en-US";
-  u.voice = voices.find(v => v.lang.startsWith("en") && /samantha|alex|google|enhanced/i.test(v.name))
-    || voices.find(v => v.lang.startsWith("en")) || voices[0];
+  const sl = speechLang();          // e.g. "en-US" / "es-ES"
+  const pre = sl.slice(0, 2);       // "en" / "es"
+  u.rate = 0.9; u.lang = sl;
+  // ponytail: null when no same-language voice → engine picks by u.lang. Never
+  // fall back to voices[0] (usually English) for Spanish text.
+  u.voice = voices.find(v => v.lang.startsWith(pre) && /samantha|alex|google|enhanced|jorge|alvaro|helena/i.test(v.name))
+    || voices.find(v => v.lang.startsWith(pre)) || null;
   u.onstart = () => onStart?.();
   u.onend = () => onEnd?.();
   u.onerror = () => onEnd?.();
@@ -46,11 +52,11 @@ function browserSpeak(text, { onStart, onEnd } = {}) {
 // Mission findings: when a metric newly worsens, the Analysis panel logs a discovery.
 // Bands match the server's status thresholds so the agent and the panel agree.
 const FINDINGS = [
-  { k: "temp",  warn: 35,  danger: 45,  msg: { 1: "Temperature climbing", 2: "High temperature detected" } },
-  { k: "smoke", warn: 300, danger: 600, msg: { 1: "Smoke detected", 2: "Heavy smoke — hazard" } },
-  { k: "airq",  warn: 450, danger: 800, msg: { 1: "Air quality degraded", 2: "Air quality critical" } },
-  { k: "co",    warn: 300, danger: 350, msg: { 1: "Gas levels rising", 2: "High gas levels detected" } },
-  { k: "dist",  close: 10,              msg: { 1: "Obstacle / wall encountered" } },
+  { k: "temp",  warn: 35,  danger: 45,  msg: { 1: "find.tempUp", 2: "find.tempHigh" } },
+  { k: "smoke", warn: 300, danger: 600, msg: { 1: "find.smoke", 2: "find.smokeHeavy" } },
+  { k: "airq",  warn: 450, danger: 800, msg: { 1: "find.airDeg", 2: "find.airCrit" } },
+  { k: "co",    warn: 300, danger: 350, msg: { 1: "find.gasUp", 2: "find.gasHigh" } },
+  { k: "dist",  close: 10,              msg: { 1: "find.obstacle" } },
 ];
 const bandOf = (f, v) => {
   if (v == null || isNaN(v)) return 0;
@@ -67,13 +73,21 @@ const splitSpeech = (t) => (t.match(/[^.!?]+[.!?]+|\S[^.!?]*$/g) || [t]).map(s =
 // (max 2 concurrent requests, so we don't trip Deepgram's rate limit).
 let ttsAudio = null;
 let ttsToken = 0;
-async function speak(text, { onStart, onEnd } = {}) {
+let ttsOnEnd = null; // active speak()'s onEnd, so stopSpeech() can settle the UI
+// Cut off whatever's playing: supersede the loop, stop audio, settle the UI.
+function stopSpeech() {
+  ttsToken++;
   ttsAudio?.pause();
   window.speechSynthesis?.cancel();
-  const myToken = ++ttsToken;
-  if (!text) { onEnd?.(); return; }
+  const cb = ttsOnEnd; ttsOnEnd = null; cb?.();
+}
+async function speak(text, { onStart, onEnd } = {}) {
+  stopSpeech();
+  const myToken = ttsToken;
+  ttsOnEnd = onEnd;
+  if (!text) { ttsOnEnd = null; onEnd?.(); return; }
   const parts = splitSpeech(text);
-  const mk = (p) => { const a = new Audio("/api/tts?text=" + encodeURIComponent(p)); a.preload = "auto"; return a; };
+  const mk = (p) => { const a = new Audio("/api/tts?text=" + encodeURIComponent(p) + "&voice=" + encodeURIComponent(ttsVoice())); a.preload = "auto"; return a; };
   let started = false;
   const firstStart = () => { if (!started) { started = true; onStart?.(); } };
   let cur = mk(parts[0]);
@@ -95,7 +109,23 @@ async function speak(text, { onStart, onEnd } = {}) {
     }
     cur = next;
   }
-  if (myToken === ttsToken) onEnd?.();
+  if (myToken === ttsToken) { ttsOnEnd = null; onEnd?.(); }
+}
+
+// Onboarding lines are pre-rendered to /audio/onboard-<lang>-<key>.mp3 on the
+// server (no 5-7s synth wait). Play the static clip; fall back to live TTS if
+// the file is missing (e.g. pregen hasn't run yet).
+function playOnboard(key, fallbackText, { onStart, onEnd } = {}) {
+  ttsAudio?.pause();
+  window.speechSynthesis?.cancel();
+  const myToken = ++ttsToken;
+  const a = new Audio(`/audio/onboard-${getLang()}-${key}.mp3`);
+  ttsAudio = a;
+  const fall = () => { if (myToken === ttsToken) speak(fallbackText, { onStart, onEnd }); };
+  a.onplay = () => { if (myToken === ttsToken) onStart?.(); };
+  a.onended = () => { if (myToken === ttsToken) onEnd?.(); };
+  a.onerror = fall;
+  a.play().catch(fall);
 }
 
 /* ---------------- zone header (folio · title · tag) ---------------- */
@@ -128,7 +158,7 @@ function Trends({ packet }) {
       ctx.fillStyle = "rgba(99,93,81,0.9)"; ctx.font = `600 ${10 * devicePixelRatio}px 'Archivo', sans-serif`;
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.save(); ctx.translate(w / 2, h / 2);
-      ctx.fillText("A W A I T I N G   T E L E M E T R Y", 0, 0); ctx.restore(); return;
+      ctx.fillText(t("trend.awaiting"), 0, 0); ctx.restore(); return;
     }
     TRENDS.forEach(s => {
       const vals = H.map(d => d[s.key]).filter(v => v != null && !isNaN(v));
@@ -150,21 +180,23 @@ function Trends({ packet }) {
 /* ---------------- reading row (sensor index) ---------------- */
 function Reading({ s, value, index }) {
   const has = value != null && !isNaN(value);
-  const [label, kind] = has ? s.st(value) : ["—", ""];
+  const [labelKey, kind] = has ? s.st(value) : [null, ""];
+  const label = has ? t(labelKey) : "—";
+  const name = t("sensor." + s.key);
   const raw = has ? Math.max(0, Math.min(100, ((value - s.min) / (s.max - s.min)) * 100)) : 0;
   const pct = s.invert ? 100 - raw : raw;
   return html`
     <div class="reading">
       <div class="reading-head">
         <span class="reading-folio">${index}</span>
-        <span class="reading-name">${s.name}</span>
+        <span class="reading-name">${name}</span>
         <span class=${"pill " + (kind ? "is-" + kind : "")}>${label}</span>
       </div>
       <div class="reading-body">
         <span class="reading-num">${fmt(value, s.d)}</span>
         <span class="reading-unit">${s.unit}</span>
       </div>
-      <div class="meter" role="meter" aria-label=${s.name}
+      <div class="meter" role="meter" aria-label=${name}
         aria-valuenow=${has ? Number(value) : undefined} aria-valuemin=${s.min} aria-valuemax=${s.max}>
         <div class=${"meter-fill " + (kind ? "is-" + kind : "")} style=${{ width: pct + "%" }}></div>
       </div>
@@ -189,27 +221,27 @@ function Orientation({ packet, onLog }) {
     } catch (e) {
       console.error("Scene init failed:", e);
       setFailed(e?.message || "init error");
-      onLog("3D view failed: " + (e?.message || "init error"), "danger");
+      onLog(t("log.viewFailed", { msg: e?.message || "init error" }), "danger");
     }
   }, []);
   useEffect(() => { if (packet && apiRef.current) apiRef.current.setData(packet); }, [packet]);
 
-  const pick = (c) => { setCam(c); apiRef.current?.setCamera(c); onLog(`Camera: ${c}`, "system"); };
+  const pick = (c) => { setCam(c); apiRef.current?.setCamera(c); onLog(t("log.camera", { c: t("cam." + c) }), "system"); };
   const cams = ["isometric", "front", "top", "side", "free"];
 
   return html`
     <section class="zone stage reveal" style=${{ animationDelay: "60ms" }} aria-labelledby="vis-h">
-      <${Head} folio="01" title="Orientation" tag=${packet ? "Gyro · Locked" : "Gyro · Standby"} />
+      <${Head} folio="01" title=${t("zone.orientation")} tag=${packet ? t("tag.gyroLocked") : t("tag.gyroStandby")} />
       <div class="zone-body">
         <div class="viewport">
           <span class="stage-mark" aria-hidden="true">RVR</span>
           <canvas id="vis-canvas" ref=${canvasRef}></canvas>
-          ${failed && html`<div class="viewport-fallback">3D View Unavailable<br/><small>${failed} — telemetry below is live</small></div>`}
+          ${failed && html`<div class="viewport-fallback">${t("view.unavailable")}<br/><small>${failed} — ${t("view.liveBelow")}</small></div>`}
           <div class="hud">
-            <div class="hud-cams" role="group" aria-label="Camera angle">
+            <div class="hud-cams" role="group" aria-label=${t("cam.group")}>
               ${cams.map(c => html`<button key=${c} type="button"
                 class=${"btn btn--ghost" + (cam === c ? " is-active" : "")}
-                onClick=${() => pick(c)}>${c}</button>`)}
+                onClick=${() => pick(c)}>${t("cam." + c)}</button>`)}
             </div>
             <div class="compass" aria-hidden="true">
               <svg ref=${compassRef} viewBox="0 0 100 100">
@@ -218,13 +250,13 @@ function Orientation({ packet, onLog }) {
                 <polygon points="50,15 45,50 55,50" fill="#ff3b2f"/>
                 <polygon points="50,85 45,50 55,50" fill="rgba(236,229,214,0.4)"/>
               </svg>
-              <span>Heading</span>
+              <span>${t("hud.heading")}</span>
             </div>
             <dl class="hud-tele">
-              <div><dt>Dist</dt><dd>${fmt(packet?.dist, 0)} cm</dd></div>
-              <div><dt>Roll</dt><dd>${fmt(packet?.roll, 1)}°</dd></div>
-              <div><dt>Pitch</dt><dd>${fmt(packet?.pitch, 1)}°</dd></div>
-              <div><dt>Yaw</dt><dd>${fmt(packet?.yaw, 1)}°</dd></div>
+              <div><dt>${t("hud.dist")}</dt><dd>${fmt(packet?.dist, 0)} cm</dd></div>
+              <div><dt>${t("hud.roll")}</dt><dd>${fmt(packet?.roll, 1)}°</dd></div>
+              <div><dt>${t("hud.pitch")}</dt><dd>${fmt(packet?.pitch, 1)}°</dd></div>
+              <div><dt>${t("hud.yaw")}</dt><dd>${fmt(packet?.yaw, 1)}°</dd></div>
             </dl>
           </div>
         </div>
@@ -236,7 +268,7 @@ function Orientation({ packet, onLog }) {
 function ReadingsPanel({ packet }) {
   return html`
     <section class="zone readings reveal" style=${{ animationDelay: "120ms" }} aria-labelledby="env-h">
-      <${Head} folio="03" title="Environment" tag="05 ch" />
+      <${Head} folio="03" title=${t("zone.environment")} tag=${t("tag.channels")} />
       <div class="zone-body">
         ${SENSORS.map((s, i) => html`<${Reading} key=${s.key} s=${s}
           value=${packet?.[s.key]} index=${String(i + 1).padStart(2, "0")} />`)}
@@ -247,15 +279,15 @@ function ReadingsPanel({ packet }) {
 /* ---------------- analysis / mission memory ---------------- */
 function Memory({ chat }) {
   const findings = (chat?.findings || []).slice().reverse();
-  const tag = !chat ? "—" : findings.length ? findings.length + " found" : "nominal";
+  const tag = !chat ? "—" : findings.length ? t("tag.found", { n: findings.length }) : t("tag.nominal");
   return html`
     <section class="zone memory reveal" style=${{ animationDelay: "180ms" }} aria-labelledby="mem-h">
-      <${Head} folio="07" title="Analysis" tag=${tag} />
+      <${Head} folio="07" title=${t("zone.analysis")} tag=${tag} />
       <div class="memory-body">
         ${!chat
-          ? html`<p class="memory-empty">No active session.</p>`
+          ? html`<p class="memory-empty">${t("mem.noSession")}</p>`
           : findings.length === 0
-          ? html`<p class="memory-empty">No findings yet — conditions nominal.</p>`
+          ? html`<p class="memory-empty">${t("mem.noFindings")}</p>`
           : findings.map(f => html`<div key=${f.id} class=${"memory-item is-" + f.kind}>
               <span class="memory-dot" aria-hidden="true"></span>
               <span class="memory-text">${f.text}</span>
@@ -269,9 +301,9 @@ function Memory({ chat }) {
 function TrendsPanel({ packet }) {
   return html`
     <section class="zone reveal" style=${{ animationDelay: "200ms" }} aria-labelledby="tr-h">
-      <${Head} folio="04" title="Trends">
+      <${Head} folio="04" title=${t("zone.trends")}>
         <div class="legend" aria-label="Series">
-          ${TRENDS.map(s => html`<span key=${s.key}><i style=${{ background: s.color }}></i>${s.name}</span>`)}
+          ${TRENDS.map(s => html`<span key=${s.key}><i style=${{ background: s.color }}></i>${t(s.tkey)}</span>`)}
         </div>
       <//>
       <div class="trend-body"><${Trends} packet=${packet} /></div>
@@ -281,13 +313,21 @@ function TrendsPanel({ packet }) {
 /* ---------------- agent (AI) ----------------
    The agent has a "mood" derived from what it's saying + live sensor state.
    That mood drives an animated glyph so the analysis reads as intent, not just text. */
+// label is an i18n key, resolved at render via t().
+// Split face string into animated parts for Telegram-style blink.
+function animFace(face) {
+  if (face === ":o") return html`<span class="a-eye">:</span><span class="a-mouth">o</span>`;
+  const [l, m, r] = face;
+  return html`<span class="a-eye">${l}</span><span class="a-mouth">${m}</span><span class="a-eye">${r}</span>`;
+}
+
 const INTENTS = {
-  idle:     { key: "idle",     label: "Standby",   color: "var(--ink-3)", face: "-_-" },
-  scanning: { key: "scanning", label: "Scanning",  color: "var(--ink-2)", face: "o_o" },
-  thinking: { key: "thinking", label: "Analyzing", color: "var(--ink)",   face: "o_O" },
-  clear:    { key: "clear",    label: "All Clear", color: "var(--go)",     face: "^_^" },
-  caution:  { key: "caution",  label: "Caution",   color: "var(--warn)",   face: ":o"  },
-  alert:    { key: "alert",    label: "Alert",     color: "var(--accent)", face: "x_x" },
+  idle:     { key: "idle",     label: "intent.idle",     color: "var(--ink-3)", face: "-_-" },
+  scanning: { key: "scanning", label: "intent.scanning", color: "var(--ink-2)", face: "o_o" },
+  thinking: { key: "thinking", label: "intent.thinking", color: "var(--ink)",   face: "o_O" },
+  clear:    { key: "clear",    label: "intent.clear",    color: "var(--go)",     face: "^_^" },
+  caution:  { key: "caution",  label: "intent.caution",  color: "var(--warn)",   face: ":o"  },
+  alert:    { key: "alert",    label: "intent.alert",    color: "var(--accent)", face: "x_x" },
 };
 
 // Worst pill across all live readings: 0 go · 1 warn · 2 abort · null no data.
@@ -307,28 +347,28 @@ function worstSensor(packet) {
 // is visible. Mirrors the project pitch — "can a human safely enter?"
 function assess(packet) {
   const rank = worstSensor(packet);
-  if (rank == null) return { kind: "idle", label: "Awaiting Data", cause: "No telemetry yet" };
-  let cause = "All readings nominal";
+  if (rank == null) return { kind: "idle", label: t("verdict.awaiting"), cause: t("verdict.noTelemetry") };
+  let cause = t("verdict.nominal");
   if (rank > 0) {
     for (const s of SENSORS) {
       const v = packet[s.key];
       if (v == null || isNaN(v)) continue;
-      const [lbl, k] = s.st(v);
-      if ((k === "abort" ? 2 : k === "warn" ? 1 : 0) === rank) { cause = `${s.name} · ${lbl}`; break; }
+      const [lblKey, k] = s.st(v);
+      if ((k === "abort" ? 2 : k === "warn" ? 1 : 0) === rank) { cause = `${t("sensor." + s.key)} · ${t(lblKey)}`; break; }
     }
   }
-  if (rank === 2) return { kind: "abort", label: "Danger", cause };
-  if (rank === 1) return { kind: "warn",  label: "Caution", cause };
-  return { kind: "go", label: "Safe", cause };
+  if (rank === 2) return { kind: "abort", label: t("verdict.danger"), cause };
+  if (rank === 1) return { kind: "warn",  label: t("verdict.caution"), cause };
+  return { kind: "go", label: t("verdict.safe"), cause };
 }
 
 // Intent: analysis-in-flight wins, then keywords in what the agent said, then sensors.
 function deriveIntent(ai, packet, connected) {
   if (ai.analyzing) return INTENTS.thinking;
-  const t = (ai.text || "").toLowerCase();
-  if (/\b(danger|abort|critical|hazard|emergency|evacuat|fire|toxic)\b/.test(t)) return INTENTS.alert;
-  if (/\b(caution|warning|careful|slow|obstacle|collision|bump|approach|elevated|moderate|watch|steer)\b/.test(t)) return INTENTS.caution;
-  if (/\b(clear|safe|normal|nominal|stable|good|proceed|no threat|all systems)\b/.test(t)) return INTENTS.clear;
+  const txt = (ai.text || "").toLowerCase();
+  if (/\b(danger|abort|critical|hazard|emergency|evacuat|fire|toxic|peligro|abortar|crítico|critico|emergencia|evacua|fuego|tóxico|toxico)\b/.test(txt)) return INTENTS.alert;
+  if (/\b(caution|warning|careful|slow|obstacle|collision|bump|approach|elevated|moderate|watch|steer|precaución|precaucion|advertencia|cuidado|lento|obstácul|obstacul|colisión|colision|acerca|moderad|vigila)\b/.test(txt)) return INTENTS.caution;
+  if (/\b(clear|safe|normal|nominal|stable|good|proceed|no threat|all systems|despejado|seguro|estable|bien|procede|sin amenaza)\b/.test(txt)) return INTENTS.clear;
   const w = worstSensor(packet);
   if (w === 2) return INTENTS.alert;
   if (w === 1) return INTENTS.caution;
@@ -378,35 +418,35 @@ function Stopwatch({ since }) {
 }
 
 function AgentTiming({ ai }) {
-  if (ai.phase === "thinking") return html`<div class="agent-timing is-live">Thinking… <b><${Stopwatch} since=${ai.since} /></b></div>`;
-  if (ai.phase === "speaking") return html`<div class="agent-timing is-live">Synthesizing voice… <b><${Stopwatch} since=${ai.since} /></b></div>`;
+  if (ai.phase === "thinking") return html`<div class="agent-timing is-live">${t("timing.thinking")} <b><${Stopwatch} since=${ai.since} /></b></div>`;
+  if (ai.phase === "speaking") return html`<div class="agent-timing is-live">${t("timing.synth")} <b><${Stopwatch} since=${ai.since} /></b></div>`;
   if (ai.llm != null) return html`<div class="agent-timing">LLM <b>${(ai.llm / 1000).toFixed(1)}s</b> · TTS <b>${ai.tts != null ? (ai.tts / 1000).toFixed(1) + "s" : "—"}</b></div>`;
   return null;
 }
 
-function Agent({ ai, tts, packet, connected, speaking, chats, activeChat, onNewChat, onSelectChat, onDeleteChat, onBrief, onAnalyze, onToggleTts, onPick, onMock, onAsk }) {
+function Agent({ ai, tts, packet, connected, speaking, chats, activeChat, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onPick, onMock, onAsk }) {
   const intent = deriveIntent(ai, packet, connected);
   const v = assess(packet);
   const briefed = activeChat && activeChat.mission;
   return html`
     <section class=${"zone agent reveal is-" + intent.key + (ai.analyzing ? " is-analyzing" : "") + (speaking ? " is-speaking" : "")}
       style=${{ animationDelay: "120ms", "--agent-c": intent.color }} aria-labelledby="agent-h">
-      <${Head} folio="02" title="Agent" tag=${ai.badge} />
+      <${Head} folio="02" title=${t("zone.agent")} tag=${t(ai.badge)} />
       <div class="agent-body">
         <div class="agent-topbar">
           ${briefed
-            ? html`<button type="button" class="brief-back agent-back" onClick=${() => onSelectChat("")}>← Sessions · ${activeChat.title}</button>`
+            ? html`<button type="button" class="brief-back agent-back" onClick=${() => onSelectChat("")}>${t("brief.sessions")} · ${activeChat.title}</button>`
             : html`<span class="agent-topbar-spacer"></span>`}
-          <label class="switch agent-voice" title="Toggle Blackout's voice">
+          <label class="switch agent-voice" title=${t("agent.voiceTitle")}>
             <input type="checkbox" checked=${tts} onChange=${onToggleTts} />
             <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
-            Voice
+            ${t("agent.voice")}
           </label>
         </div>
         ${!activeChat
           ? html`<${ChatSelect} chats=${chats} onNew=${onNewChat} onSelect=${onSelectChat} onDelete=${onDeleteChat} />`
           : !briefed
-          ? html`<${Briefing} onBrief=${onBrief} onBack=${() => onSelectChat("")} busy=${ai.analyzing} />`
+          ? html`<${Briefing} onBrief=${onBrief} onBack=${() => onSelectChat("")} onSpeak=${onSpeak} busy=${ai.analyzing} />`
           : html`<${React.Fragment}>
         <div class="agent-stage">
           <span class="agent-grid" aria-hidden="true"></span>
@@ -414,28 +454,28 @@ function Agent({ ai, tts, packet, connected, speaking, chats, activeChat, onNewC
           <div class="agent-orb"><${AgentIcon} intent=${intent} /></div>
           ${speaking
             ? html`<div class="agent-eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>`
-            : html`<span class="agent-state-label"><span class="agent-face">${intent.face}</span> ${intent.label}</span>`}
+            : html`<span class="agent-state-label"><span class="agent-face">${animFace(intent.face)}</span> ${t(intent.label)}</span>`}
         </div>
         <div class="agent-speech">
           <p class="agent-text" key=${ai.text} role="status" aria-live="polite">${ai.text}</p>
           <${AgentTiming} ai=${ai} />
         </div>
         <div class=${"verdict is-" + v.kind} role="status" aria-live="polite">
-          <span class="verdict-k">Entry Status</span>
+          <span class="verdict-k">${t("verdict.entryStatus")}</span>
           <strong class="verdict-label">${v.label}</strong>
           <span class="verdict-cause">${v.cause}</span>
         </div>
         <div class="agent-foot">
           <button class="btn btn--primary" type="button" onClick=${onAnalyze} disabled=${ai.analyzing}>
-            ${ai.analyzing ? "Analyzing…" : "Run Analysis"}
+            ${ai.analyzing ? t("agent.analyzing") : t("agent.runAnalysis")}
           </button>
-          <button class="btn" type="button" onClick=${onMock} disabled=${ai.analyzing} title="Inject random sensor data — no Arduino needed">
-            Mock Data
+          <button class="btn" type="button" onClick=${onMock} disabled=${ai.analyzing} title=${t("agent.mockTitle")}>
+            ${t("agent.mock")}
           </button>
         </div>
         <${Ask} onAsk=${onAsk} busy=${ai.analyzing} />
         <details class="ai-hist agent-hist">
-          <summary>History · ${ai.history.length}</summary>
+          <summary>${t("agent.history", { n: ai.history.length })}</summary>
           <div class="ai-hist-list">
             ${ai.history.map(h => html`
               <div key=${h.id} class="ai-hist-item" onClick=${() => onPick(h.text)}>
@@ -453,20 +493,20 @@ function Agent({ ai, tts, packet, connected, speaking, chats, activeChat, onNewC
 function ChatSelect({ chats, onNew, onSelect, onDelete }) {
   return html`
     <div class="chat-select">
-      <div class="mission-head"><span class="mission-k">Sessions</span></div>
+      <div class="mission-head"><span class="mission-k">${t("chat.sessions")}</span></div>
       ${chats.length === 0
-        ? html`<p class="chat-empty">No chats created.</p>`
+        ? html`<p class="chat-empty">${t("chat.empty")}</p>`
         : html`<div class="chat-list">
             ${chats.slice().reverse().map((c, i) => html`
-              <div key=${c.id} class="chat-item" style=${{ animationDelay: (i * 45) + "ms" }}>
+              <div key=${c.id} class="chat-item">
                 <button type="button" class="chat-item-main" onClick=${() => onSelect(c.id)}>
-                  <span class="chat-item-title">${c.title || "Untitled"}</span>
-                  <span class="chat-item-sub">${c.mission ? "Briefed" : "Not briefed"}</span>
+                  <span class="chat-item-title">${c.title || t("chat.untitled")}</span>
+                  <span class="chat-item-sub">${c.mission ? t("chat.briefed") : t("chat.notBriefed")}</span>
                 </button>
-                <button type="button" class="chat-del" onClick=${() => onDelete(c.id)} title="Delete chat" aria-label="Delete chat">×</button>
+                <button type="button" class="chat-del" onClick=${() => onDelete(c.id)} title=${t("chat.delete")} aria-label=${t("chat.delete")}>×</button>
               </div>`)}
           </div>`}
-      <button type="button" class="btn btn--primary chat-new" onClick=${onNew}>+ New Chat</button>
+      <button type="button" class="btn btn--primary chat-new" onClick=${onNew}>${t("chat.new")}</button>
     </div>`;
 }
 
@@ -479,8 +519,9 @@ function useMic(onText) {
   const toggle = useCallback(() => {
     if (!SpeechRec) return;
     if (listening) { recRef.current?.stop(); return; }
+    stopSpeech(); // operator is talking — cut the agent off so it doesn't talk over them
     const rec = new SpeechRec();
-    rec.lang = "en-US"; rec.interimResults = false; rec.maxAlternatives = 1;
+    rec.lang = speechLang(); rec.interimResults = false; rec.maxAlternatives = 1;
     rec.onresult = (e) => onText(e.results[0][0].transcript);
     rec.onend = () => setListening(false);
     rec.onerror = () => setListening(false);
@@ -489,26 +530,36 @@ function useMic(onText) {
   return { listening, toggle, supported: !!SpeechRec };
 }
 
-const INTRO = "Hey — I'm Blackout, the recon unit you're sending into the dark. Walk me through the job, one thing at a time.";
+// Briefing step copy is resolved through i18n at render time. `clip` maps each
+// step to its pre-generated onboarding audio key (see playOnboard / ONBOARDING).
 const BRIEF_STEPS = [
-  { key: "objective",   label: "Objective",   q: "What's the job down there — what am I going in to do?",   ph: "e.g. find a route through the collapsed section, check for survivors" },
-  { key: "environment", label: "Environment", q: "What kind of place am I dropping into?",                   ph: "e.g. flooded mine shaft, tight passages, unstable ceiling" },
-  { key: "watch",       label: "Watch for",   q: "What should I be watching for down there?",                ph: "e.g. gas pockets, sudden drop-offs, rising water" },
+  { key: "objective",   clip: "q0", label: "brief.objLabel",   q: "brief.objQ",   ph: "brief.objPh" },
+  { key: "environment", clip: "q1", label: "brief.envLabel",   q: "brief.envQ",   ph: "brief.envPh" },
+  { key: "watch",       clip: "q2", label: "brief.watchLabel", q: "brief.watchQ", ph: "brief.watchPh" },
 ];
 
-function Briefing({ onBrief, onBack, busy }) {
+function Briefing({ onBrief, onBack, onSpeak, busy }) {
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState({});
   const review = step >= BRIEF_STEPS.length;
   const cur = BRIEF_STEPS[step];
   const setCur = (val) => setAnswers(a => ({ ...a, [cur.key]: val }));
-  const mic = useMic((t) => setAnswers(a => {
+  const mic = useMic((txt) => setAnswers(a => {
     const k = BRIEF_STEPS[step]?.key; if (!k) return a;
-    return { ...a, [k]: (a[k] ? a[k] + " " : "") + t };
+    return { ...a, [k]: (a[k] ? a[k] + " " : "") + txt };
   }));
   const curVal = (answers[cur?.key] || "");
   const next = () => { if (curVal.trim()) setStep(s => s + 1); };
-  const start = () => onBrief(BRIEF_STEPS.map(s => `${s.label}: ${answers[s.key] || "—"}`).join("\n"));
+  const start = () => onBrief(BRIEF_STEPS.map(s => `${t(s.label)}: ${answers[s.key] || "—"}`).join("\n"));
+
+  // Speak each onboarding step out loud (pre-rendered clips, no synth wait).
+  // Step 0 plays the intro greeting first, then its question.
+  useEffect(() => {
+    if (review) return;
+    const s = BRIEF_STEPS[step];
+    const q = { clip: s.clip, text: t(s.q) };
+    onSpeak?.(step === 0 ? [{ clip: "intro", text: ONBOARDING[getLang()].intro }, q] : [q]);
+  }, [step]); // eslint-disable-line — re-speak only on step change, not keystrokes
 
   const dots = html`<div class="brief-dots" aria-hidden="true">
     ${BRIEF_STEPS.map((s, i) => html`<span key=${s.key}
@@ -519,19 +570,19 @@ function Briefing({ onBrief, onBack, busy }) {
   if (review) {
     return html`
       <div class="briefing">
-        <button type="button" class="brief-back" onClick=${() => setStep(BRIEF_STEPS.length - 1)}>← Back</button>
+        <button type="button" class="brief-back" onClick=${() => setStep(BRIEF_STEPS.length - 1)}>${t("brief.back")}</button>
         ${dots}
-        <div class="brief-orb is-happy"><span class="agent-face">^_^</span></div>
+        <div class="brief-orb is-happy"><span class="agent-face">${animFace("^_^")}</span></div>
         <div class="brief-step" key="review">
-          <p class="brief-greeting">Got it — here's the rundown. Good to go?</p>
+          <p class="brief-greeting">${t("brief.rundown")}</p>
           <div class="brief-summary">
             ${BRIEF_STEPS.map((s, i) => html`<div key=${s.key} class="brief-sum-row" style=${{ animationDelay: (i * 70) + "ms" }}>
-              <span class="brief-sum-k">${s.label}</span>
+              <span class="brief-sum-k">${t(s.label)}</span>
               <span class="brief-sum-v">${answers[s.key] || "—"}</span>
             </div>`)}
           </div>
           <button type="button" class="btn btn--primary btn--go" onClick=${start} disabled=${busy}>
-            ${busy ? "Heading in…" : "Start Recon"}
+            ${busy ? t("brief.heading") : t("brief.start")}
           </button>
         </div>
       </div>`;
@@ -540,24 +591,24 @@ function Briefing({ onBrief, onBack, busy }) {
   return html`
     <div class="briefing">
       <button type="button" class="brief-back" onClick=${step === 0 ? onBack : () => setStep(s => s - 1)}>
-        ${step === 0 ? "← Sessions" : "← Back"}
+        ${step === 0 ? t("brief.sessions") : t("brief.back")}
       </button>
       ${dots}
-      <div class="brief-orb"><span class="agent-face">o_o</span></div>
-      ${step === 0 ? html`<p class="brief-greeting">${INTRO}</p>` : null}
+      <div class="brief-orb"><span class="agent-face">${animFace("o_o")}</span></div>
+      ${step === 0 ? html`<p class="brief-greeting">${ONBOARDING[getLang()].intro}</p>` : null}
       <div class="brief-step" key=${step}>
-        <div class="brief-step-k">Step ${step + 1} of ${BRIEF_STEPS.length} · ${cur.label}</div>
-        <p class="brief-q">${cur.q}</p>
+        <div class="brief-step-k">${t("brief.stepOf", { n: step + 1, total: BRIEF_STEPS.length, label: t(cur.label) })}</div>
+        <p class="brief-q">${t(cur.q)}</p>
         <div class="brief-field">
-          <textarea class="mission-input" rows="3" placeholder=${cur.ph}
+          <textarea class="mission-input" rows="3" placeholder=${t(cur.ph)}
             value=${curVal} onInput=${e => setCur(e.target.value)} disabled=${busy} autoFocus
             onKeyDown=${e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) next(); }}></textarea>
           ${mic.supported ? html`<button type="button" class=${"ask-mic brief-mic" + (mic.listening ? " is-live" : "")}
             onClick=${mic.toggle} disabled=${busy} aria-pressed=${mic.listening}>
-            ${mic.listening ? "● Listening…" : "🎤 Speak"}</button>` : null}
+            ${mic.listening ? t("brief.listening") : t("brief.speak")}</button>` : null}
         </div>
         <button type="button" class="btn btn--primary" onClick=${next} disabled=${busy || !curVal.trim()}>
-          ${step === BRIEF_STEPS.length - 1 ? "Review" : "Next"}
+          ${step === BRIEF_STEPS.length - 1 ? t("brief.review") : t("brief.next")}
         </button>
       </div>
     </div>`;
@@ -565,16 +616,16 @@ function Briefing({ onBrief, onBack, busy }) {
 
 /* ---------------- ask blackout (voice, in agent box) ---------------- */
 // Predetermined prompts — give the operator ideas and keep questions on-telemetry.
-const ASK_SUGGESTIONS = ["What's ahead?", "Is the air breathable?", "Any gas danger?", "Are we level?", "Push on or back out?"];
+const ASK_SUGGESTIONS = ["ask.s0", "ask.s1", "ask.s2", "ask.s3", "ask.s4"];
 function Ask({ onAsk, busy }) {
   const mic = useMic(onAsk);
   return html`
     <div class="agent-ask">
       ${mic.supported ? html`<button type="button" class=${"ask-mic" + (mic.listening ? " is-live" : "")} onClick=${mic.toggle}
-        disabled=${busy} aria-pressed=${mic.listening}>${mic.listening ? "● Listening…" : "🎤 Ask Blackout"}</button>` : null}
+        disabled=${busy} aria-pressed=${mic.listening}>${mic.listening ? t("ask.listening") : t("ask.mic")}</button>` : null}
       <div class="ask-chips">
         ${ASK_SUGGESTIONS.map(q => html`<button key=${q} type="button" class="ask-chip"
-          onClick=${() => onAsk(q)} disabled=${busy}>${q}</button>`)}
+          onClick=${() => onAsk(t(q))} disabled=${busy}>${t(q)}</button>`)}
       </div>
     </div>`;
 }
@@ -582,11 +633,11 @@ function Ask({ onAsk, busy }) {
 /* ---------------- logs ---------------- */
 function Logs({ logs }) {
   const [f, setF] = useState("all");
-  const tabs = [["all", "All"], ["system", "System"], ["alerts", "Alerts"], ["ai", "AI"]];
+  const tabs = [["all", t("log.tabAll")], ["system", t("log.tabSystem")], ["alerts", t("log.tabAlerts")], ["ai", t("log.tabAi")]];
   const view = logs.filter(l => f === "all" ? true : f === "alerts" ? (l.type === "warn" || l.type === "danger") : l.type === f);
   return html`
     <section class="zone logs reveal" style=${{ animationDelay: "320ms" }} aria-labelledby="log-h">
-      <${Head} folio="05" title="Activity Log" tag=${logs.length + " ev"} />
+      <${Head} folio="05" title=${t("zone.logs")} tag=${t("log.ev", { n: logs.length })} />
       <div class="zone-body">
         <div class="log-tabs" role="tablist">
           ${tabs.map(([k, lbl]) => html`<button key=${k} type="button" role="tab" aria-selected=${f === k}
@@ -611,20 +662,20 @@ function SerialMonitor({ lines, hidden, onToggle, onClear }) {
   }, [lines, hidden, paused]);
   return html`
     <section class=${"zone serial reveal" + (hidden ? " is-collapsed" : "")} style=${{ animationDelay: "380ms" }} aria-labelledby="ser-h">
-      <${Head} folio="06" title="Serial Monitor">
+      <${Head} folio="06" title=${t("zone.serial")}>
         <div class="serial-tools">
           <span class="tag">${lines.length}</span>
           ${!hidden && html`<button type="button" class="serial-btn" onClick=${() => setPaused(p => !p)}
-            aria-pressed=${paused}>${paused ? "Resume" : "Pause"}</button>`}
-          ${!hidden && html`<button type="button" class="serial-btn" onClick=${onClear}>Clear</button>`}
+            aria-pressed=${paused}>${paused ? t("serial.resume") : t("serial.pause")}</button>`}
+          ${!hidden && html`<button type="button" class="serial-btn" onClick=${onClear}>${t("serial.clear")}</button>`}
           <button type="button" class="serial-btn" onClick=${onToggle} aria-expanded=${!hidden}
-            title="Toggle (backtick \`)">${hidden ? "Show" : "Hide"}</button>
+            title=${t("serial.toggleTitle")}>${hidden ? t("serial.show") : t("serial.hide")}</button>
         </div>
       <//>
       ${!hidden && html`
         <div class="serial-stream" role="log" aria-live="off" ref=${streamRef}>
           ${lines.length === 0
-            ? html`<div class="serial-empty">No serial traffic yet…</div>`
+            ? html`<div class="serial-empty">${t("serial.empty")}</div>`
             : lines.map(l => html`<div key=${l.id} class=${"serial-line" + (l.s ? " is-data" : "")}>
                 <span class="t">${l.time}</span><span class="m">${l.text}</span></div>`)}
         </div>`}
@@ -632,35 +683,62 @@ function SerialMonitor({ lines, hidden, onToggle, onClear }) {
 }
 
 /* ---------------- masthead ---------------- */
-function Masthead({ connected, ports, currentPort, ping, packets, uptime, onPort }) {
+function Masthead({ connected, ports, currentPort, bridge, onBridge, connMode, onConnMode, ping, packets, uptime, onPort, lang, onLang }) {
   return html`
     <header class="masthead reveal">
       <div class="mast-top">
         <div class="mast-id">
           <span class="folio-sm">BLK-01</span>
-          <span class="label">Flight Console · WRO 2026</span>
+          <span class="label">${t("mast.console")}</span>
         </div>
         <div class="mast-strip">
           <p class="lamp" role="status" aria-live="polite">
             <span class=${"lamp-dot " + (connected ? "is-go" : "is-abort")}></span>
-            <span class="lamp-label">${connected ? "Link Live" : "No Signal"}</span>
+            <span class="lamp-label">${connected ? t("mast.linkLive") : t("mast.noSignal")}</span>
           </p>
+          <div class="conn-field">
+            <span class="label">${t("mast.link")}</span>
+            <div class="conn-seg" data-mode=${connMode} role="tablist" aria-label=${t("mast.link")}>
+              <button type="button" role="tab" aria-selected=${connMode === "usb"}
+                class=${connMode === "usb" ? "is-active" : ""} onClick=${() => onConnMode("usb")}>${t("mast.usb")}</button>
+              <button type="button" role="tab" aria-selected=${connMode === "bt"}
+                class=${connMode === "bt" ? "is-active" : ""} onClick=${() => onConnMode("bt")}>${t("mast.bt")}</button>
+              <span class="conn-seg-thumb" aria-hidden="true"></span>
+            </div>
+            <div class="conn-panel" key=${connMode}>
+              ${connMode === "usb" ? html`
+                <select class="port-select" value=${currentPort || ""} onChange=${e => onPort(e.target.value)}>
+                  ${ports.length === 0 && html`<option value="">${t("mast.noPorts")}</option>`}
+                  ${ports.map(p => html`<option key=${p} value=${p}>${p}</option>`)}
+                </select>
+              ` : html`
+                <div class="bridge-ctl">
+                  <button type="button" class=${"bridge-btn " + (bridge.running ? "is-on" : "")}
+                    disabled=${bridge.busy} onClick=${() => onBridge("toggle")}>
+                    <span class=${"lamp-dot " + (bridge.running ? "is-go" : "is-abort")}></span>
+                    ${bridge.busy ? t("mast.bridgeBusy") : bridge.running ? t("mast.bridgeOn") : t("mast.bridgeOff")}
+                  </button>
+                  <button type="button" class="bridge-repair" title=${t("mast.bridgeRepairTitle")}
+                    disabled=${bridge.busy} onClick=${() => onBridge("reconnect")}>⟳</button>
+                </div>
+              `}
+            </div>
+          </div>
           <label class="port-field">
-            <span class="label">Port</span>
-            <select class="port-select" value=${currentPort || ""} onChange=${e => onPort(e.target.value)}>
-              ${ports.length === 0 && html`<option value="">no ports</option>`}
-              ${ports.map(p => html`<option key=${p} value=${p}>${p}</option>`)}
+            <span class="label">${t("mast.lang")}</span>
+            <select class="port-select" value=${lang} onChange=${e => onLang(e.target.value)}>
+              ${LANGS.map(l => html`<option key=${l.code} value=${l.code}>${l.label}</option>`)}
             </select>
           </label>
-          <dl class="stat"><dt>Ping</dt><dd>${ping}</dd></dl>
-          <dl class="stat"><dt>Packets</dt><dd>${packets}</dd></dl>
-          <dl class="stat"><dt>Uptime</dt><dd>${uptime}</dd></dl>
+          <dl class="stat"><dt>${t("mast.ping")}</dt><dd>${ping}</dd></dl>
+          <dl class="stat"><dt>${t("mast.packets")}</dt><dd>${packets}</dd></dl>
+          <dl class="stat"><dt>${t("mast.uptime")}</dt><dd>${uptime}</dd></dl>
         </div>
       </div>
       <div class="mast-title">
         <h1>Blackout<span class="ver">V1</span></h1>
         <div class="mast-sub">
-          <span>Sensor-Hub Telemetry</span>
+          <span>${t("mast.subTele")}</span>
           <span class="dim">Mega 2560 · Uno R3</span>
         </div>
       </div>
@@ -670,15 +748,15 @@ function Masthead({ connected, ports, currentPort, ping, packets, uptime, onPort
 /* ---------------- ticker ---------------- */
 function Ticker({ packet, connected }) {
   const items = [
-    ["Temp", fmt(packet?.temp, 1) + "°C"],
-    ["Humid", fmt(packet?.humid, 0) + "%"],
-    ["Dist", fmt(packet?.dist, 0) + "cm"],
-    ["Smoke", fmt(packet?.smoke, 0) + "ppm"],
-    ["Air", fmt(packet?.airq, 0) + "ppm"],
-    ["Roll", fmt(packet?.roll, 0) + "°"],
-    ["Pitch", fmt(packet?.pitch, 0) + "°"],
-    ["Yaw", fmt(packet?.yaw, 0) + "°"],
-    ["Link", connected ? "Live" : "Down"],
+    [t("tick.temp"), fmt(packet?.temp, 1) + "°C"],
+    [t("tick.humid"), fmt(packet?.humid, 0) + "%"],
+    [t("tick.dist"), fmt(packet?.dist, 0) + "cm"],
+    [t("tick.smoke"), fmt(packet?.smoke, 0) + "ppm"],
+    [t("tick.air"), fmt(packet?.airq, 0) + "ppm"],
+    [t("tick.roll"), fmt(packet?.roll, 0) + "°"],
+    [t("tick.pitch"), fmt(packet?.pitch, 0) + "°"],
+    [t("tick.yaw"), fmt(packet?.yaw, 0) + "°"],
+    [t("tick.link"), connected ? t("link.live") : t("link.down")],
   ];
   const seq = [...items, ...items];
   return html`
@@ -702,10 +780,13 @@ function App() {
   const [ping, setPing] = useState("—");
   const [packets, setPackets] = useState(0);
   const [logs, setLogs] = useState([]);
-  const [ai, setAi] = useState({ text: "Awaiting telemetry…", badge: "Standby", analyzing: false, history: [], phase: null, since: 0, llm: null, tts: null });
+  const [ai, setAi] = useState({ text: t("ai.awaiting"), badge: "badge.standby", analyzing: false, history: [], phase: null, since: 0, llm: null, tts: null });
   const [tts, setTts] = useState(() => localStorage.getItem("tts") !== "false");
+  const [lang, setLangState] = useState(getLang());
   const [ports, setPorts] = useState([]);
   const [currentPort, setCurrentPort] = useState(null);
+  const [bridge, setBridge] = useState({ running: false, busy: false });
+  const [connMode, setConnModeState] = useState(() => localStorage.getItem("connMode") || "usb");
   const [toasts, setToasts] = useState([]);
   const [uptime, setUptime] = useState("00:00:00");
   const [serialLines, setSerialLines] = useState([]);
@@ -775,7 +856,7 @@ function App() {
         const b = bandOf(f, d[f.k]);
         const prev = lastBands.current[f.k] ?? 0;
         if (b > prev && f.msg[b]) {
-          added.push({ id: Date.now() + Math.random(), text: f.msg[b], kind: b === 2 ? "danger" : "warn", time: new Date().toLocaleTimeString() });
+          added.push({ id: Date.now() + Math.random(), text: t(f.msg[b]), kind: b === 2 ? "danger" : "warn", time: new Date().toLocaleTimeString() });
         }
         lastBands.current[f.k] = b;
       }
@@ -783,10 +864,11 @@ function App() {
     }
 
     socket.on("connect", () => {
-      setConnected(true); addLog("Link established. Awaiting telemetry…", "system");
+      setConnected(true); addLog(t("log.linkEstablished"), "system");
+      socket.emit("set-language", getLang());                          // sync AI language
       socket.emit("set-mission", activeRef.current?.mission || ""); // sync server to active session
     });
-    socket.on("disconnect", () => { setConnected(false); setPing("—"); addLog("Link lost. Reconnecting…", "danger"); });
+    socket.on("disconnect", () => { setConnected(false); setPing("—"); addLog(t("log.linkLost"), "danger"); });
     socket.on("sensor-data", d => {
       if (!d) return;
       const lat = d.timestamp ? Math.max(0, Date.now() - d.timestamp) : NaN;
@@ -798,7 +880,7 @@ function App() {
         const now = Date.now();
         if (now - lastObstacle.current > 2400) {
           lastObstacle.current = now;
-          addLog(`Obstacle at ${d.dist.toFixed(0)} cm`, d.dist < 20 ? "danger" : d.dist < 55 ? "warn" : "system");
+          addLog(t("log.obstacle", { d: d.dist.toFixed(0) }), d.dist < 20 ? "danger" : d.dist < 55 ? "warn" : "system");
         }
       }
       recordFindings(d);
@@ -815,7 +897,7 @@ function App() {
     const sayAgent = (text, ts, logMsg, logKind) => {
       addLog(logMsg, logKind);
       setAi(p => ({
-        text, badge: "Online", analyzing: false,
+        text, badge: "badge.online", analyzing: false,
         phase: null, since: 0, llm: p.since ? Date.now() - p.since : null, tts: null,
         history: [...p.history, { text, time: new Date(ts || Date.now()).toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-20),
       }));
@@ -823,12 +905,19 @@ function App() {
     };
     // Auto analysis + instant reactions only fire when a briefed session is open —
     // otherwise the dashboard talks to itself on boot with no chat active.
-    socket.on("ai-analysis", d => { if (d?.analysis && activeRef.current?.mission) sayAgent(d.analysis, d.timestamp, "AI analysis received.", "ai"); });
-    socket.on("agent-blurt", d => { if (d?.text && activeRef.current?.mission) sayAgent(d.text, d.timestamp, "Blackout: " + d.text, "warn"); });
-    socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, "Mission acknowledged.", "ai"); });
-    addLog("Console booted. Standing by.", "system");
+    socket.on("ai-analysis", d => { if (d?.analysis && activeRef.current?.mission) sayAgent(d.analysis, d.timestamp, t("log.aiReceived"), "ai"); });
+    socket.on("agent-blurt", d => { if (d?.text && activeRef.current?.mission) sayAgent(d.text, d.timestamp, t("log.blurt", { text: d.text }), "warn"); });
+    socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, t("log.missionAck"), "ai"); });
+    addLog(t("log.booted"), "system");
     return () => socket.close();
   }, [addLog, speakTimed]);
+
+  // Keep the document language + skip-link (static HTML outside React) in sync.
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    const sk = document.querySelector(".skip-link");
+    if (sk) sk.textContent = t("skip");
+  }, [lang]);
 
   // uptime
   useEffect(() => {
@@ -849,23 +938,77 @@ function App() {
   }, []);
   useEffect(() => { loadPorts(); const id = setInterval(loadPorts, 10000); return () => clearInterval(id); }, [loadPorts]);
 
+  const setConnMode = useCallback(async (m) => {
+    setConnModeState(m);
+    localStorage.setItem("connMode", m);
+    addLog(t("log.connMode", { mode: m.toUpperCase() }), "system");
+    try {
+      const r = await fetch("/api/connMode", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: m }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        toast(t("toast.connMode", { mode: m.toUpperCase() }), "ok");
+        const br = await fetch("/api/bridge");
+        const bd = await br.json();
+        setBridge(b => ({ ...b, running: bd.running }));
+        if (m === "usb") loadPorts();
+      } else {
+        addLog(t("log.failed", { error: d.error }), "danger");
+        toast(d.error, "danger");
+      }
+    } catch (e) {
+      addLog(t("log.error", { msg: e.message }), "danger");
+      toast(t("toast.error", { msg: e.message }), "danger");
+    }
+  }, [addLog, toast, loadPorts]);
+
   const switchPort = useCallback(async (path) => {
     if (!path) return;
-    addLog(`Switching to ${path}…`, "system");
+    addLog(t("log.switching", { path }), "system");
     try {
       const r = await fetch("/api/ports/switch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
       const data = await r.json();
-      if (data.ok) { addLog(`Switched to ${path}`, "system"); toast(`Connected · ${path}`, "ok"); setCurrentPort(path); }
-      else { addLog(`Failed: ${data.error}`, "danger"); toast(`Failed · ${data.error}`, "danger"); loadPorts(); }
-    } catch (e) { addLog(`Error: ${e.message}`, "danger"); toast(`Error · ${e.message}`, "danger"); }
+      if (data.ok) { addLog(t("log.switched", { path }), "system"); toast(t("toast.connected", { path }), "ok"); setCurrentPort(path); }
+      else { addLog(t("log.failed", { error: data.error }), "danger"); toast(t("toast.failed", { error: data.error }), "danger"); loadPorts(); }
+    } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); toast(t("toast.error", { msg: e.message }), "danger"); }
   }, [addLog, toast, loadPorts]);
 
+  // Bluetooth bridge: pyserial reader the server spawns (node can't read BT SPP).
+  const loadBridge = useCallback(async () => {
+    try { const r = await fetch("/api/bridge"); const d = await r.json();
+      setBridge(b => ({ ...b, running: d.running })); } catch { /* offline */ }
+  }, []);
+  useEffect(() => { loadBridge(); const id = setInterval(loadBridge, 5000); return () => clearInterval(id); }, [loadBridge]);
+
+  // mode: "toggle" (start↔stop) or "reconnect" (re-pair while running). Both
+  // start paths re-pair, since a plain BT open usually opens but gets no data.
+  const toggleBridge = useCallback(async (mode = "toggle") => {
+    const stopping = mode === "toggle" && bridge.running;
+    setBridge(b => ({ ...b, busy: true }));
+    addLog(stopping ? t("log.bridge", { action: "stop" }) : mode === "reconnect" ? t("log.bridgeRepair") : t("log.bridge", { action: "start" }), "system");
+    try {
+      if (stopping) {
+        await fetch("/api/bridge/stop", { method: "POST" });
+        setBridge({ running: false, busy: false }); toast(t("toast.bridgeOff"), "ok");
+      } else {
+        if (mode === "reconnect") await fetch("/api/bridge/stop", { method: "POST" });
+        const r = await fetch("/api/bridge/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repair: true }) });
+        const d = await r.json();
+        if (d.ok) { setBridge({ running: true, busy: false }); toast(t("toast.bridgeOn"), "ok"); }
+        else { setBridge(b => ({ ...b, busy: false })); addLog(t("log.failed", { error: d.error }), "danger"); toast(d.error, "danger"); }
+      }
+    } catch (e) { setBridge(b => ({ ...b, busy: false })); addLog(t("log.error", { msg: e.message }), "danger"); }
+    loadBridge();
+  }, [bridge.running, addLog, toast, loadBridge]);
+
   const analyze = useCallback(() => {
-    setAi(p => ({ ...p, analyzing: true, badge: "Analyzing…", phase: "thinking", since: Date.now(), llm: null, tts: null }));
+    setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
     socketRef.current?.emit("request-analysis");
   }, []);
   const mockData = useCallback(() => {
-    setAi(p => ({ ...p, analyzing: true, badge: "Analyzing…", phase: "thinking", since: Date.now(), llm: null, tts: null }));
+    setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
     socketRef.current?.emit("mock-data");
   }, []);
   // Ask Blackout: reply lands in the agent's speech bubble + is spoken. Each chat
@@ -874,41 +1017,51 @@ function App() {
     text = (text || "").trim();
     const chat = activeRef.current;
     if (!text || !chat) return;
-    addLog(`Operator: ${text}`, "system");
+    addLog(t("log.operator", { text }), "system");
     const t0 = Date.now();
-    setAi(p => ({ ...p, analyzing: true, badge: "Thinking…", phase: "thinking", since: t0, llm: null, tts: null }));
+    setAi(p => ({ ...p, analyzing: true, badge: "badge.thinking", phase: "thinking", since: t0, llm: null, tts: null }));
     const next = [...(chat.messages || []), { role: "user", content: text }].slice(-12);
     setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: next } : c));
     try {
       const r = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next }),
+        body: JSON.stringify({ messages: next, lang: getLang() }),
       });
       const data = await r.json();
       const reply = data.reply || data.error || "No response.";
       if (data.reply) setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...next, { role: "assistant", content: reply }].slice(-12) } : c));
-      addLog("Blackout replied.", "ai");
+      addLog(t("log.replied"), "ai");
       setAi(p => ({
-        text: reply, badge: "Online", analyzing: false, phase: null, since: 0, llm: Date.now() - t0, tts: null,
+        text: reply, badge: "badge.online", analyzing: false, phase: null, since: 0, llm: Date.now() - t0, tts: null,
         history: [...p.history, { text: reply, time: new Date().toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-20),
       }));
       if (ttsRef.current && data.reply) speakTimed(reply);
     } catch (e) {
-      setAi(p => ({ ...p, text: "Comms error: " + e.message, badge: "Online", analyzing: false, phase: null }));
+      setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
     }
   }, [addLog, speakTimed]);
   const toggleTts = useCallback(() => setTts(p => {
     const n = !p; ttsRef.current = n; localStorage.setItem("tts", n);
-    if (!n) { ttsAudio?.pause(); window.speechSynthesis?.cancel(); setSpeaking(false); }
+    if (!n) { stopSpeech(); setSpeaking(false); }
     return n;
   }), []);
+  // Play a sequence of pre-rendered onboarding clips (intro + step questions).
+  const speakBrief = useCallback((items) => {
+    if (!ttsRef.current) return;
+    const play = (i) => { if (i < items.length) playOnboard(items[i].clip, items[i].text, { onEnd: () => play(i + 1) }); };
+    play(0);
+  }, []);
+  const changeLang = useCallback((code) => {
+    setLang(code); setLangState(code);
+    socketRef.current?.emit("set-language", code); // AI replies in the new language
+  }, []);
   const newChat = useCallback(() => {
     const id = "c" + Date.now();
-    setChats(cs => [...cs, { id, title: "New Recon", mission: "", messages: [], created: Date.now() }]);
+    setChats(cs => [...cs, { id, title: t("chat.newTitle"), mission: "", messages: [], created: Date.now() }]);
     setActiveId(id);
     socketRef.current?.emit("set-mission", ""); // no mission until briefed
-    if (ttsRef.current) speakTimed(INTRO); // Blackout greets you out loud (user-gesture, so audio is allowed)
-  }, [speakTimed]);
+    // Briefing's step-0 effect speaks the intro + first question out loud.
+  }, []);
   const selectChat = useCallback((id) => {
     setActiveId(id);
     socketRef.current?.emit("set-mission", (chats.find(c => c.id === id)?.mission) || "");
@@ -921,9 +1074,9 @@ function App() {
     text = (text || "").trim();
     const chat = activeRef.current;
     if (!text || !chat) return;
-    addLog(`Mission briefing sent: ${text}`, "system");
+    addLog(t("log.missionSent", { text }), "system");
     setChats(cs => cs.map(c => c.id === chat.id ? { ...c, mission: text, title: text.length > 30 ? text.slice(0, 30) + "…" : text } : c));
-    setAi(p => ({ ...p, analyzing: true, badge: "Copying…", phase: "thinking", since: Date.now() }));
+    setAi(p => ({ ...p, analyzing: true, badge: "badge.copying", phase: "thinking", since: Date.now() }));
     socketRef.current?.emit("set-mission", text);
   }, [addLog]);
   const pickHistory = useCallback((text) => setAi(p => ({ ...p, text })), []);
@@ -946,7 +1099,9 @@ function App() {
     <${React.Fragment}>
       <div class="console">
         <${Masthead} connected=${connected} ports=${ports} currentPort=${currentPort}
-          ping=${ping} packets=${packets} uptime=${uptime} onPort=${switchPort} />
+          bridge=${bridge} onBridge=${toggleBridge} connMode=${connMode} onConnMode=${setConnMode}
+          ping=${ping} packets=${packets} uptime=${uptime} onPort=${switchPort}
+          lang=${lang} onLang=${changeLang} />
         <${Ticker} packet=${view} connected=${connected} />
 
         <main class="deck" id="sensors">
@@ -957,7 +1112,7 @@ function App() {
             </div>
             <${Agent} ai=${ai} tts=${tts} packet=${packet} connected=${connected} speaking=${speaking}
               chats=${chats} activeChat=${activeChat} onNewChat=${newChat} onSelectChat=${selectChat}
-              onDeleteChat=${deleteChat} onBrief=${briefMission}
+              onDeleteChat=${deleteChat} onBrief=${briefMission} onSpeak=${speakBrief}
               onAnalyze=${analyze} onToggleTts=${toggleTts} onPick=${pickHistory} onMock=${mockData} onAsk=${ask} />
             <${Memory} chat=${activeChat} />
           </div>
@@ -978,9 +1133,9 @@ function App() {
         <footer class="colophon">
           <span><b>Blackout V1</b></span><span class="dot">/</span>
           <span>WRO 2026</span><span class="dot">/</span>
-          <span>Sensor Hub <b>Mega 2560</b></span><span class="dot">/</span>
-          <span>Motor <b>Uno R3</b></span><span class="dot">/</span>
-          <span>Field Console</span>
+          <span>${t("colo.sensorHub")} <b>Mega 2560</b></span><span class="dot">/</span>
+          <span>${t("colo.motor")} <b>Uno R3</b></span><span class="dot">/</span>
+          <span>${t("colo.field")}</span>
         </footer>
       </div>
 

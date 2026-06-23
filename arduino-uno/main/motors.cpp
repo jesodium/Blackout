@@ -1,46 +1,48 @@
 #include "motors.h"
 
-AF_DCMotor motorL1(1);
-AF_DCMotor motorL2(2);
-AF_DCMotor motorR1(3);
-AF_DCMotor motorR2(4);
+AF_DCMotor motorFL(1);  // M1 = front left
+AF_DCMotor motorBL(2);  // M2 = back left
+AF_DCMotor motorFR(3);  // M3 = front right
+AF_DCMotor motorBR(4);  // M4 = back right
+
+const int BL_BOOST = 40;  // back left motor weak, add to its speed. tune to even out.
 
 void motorsInit() {
-  motorL1.setSpeed(0);
-  motorL2.setSpeed(0);
-  motorR1.setSpeed(0);
-  motorR2.setSpeed(0);
-  motorL1.run(RELEASE);
-  motorL2.run(RELEASE);
-  motorR1.run(RELEASE);
-  motorR2.run(RELEASE);
+  motorFL.setSpeed(0);
+  motorBL.setSpeed(0);
+  motorFR.setSpeed(0);
+  motorBR.setSpeed(0);
+  motorFL.run(RELEASE);
+  motorBL.run(RELEASE);
+  motorFR.run(RELEASE);
+  motorBR.run(RELEASE);
 }
 
 void setMotors(int dirA, int speedA, int dirB, int speedB) {
   if (dirA == STOP) {
-    motorL1.run(RELEASE);
-    motorL2.run(RELEASE);
+    motorFL.run(RELEASE);
+    motorBL.run(RELEASE);
   } else {
-    motorL1.setSpeed(constrain(speedA, 0, 255));
-    motorL2.setSpeed(constrain(speedA, 0, 255));
-    motorL1.run(dirA == FORWARD ? FORWARD : BACKWARD);
-    motorL2.run(dirA == FORWARD ? FORWARD : BACKWARD);
+    motorFL.setSpeed(constrain(speedA, 0, 255));
+    motorBL.setSpeed(constrain(speedA + BL_BOOST, 0, 255));
+    motorFL.run(dirA == FORWARD ? FORWARD : BACKWARD);
+    motorBL.run(dirA == FORWARD ? BACKWARD : FORWARD);  // M2 wired reverse polarity, invert in software
   }
 
   if (dirB == STOP) {
-    motorR1.run(RELEASE);
-    motorR2.run(RELEASE);
+    motorFR.run(RELEASE);
+    motorBR.run(RELEASE);
   } else {
-    motorR1.setSpeed(constrain(speedB, 0, 255));
-    motorR2.setSpeed(constrain(speedB, 0, 255));
-    motorR1.run(dirB == FORWARD ? FORWARD : BACKWARD);
-    motorR2.run(dirB == FORWARD ? FORWARD : BACKWARD);
+    motorFR.setSpeed(constrain(speedB, 0, 255));
+    motorBR.setSpeed(constrain(speedB, 0, 255));
+    motorFR.run(dirB == FORWARD ? FORWARD : BACKWARD);
+    motorBR.run(dirB == FORWARD ? FORWARD : BACKWARD);
   }
 }
 
 void motorsStop() {
-  motorL1.run(RELEASE);
-  motorL2.run(RELEASE);
-  motorR1.run(RELEASE);
-  motorR2.run(RELEASE);
+  motorFL.run(RELEASE);
+  motorBL.run(RELEASE);
+  motorFR.run(RELEASE);
+  motorBR.run(RELEASE);
 }

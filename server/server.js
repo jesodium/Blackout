@@ -35,7 +35,9 @@ async function listSerialPorts() {
 }
 
 app.get("/api/ports", async (req, res) => {
-  const ports = await listSerialPorts();
+  // Hide the BT port from the dropdown — node can't read it and selecting it
+  // collides with the pyserial bridge. Bluetooth is the "BT Bridge" button only.
+  const ports = (await listSerialPorts()).filter(p => p !== BT_PORT);
   res.json({ ports, current: serialPort?.path || null });
 });
 
@@ -86,7 +88,8 @@ async function ttsHandler(req, res) {
   const text = (src?.text || "").trim();
   if (!text) return res.status(400).json({ error: "text required" });
   try {
-    if (process.env.DEEPGRAM_API_KEY) {
+    // Deepgram Aura voices are English-only — use it only for en-* voices, else Edge.
+    if (process.env.DEEPGRAM_API_KEY && voice.startsWith("en")) {
       try { return await speakDeepgram(text, res); }
       catch (e) { console.error("Deepgram TTS failed, falling back to Edge:", e.message); }
     }
@@ -104,12 +107,14 @@ app.post("/api/chat", async (req, res) => {
   if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
   const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-12) : [];
   if (!msgs.length) return res.status(400).json({ error: "messages required" });
+  const lang = LANG_INSTRUCT[req.body?.lang] ? req.body.lang : "en";
   try {
     const ctx = latestData ? buildChatContext(latestData) : "No live readings yet — running dark.";
     const resp = await openai.chat.completions.create({
       model: process.env.CEREBRAS_MODEL || "gpt-oss-120b",
       messages: [
         { role: "system", content: CHAT_SYSTEM },
+        ...langMsg(lang),
         { role: "system", content: ctx },
         ...msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") })),
       ],
@@ -164,9 +169,100 @@ app.post("/api/mega/sensor", (req, res) => {
   res.json({ ok: true, lines: lines.length });
 });
 
+// --- Bluetooth bridge control ---
+// node's serialport can't read the macOS BT SPP port, so bt_bridge.py (pyserial)
+// reads it and POSTs to /api/mega/sensor. These endpoints spawn/kill it and run
+// the blueutil re-pair dance that the ESP32's BT needs for a fresh connection.
+const { spawn, execFile } = require("child_process");
+const BT_MAC = process.env.BT_MAC || "c8-f0-9e-a4-9f-6e";
+const BT_PORT = process.env.BT_PORT || "/dev/cu.BLACKOUT-V1";
+let bridgeProc = null;
+let bridgeLast = "";
+
+const sh = (cmd, args) => new Promise((res) =>
+  execFile(cmd, args, { timeout: 15000 }, (e, so) => res(so || "")));
+
+async function ensureBtPort() {
+  for (let i = 0; i < 4; i++) {
+    if (fs.existsSync(BT_PORT)) return true;
+    await sh("blueutil", ["--connect", BT_MAC]);
+    await new Promise((r) => setTimeout(r, 7000));
+  }
+  return fs.existsSync(BT_PORT);
+}
+
+app.get("/api/bridge", (req, res) =>
+  res.json({ running: !!bridgeProc, last: bridgeLast }));
+
+app.post("/api/bridge/start", async (req, res) => {
+  if (bridgeProc) return res.json({ ok: true, already: true });
+  disconnectSerial(); // Close USB when BT bridge starts
+  try {
+    if (req.body && req.body.repair) {
+      console.log("Bridge: re-pairing BT...");
+      await sh("blueutil", ["--unpair", BT_MAC]);
+      await new Promise((r) => setTimeout(r, 2000));
+      await sh("blueutil", ["--pair", BT_MAC]);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    await ensureBtPort();
+  } catch (e) { /* fall through to existence check */ }
+  if (!fs.existsSync(BT_PORT))
+    return res.status(500).json({ error: "Bluetooth port unavailable — try Re-pair" });
+  bridgeProc = spawn("python3", [path.join(__dirname, "bt_bridge.py")], {
+    env: { ...process.env, BT_PORT, SERVER_URL: `http://localhost:${PORT}/api/mega/sensor` },
+  });
+  const cap = (d) => { bridgeLast = d.toString().trim().split("\n").pop() || bridgeLast; };
+  bridgeProc.stdout.on("data", cap);
+  bridgeProc.stderr.on("data", cap);
+  bridgeProc.on("exit", () => { bridgeProc = null; });
+  console.log("Bridge: started");
+  res.json({ ok: true });
+});
+
+app.post("/api/bridge/stop", (req, res) => {
+  if (bridgeProc) { bridgeProc.kill(); bridgeProc = null; }
+  bridgeLast = "";
+  res.json({ ok: true });
+});
+
+// connMode: mutually exclusive BT/USB switch. Callers should only use this
+// instead of manually calling bridge/start + ports/switch.
+app.post("/api/connMode", async (req, res) => {
+  const { mode } = req.body;
+  if (!mode || !["usb", "bt"].includes(mode))
+    return res.status(400).json({ error: "mode must be 'usb' or 'bt'" });
+
+  if (mode === "bt") {
+    disconnectSerial(); // close USB, block reconnect
+    if (!bridgeProc) {
+      try { await ensureBtPort(); } catch { /* fall through */ }
+      if (!fs.existsSync(BT_PORT))
+        return res.status(500).json({ error: "Bluetooth port unavailable" });
+      bridgeProc = spawn("python3", [path.join(__dirname, "bt_bridge.py")], {
+        env: { ...process.env, BT_PORT, SERVER_URL: `http://localhost:${PORT}/api/mega/sensor` },
+      });
+      const cap = (d) => { bridgeLast = d.toString().trim().split("\n").pop() || bridgeLast; };
+      bridgeProc.stdout.on("data", cap);
+      bridgeProc.stderr.on("data", cap);
+      bridgeProc.on("exit", () => { bridgeProc = null; });
+      console.log("Bridge: started via connMode switch");
+    }
+  } else {
+    if (bridgeProc) { bridgeProc.kill(); bridgeProc = null; bridgeLast = ""; }
+    connectSerial(selectedPortPath);
+  }
+
+  res.json({ ok: true, mode });
+});
+
 app.post("/api/ports/switch", async (req, res) => {
   const { path } = req.body;
   if (!path) return res.status(400).json({ error: "path required" });
+  // Refuse the BT port: node-serialport can't read it and it collides with the
+  // bridge's pyserial reader (corrupts both streams). Use the BT Bridge button.
+  if (path === BT_PORT)
+    return res.status(400).json({ error: "Use the BT Bridge button for Bluetooth, not the port selector" });
   selectedPortPath = path;
   if (serialPort) {
     serialPort.removeAllListeners("close");
@@ -254,6 +350,58 @@ function selectPortMenu(ports) {
 let latestData = null;
 let dataHistory = [];
 let currentMission = "";   // operator's briefing — colors all agent replies until changed
+let currentLanguage = "en"; // UI language — the agent must reply in this language
+
+// One extra system line forcing the reply language. English is the default
+// (prompts are written in English), so it needs no instruction.
+const LANG_INSTRUCT = {
+  es: "IMPORTANTE: Responde SIEMPRE en español natural y fluido, sin importar el idioma de las lecturas, etiquetas o del mensaje del operador. Mantén tu personaje y tono.",
+};
+const langMsg = (lang) => (LANG_INSTRUCT[lang] ? [{ role: "system", content: LANG_INSTRUCT[lang] }] : []);
+
+// Onboarding lines spoken during the briefing wizard. Pre-rendered to
+// public/audio on boot so the wizard plays them instantly (no 5-7s synth wait).
+// Text + voices MUST match public/js/i18n.js (ONBOARDING + LANGS).
+const ONBOARDING = {
+  en: {
+    voice: "en-US-AndrewNeural",
+    lines: {
+      intro: "Hey — I'm Blackout, the recon unit you're sending into the dark. Walk me through the job, one thing at a time.",
+      q0: "What's the job down there — what am I going in to do?",
+      q1: "What kind of place am I dropping into?",
+      q2: "What should I be watching for down there?",
+    },
+  },
+  es: {
+    voice: "es-ES-AlvaroNeural",
+    lines: {
+      intro: "Hola — soy Blackout, la unidad de reconocimiento que envías a la oscuridad. Cuéntame el trabajo, paso a paso.",
+      q0: "¿Cuál es el trabajo allí abajo — qué voy a hacer?",
+      q1: "¿A qué tipo de lugar voy a entrar?",
+      q2: "¿Qué debo vigilar allí abajo?",
+    },
+  },
+};
+
+// Generate any missing onboarding clips by hitting our own /api/tts and saving
+// the audio to disk. Runs once on boot; skips files that already exist.
+async function pregenOnboarding() {
+  const dir = path.join(__dirname, "public", "audio");
+  fs.mkdirSync(dir, { recursive: true });
+  for (const [lang, { voice, lines }] of Object.entries(ONBOARDING)) {
+    for (const [key, text] of Object.entries(lines)) {
+      const file = path.join(dir, `onboard-${lang}-${key}.mp3`);
+      if (fs.existsSync(file) && fs.statSync(file).size > 0) continue;
+      try {
+        const url = `http://localhost:${PORT}/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voice)}`;
+        const r = await fetch(url);
+        if (!r.ok) { console.error(`pregen ${lang}/${key} failed: HTTP ${r.status}`); continue; }
+        fs.writeFileSync(file, Buffer.from(await r.arrayBuffer()));
+        console.log(`pregen onboarding: ${path.basename(file)}`);
+      } catch (e) { console.error(`pregen ${lang}/${key} error:`, e.message); }
+    }
+  }
+}
 
 // System prompts live in prompts/*.md so they're easy to tweak without touching code.
 const loadPrompt = (name) => fs.readFileSync(path.join(__dirname, "prompts", name), "utf8").trim();
@@ -286,11 +434,20 @@ const RANK = { CLEAR: 0, NORMAL: 0, UNKNOWN: 0, NEAR: 1, CAUTION: 1, DANGER: 2 }
 // Instant in-character one-liners fired the moment a reading worsens — no LLM
 // round-trip, so the agent reacts immediately while the full analysis catches up.
 const BLURTS = {
-  dist:  { NEAR: "Wall's right up on us — easing around it." },
-  smoke: { CAUTION: "Smoke's picking up in here.", DANGER: "Heavy smoke now — this is getting bad." },
-  airq:  { CAUTION: "Air's getting thick.", DANGER: "Air's gone foul down here." },
-  co:    { CAUTION: "Gas reading's climbing.", DANGER: "Gas pocket — that's real danger." },
-  temp:  { CAUTION: "Heat's coming up.", DANGER: "It's cooking down here." },
+  en: {
+    dist:  { NEAR: "Wall's right up on us — easing around it." },
+    smoke: { CAUTION: "Smoke's picking up in here.", DANGER: "Heavy smoke now — this is getting bad." },
+    airq:  { CAUTION: "Air's getting thick.", DANGER: "Air's gone foul down here." },
+    co:    { CAUTION: "Gas reading's climbing.", DANGER: "Gas pocket — that's real danger." },
+    temp:  { CAUTION: "Heat's coming up.", DANGER: "It's cooking down here." },
+  },
+  es: {
+    dist:  { NEAR: "El muro está justo encima — lo esquivo con cuidado." },
+    smoke: { CAUTION: "El humo está aumentando aquí.", DANGER: "Humo denso ahora — esto se está poniendo feo." },
+    airq:  { CAUTION: "El aire se está volviendo espeso.", DANGER: "El aire está viciado aquí abajo." },
+    co:    { CAUTION: "La lectura de gas está subiendo.", DANGER: "Bolsa de gas — esto es peligro real." },
+    temp:  { CAUTION: "El calor está subiendo.", DANGER: "Esto es un horno aquí abajo." },
+  },
 };
 
 // Short memory line so replies reference the recent past, not just this instant.
@@ -319,13 +476,14 @@ const BLURT_MIN_GAP = 6000; // don't let a flapping sensor spam instant reaction
 
 function emitBlurt(prev, cur) {
   if (!prev || Date.now() - lastBlurt < BLURT_MIN_GAP) return;
+  const lines = BLURTS[currentLanguage] || BLURTS.en;
   let best = null;
   for (const k of Object.keys(cur)) {
-    if (RANK[cur[k]] > RANK[prev[k]] && BLURTS[k]?.[cur[k]]) {
+    if (RANK[cur[k]] > RANK[prev[k]] && lines[k]?.[cur[k]]) {
       if (!best || RANK[cur[k]] > RANK[cur[best]]) best = k;
     }
   }
-  if (best) { lastBlurt = Date.now(); io.emit("agent-blurt", { text: BLURTS[best][cur[best]], timestamp: Date.now() }); }
+  if (best) { lastBlurt = Date.now(); io.emit("agent-blurt", { text: lines[best][cur[best]], timestamp: Date.now() }); }
 }
 
 function maybeAutoAnalyze(data) {
@@ -343,7 +501,9 @@ function maybeAutoAnalyze(data) {
 
 // Agent acknowledges the operator's mission briefing in character.
 async function ackMission(text) {
-  const fallback = "Copy that. Mission's locked in — heading in.";
+  const fallback = currentLanguage === "es"
+    ? "Recibido. Misión confirmada — entrando."
+    : "Copy that. Mission's locked in — heading in.";
   if (!process.env.CEREBRAS_API_KEY) {
     io.emit("mission-ack", { text: fallback, timestamp: Date.now() });
     return;
@@ -353,6 +513,7 @@ async function ackMission(text) {
       model: process.env.CEREBRAS_MODEL || "gpt-oss-120b",
       messages: [
         { role: "system", content: CHAT_SYSTEM },
+        ...langMsg(currentLanguage),
         { role: "user", content: `The operator is briefing you on the mission before you head in: "${text}". Acknowledge it back in character in one or two sentences — confirm you've got it and you're ready. Don't ask questions, just lock it in.` },
       ],
       max_tokens: 150,
@@ -401,6 +562,7 @@ async function runAiAnalysis() {
       model: process.env.CEREBRAS_MODEL || "gpt-oss-120b",
       messages: [
         { role: "system", content: AI_SYSTEM },
+        ...langMsg(currentLanguage),
         { role: "user", content: buildAiPrompt(latestData) },
       ],
       max_tokens: 400,
@@ -414,8 +576,20 @@ async function runAiAnalysis() {
 
 let serialPort;
 let selectedPortPath = null;
+let manualDisconnect = false; // true = USB serial intentionally closed (BT mode); block auto-reconnect
+
+function disconnectSerial() {
+  manualDisconnect = true;
+  if (serialPort) {
+    serialPort.removeAllListeners("close");
+    serialPort.removeAllListeners("error");
+    try { serialPort.close(); } catch { /* already closed */ }
+    serialPort = null;
+  }
+}
 
 async function connectSerial(path) {
+  manualDisconnect = false;
   if (!path) {
     const ports = await listSerialPorts();
     const usbPorts = ports.filter(p => p.includes("usbserial"));
@@ -451,6 +625,10 @@ async function connectSerial(path) {
   });
 
   serialPort.on("close", () => {
+    if (manualDisconnect) {
+      console.log("Serial closed by mode switch — not reconnecting.");
+      return;
+    }
     console.log("Serial disconnected. Reconnecting in 5s...");
     setTimeout(() => connectSerial(selectedPortPath), 5000);
   });
@@ -475,6 +653,10 @@ io.on("connection", (socket) => {
     io.emit("mission-set", { mission: currentMission });
     if (currentMission) ackMission(currentMission);
   });
+  socket.on("set-language", (code) => {
+    currentLanguage = (code === "es") ? "es" : "en";
+    console.log("Language set:", currentLanguage);
+  });
   // Debug: fake a sensor packet so the dashboard + AI work without the Arduino.
   socket.on("mock-data", () => {
     const r = (lo, hi, d = 0) => +(lo + Math.random() * (hi - lo)).toFixed(d);
@@ -494,4 +676,5 @@ io.on("connection", (socket) => {
 
 server.listen(PORT, () => {
   console.log(`Server at http://localhost:${PORT}`);
+  pregenOnboarding(); // warm onboarding audio cache (skips already-generated clips)
 });

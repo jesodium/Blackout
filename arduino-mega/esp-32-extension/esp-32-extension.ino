@@ -1,5 +1,5 @@
 // Blackout V1 — ESP32-WROOM (NodeMCU-32S) Bluetooth relay
-// Mega Serial1 (D18 TX1) --voltage divider--> ESP32 GPIO16 (RX2)
+// Mega Serial3 (D14 TX3) --voltage divider--> ESP32 GPIO16 (RX2)
 // Forwards Mega CSV over Bluetooth Classic SPP as "BLACKOUT-V1".
 // PC reads /dev/cu.BLACKOUT-V1. USB UART0 stays free for debug.
 
@@ -7,8 +7,8 @@
 
 BluetoothSerial SerialBT;
 
-const int MEGA_RX = 16;   // GPIO16 (RX2) <- Mega TX1 via 1k/2k divider
-const int MEGA_TX = 17;   // GPIO17 (TX2) -> Mega RX1 (unused for now, future commands)
+const int MEGA_RX = 16;   // GPIO16 (RX2) <- Mega TX3 via 1k/2k divider
+const int MEGA_TX = 17;   // GPIO17 (TX2) -> Mega RX3 (unused for now, future commands)
 const int LED     = 2;    // onboard blue LED
 
 void setup() {

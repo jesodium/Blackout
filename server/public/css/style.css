@@ -121,6 +121,64 @@ body {
 }
 .port-select option { background: var(--panel); }
 
+.bridge-ctl { display: flex; gap: 4px; }
+.bridge-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 500 12px/1 var(--mono); min-height: 26px; padding: 0 10px;
+  color: var(--ink); background: var(--inset); border: 1px solid var(--line-2);
+  cursor: pointer; white-space: nowrap;
+}
+.bridge-btn.is-on { color: var(--go); border-color: var(--go); }
+.bridge-btn:disabled, .bridge-repair:disabled { opacity: 0.5; cursor: wait; }
+.bridge-repair {
+  font: 500 13px/1 var(--mono); min-height: 26px; width: 28px;
+  color: var(--ink); background: var(--inset); border: 1px solid var(--line-2);
+  cursor: pointer;
+}
+.bridge-repair:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+
+/* --- Connection control: USB / BT segmented toggle + swapping panel --- */
+.conn-field { display: flex; flex-direction: column; gap: 6px; }
+.conn-field .label { font-size: 9px; letter-spacing: 0.24em; }
+
+.conn-seg {
+  position: relative; display: inline-grid; grid-template-columns: 1fr 1fr;
+  width: max-content; background: var(--inset);
+  border: 1px solid var(--line-2); border-radius: 999px; padding: 3px;
+  user-select: none;
+}
+.conn-seg button {
+  position: relative; z-index: 1; margin: 0; background: none; border: 0;
+  font: 600 11px/1 var(--mono); letter-spacing: 0.16em; padding: 6px 18px;
+  border-radius: 999px; color: var(--ink-3); cursor: pointer;
+  transition: color 0.28s ease;
+}
+.conn-seg button:not(.is-active):hover { color: var(--ink-2); }
+.conn-seg button.is-active { color: var(--bg); }
+.conn-seg-thumb {
+  position: absolute; z-index: 0; top: 3px; bottom: 3px; left: 3px;
+  width: calc(50% - 3px); background: var(--ink); border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  transition: transform 0.36s cubic-bezier(0.34, 1.4, 0.5, 1);
+}
+.conn-seg[data-mode="bt"] .conn-seg-thumb { transform: translateX(100%); }
+
+.conn-panel {
+  min-height: 26px; display: flex; align-items: center;
+  animation: connSwap 0.34s cubic-bezier(0.2, 0.75, 0.2, 1) both;
+}
+@keyframes connSwap {
+  from { opacity: 0; transform: translateY(-5px); filter: blur(1.5px); }
+  to   { opacity: 1; transform: none;             filter: none; }
+}
+
+/* live pulse on the bridge lamp while running */
+.bridge-btn.is-on .lamp-dot.is-go { animation: pulse 1.6s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .conn-seg-thumb, .conn-panel, .bridge-btn.is-on .lamp-dot.is-go { transition: none; animation: none; }
+}
+
 .stat { display: flex; flex-direction: column; gap: 4px; min-width: 56px; }
 .stat dt { font: 600 9px/1 var(--grotesk); letter-spacing: 0.24em; text-transform: uppercase; color: var(--ink-3); }
 .stat dd { font: 500 15px/1 var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -416,7 +474,11 @@ body {
   font: 700 11px/1 var(--grotesk); letter-spacing: 0.3em; text-transform: uppercase;
   animation: agent-text-in 0.4s ease;
 }
-.agent-face { font-family: var(--mono, monospace); font-size: 34px; line-height: 1; letter-spacing: 0; }
+.agent-face { font-family: var(--mono, monospace); font-size: 34px; line-height: 1; letter-spacing: 0; animation: face-bob 3s ease-in-out infinite; }
+@keyframes face-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+.a-eye { display: inline-block; animation: a-blink 5s ease-in-out infinite; }
+.a-eye:last-child { animation-delay: 0.12s; }
+@keyframes a-blink { 0%,90%,100% { opacity: 1; } 93%,97% { opacity: 0.08; } }
 
 /* voice equalizer (shown while speaking) */
 .agent-eq { position: relative; z-index: 1; display: flex; align-items: flex-end; gap: 3px; height: 15px; color: currentColor; }
@@ -633,16 +695,7 @@ body {
 .chat-select, .briefing { animation: view-in 0.45s cubic-bezier(.2,.7,.2,1) both; }
 @keyframes view-in { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: none; } }
 
-/* chat list — staggered slide-in + hover lift */
-.chat-item { animation: list-in 0.4s cubic-bezier(.2,.7,.2,1) both; }
-@keyframes list-in { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
-.chat-item-main { transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease; }
-.chat-item-main:hover { transform: translateY(-2px); box-shadow: 0 6px 18px -10px rgba(0,0,0,0.8); }
-.chat-item-sub { transition: color 0.16s ease; }
-.chat-item-main:hover .chat-item-sub { color: var(--agent-c, var(--ink-2)); }
-.chat-del { transition: color 0.14s, background 0.14s, border-color 0.14s, transform 0.14s; }
-.chat-del:hover { transform: rotate(90deg); }
-.chat-empty { animation: view-in 0.5s ease both; }
+/* chat list — clean stacked list */
 
 /* wizard step — each step remounts (keyed) and slides in */
 .brief-step { animation: step-in 0.4s cubic-bezier(.2,.7,.2,1) both; display: flex; flex-direction: column; gap: 12px; }
