@@ -4,8 +4,8 @@
    t() call (read at render time) picks up the new language. */
 
 export const LANGS = [
-  { code: "en", label: "English", voice: "en-US-AndrewNeural", speech: "en-US" },
-  { code: "es", label: "Español", voice: "es-ES-AlvaroNeural", speech: "es-ES" },
+  { code: "en", label: "English", voice: "en-US-AvaNeural", speech: "en-US" },
+  { code: "es", label: "Español", voice: "es-ES-ElviraNeural", speech: "es-ES" },
 ];
 
 // Fixed onboarding lines — pre-generated as static audio server-side (see
@@ -13,14 +13,14 @@ export const LANGS = [
 // /audio/onboard-<lang>-<key>.mp3
 export const ONBOARDING = {
   en: {
-    intro: "Hey — I'm Blackout, the recon unit you're sending into the dark. Walk me through the job, one thing at a time.",
+    intro: "Hey — I'm Sage, the AI running the recon unit you're sending into the dark. Walk me through the job, one thing at a time.",
     q0: "What's the job down there — what am I going in to do?",
     q1: "What kind of place am I dropping into?",
     q2: "What should I be watching for down there?",
     rundown: "Got it — here's the rundown. Good to go?",
   },
   es: {
-    intro: "Hola — soy Blackout, la unidad de reconocimiento que envías a la oscuridad. Cuéntame el trabajo, paso a paso.",
+    intro: "Hola — soy Sage, la IA que controla la unidad de reconocimiento que envías a la oscuridad. Cuéntame el trabajo, paso a paso.",
     q0: "¿Cuál es el trabajo allí abajo — qué voy a hacer?",
     q1: "¿A qué tipo de lugar voy a entrar?",
     q2: "¿Qué debo vigilar allí abajo?",
@@ -127,7 +127,7 @@ const DICT = {
     "badge.thinking": "Thinking…",
     "badge.copying": "Copying…",
     "agent.voice": "Voice",
-    "agent.voiceTitle": "Toggle Blackout's voice",
+    "agent.voiceTitle": "Toggle Sage's voice",
     "agent.ttsProvider": "TTS engine: Edge or Deepgram",
     "agent.runAnalysis": "Run Analysis",
     "agent.analyzing": "Analyzing…",
@@ -182,7 +182,7 @@ const DICT = {
     "brief.listening": "● Listening…",
 
     /* ask */
-    "ask.mic": "🎤 Ask Blackout",
+    "ask.mic": "🎤 Ask Sage",
     "ask.listening": "● Listening…",
     "ask.s0": "What's ahead?",
     "ask.s1": "Is the air breathable?",
@@ -202,10 +202,10 @@ const DICT = {
     "log.booted": "Console booted. Standing by.",
     "log.aiReceived": "AI analysis received.",
     "log.missionAck": "Mission acknowledged.",
-    "log.replied": "Blackout replied.",
+    "log.replied": "Sage replied.",
     "log.obstacle": "Obstacle at {d} cm",
     "log.operator": "Operator: {text}",
-    "log.blurt": "Blackout: {text}",
+    "log.blurt": "Sage: {text}",
     "log.missionSent": "Mission briefing sent: {text}",
     "log.switching": "Switching to {path}…",
     "log.switched": "Switched to {path}",
@@ -340,7 +340,7 @@ const DICT = {
     "badge.thinking": "Pensando…",
     "badge.copying": "Copiando…",
     "agent.voice": "Voz",
-    "agent.voiceTitle": "Activar/desactivar la voz de Blackout",
+    "agent.voiceTitle": "Activar/desactivar la voz de Sage",
     "agent.ttsProvider": "Motor TTS: Edge o Deepgram",
     "agent.runAnalysis": "Ejecutar Análisis",
     "agent.analyzing": "Analizando…",
@@ -392,7 +392,7 @@ const DICT = {
     "brief.speak": "🎤 Hablar",
     "brief.listening": "● Escuchando…",
 
-    "ask.mic": "🎤 Preguntar a Blackout",
+    "ask.mic": "🎤 Preguntar a Sage",
     "ask.listening": "● Escuchando…",
     "ask.s0": "¿Qué hay adelante?",
     "ask.s1": "¿El aire es respirable?",
@@ -411,10 +411,10 @@ const DICT = {
     "log.booted": "Consola iniciada. En espera.",
     "log.aiReceived": "Análisis de IA recibido.",
     "log.missionAck": "Misión confirmada.",
-    "log.replied": "Blackout respondió.",
+    "log.replied": "Sage respondió.",
     "log.obstacle": "Obstáculo a {d} cm",
     "log.operator": "Operador: {text}",
-    "log.blurt": "Blackout: {text}",
+    "log.blurt": "Sage: {text}",
     "log.missionSent": "Informe de misión enviado: {text}",
     "log.switching": "Cambiando a {path}…",
     "log.switched": "Cambiado a {path}",

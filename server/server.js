@@ -52,8 +52,8 @@ async function speakDeepgram(text, res, voice = "en") {
   // by an English model. Override per-language via env.
   const isEs = voice.toLowerCase().startsWith("es");
   const model = isEs
-    ? process.env.DEEPGRAM_VOICE_ES || "aura-2-celeste-es"
-    : process.env.DEEPGRAM_VOICE || "aura-2-orion-en";
+    ? process.env.DEEPGRAM_VOICE_ES || "aura-2-selena-es"    // Selena — female, neutral Latin American (not regional)
+    : process.env.DEEPGRAM_VOICE || "aura-2-thalia-en";      // Thalia (Sage) — female. ponytail: one fixed female voice; override via DEEPGRAM_VOICE
   const url = `https://api.deepgram.com/v1/speak?model=${model}&encoding=mp3`;
   // Retry the fetch (transient 429/5xx/network blips) BEFORE we start streaming —
   // once audio is piping we can't retry. 4xx other than 429 is permanent, bail fast.
@@ -111,7 +111,7 @@ app.get("/api/tts/providers", (req, res) => {
   res.json({ edge: true, deepgram: !!process.env.DEEPGRAM_API_KEY });
 });
 
-// Ask-questions mode: operator chats with BLACKOUT. Client sends the running
+// Ask-questions mode: operator chats with SAGE. Client sends the running
 // message array (no server-side history); we prepend persona + live telemetry.
 app.post("/api/chat", async (req, res) => {
   if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
@@ -374,9 +374,9 @@ const langMsg = (lang) => (LANG_INSTRUCT[lang] ? [{ role: "system", content: LAN
 // Text + voices MUST match public/js/i18n.js (ONBOARDING + LANGS).
 const ONBOARDING = {
   en: {
-    voice: "en-US-AndrewNeural",
+    voice: "en-US-AvaNeural",
     lines: {
-      intro: "Hey — I'm Blackout, the recon unit you're sending into the dark. Walk me through the job, one thing at a time.",
+      intro: "Hey — I'm Sage, the AI running the recon unit you're sending into the dark. Walk me through the job, one thing at a time.",
       q0: "What's the job down there — what am I going in to do?",
       q1: "What kind of place am I dropping into?",
       q2: "What should I be watching for down there?",
@@ -384,9 +384,9 @@ const ONBOARDING = {
     },
   },
   es: {
-    voice: "es-ES-AlvaroNeural",
+    voice: "es-ES-ElviraNeural",
     lines: {
-      intro: "Hola — soy Blackout, la unidad de reconocimiento que envías a la oscuridad. Cuéntame el trabajo, paso a paso.",
+      intro: "Hola — soy Sage, la IA que controla la unidad de reconocimiento que envías a la oscuridad. Cuéntame el trabajo, paso a paso.",
       q0: "¿Cuál es el trabajo allí abajo — qué voy a hacer?",
       q1: "¿A qué tipo de lugar voy a entrar?",
       q2: "¿Qué debo vigilar allí abajo?",

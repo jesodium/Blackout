@@ -631,7 +631,7 @@ function Briefing({ onBrief, onBack, onSpeak, busy }) {
     </div>`;
 }
 
-/* ---------------- ask blackout (voice, in agent box) ---------------- */
+/* ---------------- ask Sage (voice, in agent box) ---------------- */
 // Predetermined prompts — give the operator ideas and keep questions on-telemetry.
 const ASK_SUGGESTIONS = ["ask.s0", "ask.s1", "ask.s2", "ask.s3", "ask.s4"];
 function Ask({ onAsk, busy }) {
@@ -1037,7 +1037,7 @@ function App() {
     setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
     socketRef.current?.emit("mock-data");
   }, []);
-  // Ask Blackout: reply lands in the agent's speech bubble + is spoken. Each chat
+  // Ask Sage: reply lands in the agent's speech bubble + is spoken. Each chat
   // keeps its own rolling message history so follow-ups have context.
   const ask = useCallback(async (text) => {
     text = (text || "").trim();
