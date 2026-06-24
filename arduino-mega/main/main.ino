@@ -1,7 +1,7 @@
 #include <DHT.h>
 #include <NewPing.h>
 
-#define DHT_PIN 42
+#define DHT_PIN 44
 #define DHT_TYPE DHT11
 #define TRIG_PIN A6
 #define ECHO_PIN A5

@@ -47,8 +47,13 @@ app.get("/api/ports", async (req, res) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const DG_RETRIES = parseInt(process.env.DEEPGRAM_RETRIES || "3", 10);
 
-async function speakDeepgram(text, res) {
-  const model = process.env.DEEPGRAM_VOICE || "aura-2-orion-en";
+async function speakDeepgram(text, res, voice = "en") {
+  // Match the Aura-2 model language to the voice, else Spanish text gets spoken
+  // by an English model. Override per-language via env.
+  const isEs = voice.toLowerCase().startsWith("es");
+  const model = isEs
+    ? process.env.DEEPGRAM_VOICE_ES || "aura-2-celeste-es"
+    : process.env.DEEPGRAM_VOICE || "aura-2-orion-en";
   const url = `https://api.deepgram.com/v1/speak?model=${model}&encoding=mp3`;
   // Retry the fetch (transient 429/5xx/network blips) BEFORE we start streaming —
   // once audio is piping we can't retry. 4xx other than 429 is permanent, bail fast.
@@ -86,11 +91,12 @@ async function ttsHandler(req, res) {
   const src = req.method === "GET" ? req.query : req.body;
   const voice = src?.voice || process.env.TTS_VOICE || "en-US-AndrewNeural";
   const text = (src?.text || "").trim();
+  const provider = src?.provider || "auto"; // "edge", "deepgram", or "auto"
   if (!text) return res.status(400).json({ error: "text required" });
   try {
-    // Deepgram Aura voices are English-only — use it only for en-* voices, else Edge.
-    if (process.env.DEEPGRAM_API_KEY && voice.startsWith("en")) {
-      try { return await speakDeepgram(text, res); }
+    const wantDeep = provider === "deepgram" || (provider === "auto" && process.env.DEEPGRAM_API_KEY && (voice.startsWith("en") || voice.startsWith("es")));
+    if (wantDeep && process.env.DEEPGRAM_API_KEY) {
+      try { return await speakDeepgram(text, res, voice); }
       catch (e) { console.error("Deepgram TTS failed, falling back to Edge:", e.message); }
     }
     await speakEdge(text, voice, res);
@@ -100,6 +106,10 @@ async function ttsHandler(req, res) {
 }
 app.get("/api/tts", ttsHandler);
 app.post("/api/tts", ttsHandler);
+
+app.get("/api/tts/providers", (req, res) => {
+  res.json({ edge: true, deepgram: !!process.env.DEEPGRAM_API_KEY });
+});
 
 // Ask-questions mode: operator chats with BLACKOUT. Client sends the running
 // message array (no server-side history); we prepend persona + live telemetry.
@@ -370,6 +380,7 @@ const ONBOARDING = {
       q0: "What's the job down there — what am I going in to do?",
       q1: "What kind of place am I dropping into?",
       q2: "What should I be watching for down there?",
+      rundown: "Got it — here's the rundown. Good to go?",
     },
   },
   es: {
@@ -379,6 +390,7 @@ const ONBOARDING = {
       q0: "¿Cuál es el trabajo allí abajo — qué voy a hacer?",
       q1: "¿A qué tipo de lugar voy a entrar?",
       q2: "¿Qué debo vigilar allí abajo?",
+      rundown: "Entendido — aquí está el resumen. ¿Todo listo?",
     },
   },
 };

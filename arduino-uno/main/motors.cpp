@@ -5,8 +5,6 @@ AF_DCMotor motorBL(2);  // M2 = back left
 AF_DCMotor motorFR(3);  // M3 = front right
 AF_DCMotor motorBR(4);  // M4 = back right
 
-const int BL_BOOST = 40;  // back left motor weak, add to its speed. tune to even out.
-
 void motorsInit() {
   motorFL.setSpeed(0);
   motorBL.setSpeed(0);
@@ -24,7 +22,7 @@ void setMotors(int dirA, int speedA, int dirB, int speedB) {
     motorBL.run(RELEASE);
   } else {
     motorFL.setSpeed(constrain(speedA, 0, 255));
-    motorBL.setSpeed(constrain(speedA + BL_BOOST, 0, 255));
+    motorBL.setSpeed(constrain(speedA, 0, 255));
     motorFL.run(dirA == FORWARD ? FORWARD : BACKWARD);
     motorBL.run(dirA == FORWARD ? BACKWARD : FORWARD);  // M2 wired reverse polarity, invert in software
   }

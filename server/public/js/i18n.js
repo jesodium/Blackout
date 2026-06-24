@@ -17,12 +17,14 @@ export const ONBOARDING = {
     q0: "What's the job down there — what am I going in to do?",
     q1: "What kind of place am I dropping into?",
     q2: "What should I be watching for down there?",
+    rundown: "Got it — here's the rundown. Good to go?",
   },
   es: {
     intro: "Hola — soy Blackout, la unidad de reconocimiento que envías a la oscuridad. Cuéntame el trabajo, paso a paso.",
     q0: "¿Cuál es el trabajo allí abajo — qué voy a hacer?",
     q1: "¿A qué tipo de lugar voy a entrar?",
     q2: "¿Qué debo vigilar allí abajo?",
+    rundown: "Entendido — aquí está el resumen. ¿Todo listo?",
   },
 };
 
@@ -126,6 +128,7 @@ const DICT = {
     "badge.copying": "Copying…",
     "agent.voice": "Voice",
     "agent.voiceTitle": "Toggle Blackout's voice",
+    "agent.ttsProvider": "TTS engine: Edge or Deepgram",
     "agent.runAnalysis": "Run Analysis",
     "agent.analyzing": "Analyzing…",
     "agent.mock": "Mock Data",
@@ -338,6 +341,7 @@ const DICT = {
     "badge.copying": "Copiando…",
     "agent.voice": "Voz",
     "agent.voiceTitle": "Activar/desactivar la voz de Blackout",
+    "agent.ttsProvider": "Motor TTS: Edge o Deepgram",
     "agent.runAnalysis": "Ejecutar Análisis",
     "agent.analyzing": "Analizando…",
     "agent.mock": "Datos de Prueba",

@@ -74,6 +74,7 @@ const splitSpeech = (t) => (t.match(/[^.!?]+[.!?]+|\S[^.!?]*$/g) || [t]).map(s =
 let ttsAudio = null;
 let ttsToken = 0;
 let ttsOnEnd = null; // active speak()'s onEnd, so stopSpeech() can settle the UI
+let ttsProviderRef = "edge"; // "edge" | "deepgram", updated by App toggle
 // Cut off whatever's playing: supersede the loop, stop audio, settle the UI.
 function stopSpeech() {
   ttsToken++;
@@ -87,7 +88,7 @@ async function speak(text, { onStart, onEnd } = {}) {
   ttsOnEnd = onEnd;
   if (!text) { ttsOnEnd = null; onEnd?.(); return; }
   const parts = splitSpeech(text);
-  const mk = (p) => { const a = new Audio("/api/tts?text=" + encodeURIComponent(p) + "&voice=" + encodeURIComponent(ttsVoice())); a.preload = "auto"; return a; };
+  const mk = (p) => { const a = new Audio("/api/tts?text=" + encodeURIComponent(p) + "&voice=" + encodeURIComponent(ttsVoice()) + "&provider=" + ttsProviderRef); a.preload = "auto"; return a; };
   let started = false;
   const firstStart = () => { if (!started) { started = true; onStart?.(); } };
   let cur = mk(parts[0]);
@@ -424,7 +425,7 @@ function AgentTiming({ ai }) {
   return null;
 }
 
-function Agent({ ai, tts, packet, connected, speaking, chats, activeChat, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onPick, onMock, onAsk }) {
+function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, chats, activeChat, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onToggleTtsProvider, onPick, onMock, onAsk }) {
   const intent = deriveIntent(ai, packet, connected);
   const v = assess(packet);
   const briefed = activeChat && activeChat.mission;
@@ -442,6 +443,19 @@ function Agent({ ai, tts, packet, connected, speaking, chats, activeChat, onNewC
             <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
             ${t("agent.voice")}
           </label>
+          ${hasDeepgram ? html`
+            <div class="tts-provider-toggle" role="radiogroup" aria-label=${t("agent.ttsProvider")}>
+              <button type="button" role="radio" aria-checked=${ttsProv === "edge"}
+                class=${"tts-prov-btn" + (ttsProv === "edge" ? " is-active" : "")}
+                onClick=${() => ttsProv !== "edge" && onToggleTtsProvider()}>
+                Edge
+              </button>
+              <button type="button" role="radio" aria-checked=${ttsProv === "deepgram"}
+                class=${"tts-prov-btn" + (ttsProv === "deepgram" ? " is-active" : "")}
+                onClick=${() => ttsProv !== "deepgram" && onToggleTtsProvider()}>
+                DG
+              </button>
+            </div>` : null}
         </div>
         ${!activeChat
           ? html`<${ChatSelect} chats=${chats} onNew=${onNewChat} onSelect=${onSelectChat} onDelete=${onDeleteChat} />`
@@ -555,7 +569,10 @@ function Briefing({ onBrief, onBack, onSpeak, busy }) {
   // Speak each onboarding step out loud (pre-rendered clips, no synth wait).
   // Step 0 plays the intro greeting first, then its question.
   useEffect(() => {
-    if (review) return;
+    if (review) {
+      onSpeak?.([{ clip: "rundown", text: ONBOARDING[getLang()].rundown }]);
+      return;
+    }
     const s = BRIEF_STEPS[step];
     const q = { clip: s.clip, text: t(s.q) };
     onSpeak?.(step === 0 ? [{ clip: "intro", text: ONBOARDING[getLang()].intro }, q] : [q]);
@@ -782,6 +799,8 @@ function App() {
   const [logs, setLogs] = useState([]);
   const [ai, setAi] = useState({ text: t("ai.awaiting"), badge: "badge.standby", analyzing: false, history: [], phase: null, since: 0, llm: null, tts: null });
   const [tts, setTts] = useState(() => localStorage.getItem("tts") !== "false");
+  const [ttsProv, setTtsProv] = useState(() => localStorage.getItem("ttsProvider") || "edge");
+  const [hasDeepgram, setHasDeepgram] = useState(false);
   const [lang, setLangState] = useState(getLang());
   const [ports, setPorts] = useState([]);
   const [currentPort, setCurrentPort] = useState(null);
@@ -800,6 +819,13 @@ function App() {
   useEffect(() => { activeRef.current = activeChat; }, [activeChat]);
   useEffect(() => { localStorage.setItem("chats", JSON.stringify(chats)); }, [chats]);
   useEffect(() => { localStorage.setItem("activeChat", activeId); }, [activeId]);
+  useEffect(() => { localStorage.setItem("ttsProvider", ttsProv); ttsProviderRef = ttsProv; }, [ttsProv]);
+  useEffect(() => {
+    fetch("/api/tts/providers").then(r => r.json()).then(d => {
+      setHasDeepgram(d.deepgram);
+      if (!d.deepgram) setTtsProv("edge");
+    }).catch(() => {});
+  }, []);
 
   const socketRef = useRef(null);
   const ttsRef = useRef(localStorage.getItem("tts") !== "false");
@@ -1045,6 +1071,7 @@ function App() {
     if (!n) { stopSpeech(); setSpeaking(false); }
     return n;
   }), []);
+  const toggleTtsProvider = useCallback(() => setTtsProv(p => p === "edge" ? "deepgram" : "edge"), []);
   // Play a sequence of pre-rendered onboarding clips (intro + step questions).
   const speakBrief = useCallback((items) => {
     if (!ttsRef.current) return;
@@ -1110,10 +1137,10 @@ function App() {
               <${Orientation} packet=${packet} onLog=${addLog} />
               <${ReadingsPanel} packet=${view} />
             </div>
-            <${Agent} ai=${ai} tts=${tts} packet=${packet} connected=${connected} speaking=${speaking}
+            <${Agent} ai=${ai} tts=${tts} ttsProv=${ttsProv} hasDeepgram=${hasDeepgram} packet=${packet} connected=${connected} speaking=${speaking}
               chats=${chats} activeChat=${activeChat} onNewChat=${newChat} onSelectChat=${selectChat}
               onDeleteChat=${deleteChat} onBrief=${briefMission} onSpeak=${speakBrief}
-              onAnalyze=${analyze} onToggleTts=${toggleTts} onPick=${pickHistory} onMock=${mockData} onAsk=${ask} />
+              onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onPick=${pickHistory} onMock=${mockData} onAsk=${ask} />
             <${Memory} chat=${activeChat} />
           </div>
 
