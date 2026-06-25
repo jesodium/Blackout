@@ -308,6 +308,11 @@ body {
 .pill.is-go    { color: var(--go);    background: var(--go-bg);    border-color: transparent; }
 .pill.is-warn  { color: var(--warn);  background: var(--warn-bg);  border-color: transparent; }
 .pill.is-abort { color: var(--abort); background: var(--abort-bg); border-color: transparent; }
+.pill.is-stale { color: var(--ink-3); background: var(--inset); border-style: dashed; }
+
+/* Dead/stuck sensor: dim the whole row so a frozen reading reads as offline. */
+.reading.is-stale { opacity: 0.4; }
+.hud-tele .is-stale { opacity: 0.4; }
 
 /* ============================================================
    READINGS — sensor index (dense column)

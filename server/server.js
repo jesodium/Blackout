@@ -227,7 +227,22 @@ app.post("/api/bridge/start", async (req, res) => {
   bridgeProc.stderr.on("data", cap);
   bridgeProc.on("exit", () => { bridgeProc = null; });
   console.log("Bridge: started");
-  res.json({ ok: true });
+
+  // Wait up to 8s for the bridge to actually receive sensor data from the ESP32.
+  // bt_bridge.py prints "-> S:..." for each valid line — if nothing arrives
+  // the ESP32 likely isn't paired, powered, or sending.
+  for (let i = 0; i < 8; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    if (bridgeLast.includes("-> S:")) {
+      console.log("Bridge: data flowing");
+      return res.json({ ok: true });
+    }
+    if (!bridgeProc) break; // process exited early
+  }
+  // No data within window — kill bridge, tell the truth, don't pretend it works
+  if (bridgeProc) { bridgeProc.kill(); bridgeProc = null; }
+  bridgeLast = "";
+  return res.status(500).json({ error: "BT port opened but no data from ESP32 — check power, pairing, then Re-pair" });
 });
 
 app.post("/api/bridge/stop", (req, res) => {
