@@ -1,5 +1,10 @@
 # TODO
 
+> **OUTDATED section below** — written against the retired Mega firmware
+> (now `OUTDATED/arduino-mega/main/main.ino`). The new `arduino-uno-r4/main/main.ino`
+> doesn't have calibration logic yet — port this over once the R4 MQ-9 code is
+> otherwise settled.
+
 ## MQ-9 CO calibration — finish Option B (hardcoded R₀)
 
 **Goal:** fixed clean-air baseline `R₀` so the MQ-9 uses the same trusted value every

@@ -2,7 +2,7 @@
   "name": "wro2026-server",
   "version": "1.0.0",
   "private": true,
-  "description": "Receives Bluetooth sensor data from Mega, dashboard + AI analysis",
+  "description": "Receives BLE sensor data from the Uno R4 WiFi, dashboard + AI analysis",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

@@ -1001,33 +1001,73 @@ function App() {
     } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); toast(t("toast.error", { msg: e.message }), "danger"); }
   }, [addLog, toast, loadPorts]);
 
-  // Bluetooth bridge: pyserial reader the server spawns (node can't read BT SPP).
+  // Bluetooth bridge: the R4 advertises BLE (no classic SPP), so the browser's
+  // own Web Bluetooth talks to it directly — no server-side native BT lib needed.
+  // /api/bridge/* just tracks the intent flag server-side (mutual excl. w/ USB).
+  const BLE_SERVICE = "19b10000-e8f2-537e-4f6c-d104768a1214";
+  const BLE_CHAR = "19b10001-e8f2-537e-4f6c-d104768a1214";
+  const bleRef = useRef({ device: null, char: null });
+
+  const onBleNotify = useCallback((e) => {
+    const line = new TextDecoder().decode(e.target.value);
+    console.log("BLE notify:", line);
+    fetch("/api/mega/sensor", { method: "POST", headers: { "Content-Type": "text/plain" }, body: line })
+      .then((r) => { if (!r.ok) console.error("BLE forward failed:", r.status); })
+      .catch((err) => console.error("BLE forward error:", err.message));
+  }, []);
+
+  const disconnectBle = useCallback(() => {
+    const { device, char } = bleRef.current;
+    if (char) char.removeEventListener("characteristicvaluechanged", onBleNotify);
+    if (device?.gatt?.connected) device.gatt.disconnect();
+    bleRef.current = { device: null, char: null };
+  }, [onBleNotify]);
+
   const loadBridge = useCallback(async () => {
     try { const r = await fetch("/api/bridge"); const d = await r.json();
       setBridge(b => ({ ...b, running: d.running })); } catch { /* offline */ }
   }, []);
   useEffect(() => { loadBridge(); const id = setInterval(loadBridge, 5000); return () => clearInterval(id); }, [loadBridge]);
 
-  // mode: "toggle" (start↔stop) or "reconnect" (re-pair while running). Both
-  // start paths re-pair, since a plain BT open usually opens but gets no data.
+  // mode: "toggle" (connect↔disconnect) or "reconnect" (re-pick device while running).
   const toggleBridge = useCallback(async (mode = "toggle") => {
     const stopping = mode === "toggle" && bridge.running;
     setBridge(b => ({ ...b, busy: true }));
     addLog(stopping ? t("log.bridge", { action: "stop" }) : mode === "reconnect" ? t("log.bridgeRepair") : t("log.bridge", { action: "start" }), "system");
     try {
       if (stopping) {
+        disconnectBle();
         await fetch("/api/bridge/stop", { method: "POST" });
         setBridge({ running: false, busy: false }); toast(t("toast.bridgeOff"), "ok");
       } else {
-        if (mode === "reconnect") await fetch("/api/bridge/stop", { method: "POST" });
-        const r = await fetch("/api/bridge/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repair: true }) });
+        if (mode === "reconnect") disconnectBle();
+        if (!navigator.bluetooth) throw new Error("Web Bluetooth unsupported — use Chrome/Edge");
+        // Filter by service UUID, not name — ArduinoBLE on the R4 WiFi always
+        // advertises the name as "Arduino" (known upstream bug), so a name
+        // filter never matches.
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ services: [BLE_SERVICE] }],
+          optionalServices: [BLE_SERVICE],
+        });
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService(BLE_SERVICE);
+        const char = await service.getCharacteristic(BLE_CHAR);
+        await char.startNotifications();
+        char.addEventListener("characteristicvaluechanged", onBleNotify);
+        device.addEventListener("gattserverdisconnected", () => {
+          bleRef.current = { device: null, char: null };
+          setBridge(b => ({ ...b, running: false }));
+          fetch("/api/bridge/stop", { method: "POST" }).catch(() => {});
+        });
+        bleRef.current = { device, char };
+        const r = await fetch("/api/bridge/start", { method: "POST" });
         const d = await r.json();
         if (d.ok) { setBridge({ running: true, busy: false }); toast(t("toast.bridgeOn"), "ok"); }
-        else { setBridge(b => ({ ...b, busy: false })); addLog(t("log.failed", { error: d.error }), "danger"); toast(d.error, "danger"); }
+        else { disconnectBle(); setBridge(b => ({ ...b, busy: false })); addLog(t("log.failed", { error: d.error }), "danger"); toast(d.error, "danger"); }
       }
     } catch (e) { setBridge(b => ({ ...b, busy: false })); addLog(t("log.error", { msg: e.message }), "danger"); }
     loadBridge();
-  }, [bridge.running, addLog, toast, loadBridge]);
+  }, [bridge.running, addLog, toast, loadBridge, disconnectBle, onBleNotify]);
 
   const analyze = useCallback(() => {
     setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));

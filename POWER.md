@@ -1,3 +1,7 @@
+> **OUTDATED** — written for the retired Mega 2560 + ESP32 + Uno R3 setup
+> (now in `OUTDATED/`). Kept for reference; needs a rewrite for the single
+> Uno R4 WiFi + whatever motor driver comes back.
+
 # Power — Blackout V1
 
 ## Core principle

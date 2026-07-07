@@ -1,0 +1,152 @@
+// Uno R4 WiFi — sensor hub. Reads sensors, broadcasts CSV over BLE notify.
+// Same "S:" line format the server already parses (temp,humid,dist,smoke,
+// airq,roll,pitch,yaw,co,co_alert) so server.js needs no protocol change.
+// Order matters: ArduinoGraphics before Arduino_LED_Matrix.
+#include <ArduinoGraphics.h>
+#include <Arduino_LED_Matrix.h>
+#include <TextAnimation.h>
+#include <ArduinoBLE.h>
+
+#define MQ9_AO A3
+#define MQ9_DO 13
+#define TRIG_PIN 11
+#define ECHO_PIN 12
+#define SONAR_ITER 3            // pings per reading; median drops spikes
+#define SONAR_TIMEOUT_US 25000UL // ~430cm round-trip + margin; no echo = timeout
+#define DIST_ALPHA 0.6 // EMA smoothing on distance — ultrasonic is already clean
+                        // (median-of-3 kills spikes), so light smoothing is enough.
+
+// Burst-average kills per-sample ADC noise, EMA across cycles smooths the stream.
+#define GAS_SAMPLES 8
+#define GAS_ALPHA 0.15
+#define SEND_INTERVAL 100
+
+BLEService sensorService("19b10000-e8f2-537e-4f6c-d104768a1214");
+BLEStringCharacteristic sensorChar("19b10001-e8f2-537e-4f6c-d104768a1214", BLERead | BLENotify, 100);
+
+ArduinoLEDMatrix matrix;
+// Max frames ~= text length * font width (5px/char for Font_5x7) — 80 covers
+// "  BLACKOUT  " with headroom.
+TEXT_ANIMATION_DEFINE(matrixAnim, 80)
+volatile bool matrixReplay = false;
+
+unsigned long lastSend = 0;
+float coF = -1;   // EMA state, -1 = uninitialised
+float distF = -1; // EMA state, -1 = uninitialised
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(MQ9_DO, INPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  matrix.begin();
+  matrix.beginDraw();
+  matrix.stroke(0xFFFFFFFF);
+  matrix.textFont(Font_5x7);
+  matrix.textScrollSpeed(60);
+  matrix.setCallback(matrixDone);
+  matrix.beginText(0, 1, 0xFFFFFF);
+  matrix.println("BLACKOUT ");
+  matrix.endTextAnimation(SCROLL_LEFT, matrixAnim);
+  matrix.loadTextAnimationSequence(matrixAnim);
+  matrix.play();
+  matrix.endDraw();
+
+  if (!BLE.begin()) {
+    while (1) { Serial.println("BLE init failed"); delay(1000); }
+  }
+  // Known ArduinoBLE/R4 WiFi bug: the advertised name always shows as
+  // "Arduino" regardless of setLocalName() (the ESP32-S3 co-processor doesn't
+  // honor it in the ad packet, only in the post-connect GATT device-name
+  // characteristic). So the browser filters by this service UUID instead.
+  BLE.setLocalName("BLACKOUT-V1");
+  BLE.setAdvertisedService(sensorService);
+  sensorService.addCharacteristic(sensorChar);
+  BLE.addService(sensorService);
+  BLE.advertise();
+  Serial.println("BLE advertising as BLACKOUT-V1");
+}
+
+void matrixDone() { matrixReplay = true; } // IRQ context — keep it fast
+
+int readAvg(int pin) {
+  long sum = 0;
+  for (uint8_t i = 0; i < GAS_SAMPLES; i++) sum += analogRead(pin);
+  return sum / GAS_SAMPLES;
+}
+
+// One HC-SR04 ping in cm via plain pulseIn() — portable across cores, unlike
+// NewPing's AVR-cycle-counted timing (wrong on this board's clock speed).
+// Returns -1 on timeout (no echo / out of range).
+float pingCm() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  unsigned long us = pulseIn(ECHO_PIN, HIGH, SONAR_TIMEOUT_US);
+  return us > 0 ? us / 58.0 : -1;
+}
+
+// Median of SONAR_ITER pings drops spikes, same intent as the old NewPing call.
+float medianPingCm() {
+  float s[SONAR_ITER];
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < SONAR_ITER; i++) {
+    float v = pingCm();
+    if (v >= 0) s[n++] = v;
+    delay(10); // let the echo settle before the next trigger
+  }
+  if (n == 0) return -1;
+  for (uint8_t i = 1; i < n; i++) { // insertion sort, n is tiny
+    float key = s[i];
+    int j = i - 1;
+    while (j >= 0 && s[j] > key) { s[j + 1] = s[j]; j--; }
+    s[j + 1] = key;
+  }
+  return s[n / 2];
+}
+
+void loop() {
+  BLE.poll();
+
+  if (matrixReplay) { // loop the scroll forever
+    matrixReplay = false;
+    matrix.beginText(0, 1, 0xFFFFFF);
+    matrix.println("BLACKOUT ");
+    matrix.endTextAnimation(SCROLL_LEFT, matrixAnim);
+    matrix.loadTextAnimationSequence(matrixAnim);
+    matrix.play();
+  }
+
+  unsigned long now = millis();
+  if (now - lastSend < SEND_INTERVAL) return;
+  lastSend = now;
+
+  int coRaw   = readAvg(MQ9_AO);
+  int coAlert = digitalRead(MQ9_DO);
+  coF = (coF < 0) ? coRaw : coF + GAS_ALPHA * (coRaw - coF);
+  int co = (int)(coF + 0.5);
+
+  float raw = medianPingCm();
+  if (raw >= 0) {
+    distF = (distF < 0) ? raw : distF + DIST_ALPHA * (raw - distF);
+  }
+  float dist = (distF < 0) ? 0 : distF;
+
+  // IMPORTANT NOTE: only DHT11 (unwired) + MQ-9 + HC-SR04 exist — no
+  // MQ-2/MQ-135. airq mirrors the MQ-9 (co) reading until real sensors land;
+  // temp/humid stay zero-filled until DHT11 is wired.
+  String line = "S:0,0,";
+  line += dist;
+  line += ",0,";
+  line += co;
+  line += ",0,0,0,";
+  line += co;
+  line += ",";
+  line += coAlert;
+
+  Serial.println(line);
+  sensorChar.writeValue(line);
+}

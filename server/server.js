@@ -35,9 +35,7 @@ async function listSerialPorts() {
 }
 
 app.get("/api/ports", async (req, res) => {
-  // Hide the BT port from the dropdown — node can't read it and selecting it
-  // collides with the pyserial bridge. Bluetooth is the "BT Bridge" button only.
-  const ports = (await listSerialPorts()).filter(p => p !== BT_PORT);
+  const ports = await listSerialPorts();
   res.json({ ports, current: serialPort?.path || null });
 });
 
@@ -170,7 +168,9 @@ function attachParser(sp) {
   parser.on("data", (raw) => processLine(raw));
 }
 
-// Accept batched sensor data from the ESP32-CAM over WiFi.
+// Sensor data pushed over HTTP — the R4 WiFi's BLE notify data arrives via the
+// browser's own Web Bluetooth (no server-side native BT lib), which forwards
+// each line here. Also usable directly over WiFi if a board POSTs here itself.
 app.post("/api/mega/sensor", (req, res) => {
   let raw = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
   if (!raw || !raw.length) return res.status(400).json({ error: "empty" });
@@ -179,75 +179,21 @@ app.post("/api/mega/sensor", (req, res) => {
   res.json({ ok: true, lines: lines.length });
 });
 
-// --- Bluetooth bridge control ---
-// node's serialport can't read the macOS BT SPP port, so bt_bridge.py (pyserial)
-// reads it and POSTs to /api/mega/sensor. These endpoints spawn/kill it and run
-// the blueutil re-pair dance that the ESP32's BT needs for a fresh connection.
-const { spawn, execFile } = require("child_process");
-const BT_MAC = process.env.BT_MAC || "c8-f0-9e-a4-9f-6e";
-const BT_PORT = process.env.BT_PORT || "/dev/cu.BLACKOUT-V1";
-let bridgeProc = null;
-let bridgeLast = "";
+// --- Bluetooth "bridge" intent flag ---
+// The actual BLE connection lives in the browser (Web Bluetooth). These just
+// track intent server-side so USB serial and BT stay mutually exclusive.
+let bleActive = false;
 
-const sh = (cmd, args) => new Promise((res) =>
-  execFile(cmd, args, { timeout: 15000 }, (e, so) => res(so || "")));
+app.get("/api/bridge", (req, res) => res.json({ running: bleActive, last: "" }));
 
-async function ensureBtPort() {
-  for (let i = 0; i < 4; i++) {
-    if (fs.existsSync(BT_PORT)) return true;
-    await sh("blueutil", ["--connect", BT_MAC]);
-    await new Promise((r) => setTimeout(r, 7000));
-  }
-  return fs.existsSync(BT_PORT);
-}
-
-app.get("/api/bridge", (req, res) =>
-  res.json({ running: !!bridgeProc, last: bridgeLast }));
-
-app.post("/api/bridge/start", async (req, res) => {
-  if (bridgeProc) return res.json({ ok: true, already: true });
-  disconnectSerial(); // Close USB when BT bridge starts
-  try {
-    if (req.body && req.body.repair) {
-      console.log("Bridge: re-pairing BT...");
-      await sh("blueutil", ["--unpair", BT_MAC]);
-      await new Promise((r) => setTimeout(r, 2000));
-      await sh("blueutil", ["--pair", BT_MAC]);
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    await ensureBtPort();
-  } catch (e) { /* fall through to existence check */ }
-  if (!fs.existsSync(BT_PORT))
-    return res.status(500).json({ error: "Bluetooth port unavailable — try Re-pair" });
-  bridgeProc = spawn("python3", [path.join(__dirname, "bt_bridge.py")], {
-    env: { ...process.env, BT_PORT, SERVER_URL: `http://localhost:${PORT}/api/mega/sensor` },
-  });
-  const cap = (d) => { bridgeLast = d.toString().trim().split("\n").pop() || bridgeLast; };
-  bridgeProc.stdout.on("data", cap);
-  bridgeProc.stderr.on("data", cap);
-  bridgeProc.on("exit", () => { bridgeProc = null; });
-  console.log("Bridge: started");
-
-  // Wait up to 8s for the bridge to actually receive sensor data from the ESP32.
-  // bt_bridge.py prints "-> S:..." for each valid line — if nothing arrives
-  // the ESP32 likely isn't paired, powered, or sending.
-  for (let i = 0; i < 8; i++) {
-    await new Promise(r => setTimeout(r, 1000));
-    if (bridgeLast.includes("-> S:")) {
-      console.log("Bridge: data flowing");
-      return res.json({ ok: true });
-    }
-    if (!bridgeProc) break; // process exited early
-  }
-  // No data within window — kill bridge, tell the truth, don't pretend it works
-  if (bridgeProc) { bridgeProc.kill(); bridgeProc = null; }
-  bridgeLast = "";
-  return res.status(500).json({ error: "BT port opened but no data from ESP32 — check power, pairing, then Re-pair" });
+app.post("/api/bridge/start", (req, res) => {
+  disconnectSerial(); // Close USB when BT takes over
+  bleActive = true;
+  res.json({ ok: true });
 });
 
 app.post("/api/bridge/stop", (req, res) => {
-  if (bridgeProc) { bridgeProc.kill(); bridgeProc = null; }
-  bridgeLast = "";
+  bleActive = false;
   res.json({ ok: true });
 });
 
@@ -259,22 +205,10 @@ app.post("/api/connMode", async (req, res) => {
     return res.status(400).json({ error: "mode must be 'usb' or 'bt'" });
 
   if (mode === "bt") {
-    disconnectSerial(); // close USB, block reconnect
-    if (!bridgeProc) {
-      try { await ensureBtPort(); } catch { /* fall through */ }
-      if (!fs.existsSync(BT_PORT))
-        return res.status(500).json({ error: "Bluetooth port unavailable" });
-      bridgeProc = spawn("python3", [path.join(__dirname, "bt_bridge.py")], {
-        env: { ...process.env, BT_PORT, SERVER_URL: `http://localhost:${PORT}/api/mega/sensor` },
-      });
-      const cap = (d) => { bridgeLast = d.toString().trim().split("\n").pop() || bridgeLast; };
-      bridgeProc.stdout.on("data", cap);
-      bridgeProc.stderr.on("data", cap);
-      bridgeProc.on("exit", () => { bridgeProc = null; });
-      console.log("Bridge: started via connMode switch");
-    }
+    disconnectSerial(); // close USB, block reconnect — actual BLE connect happens client-side
+    bleActive = true;
   } else {
-    if (bridgeProc) { bridgeProc.kill(); bridgeProc = null; bridgeLast = ""; }
+    bleActive = false;
     connectSerial(selectedPortPath);
   }
 
@@ -284,10 +218,6 @@ app.post("/api/connMode", async (req, res) => {
 app.post("/api/ports/switch", async (req, res) => {
   const { path } = req.body;
   if (!path) return res.status(400).json({ error: "path required" });
-  // Refuse the BT port: node-serialport can't read it and it collides with the
-  // bridge's pyserial reader (corrupts both streams). Use the BT Bridge button.
-  if (path === BT_PORT)
-    return res.status(400).json({ error: "Use the BT Bridge button for Bluetooth, not the port selector" });
   selectedPortPath = path;
   if (serialPort) {
     serialPort.removeAllListeners("close");
