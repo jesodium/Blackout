@@ -6,11 +6,14 @@
 #include <Arduino_LED_Matrix.h>
 #include <TextAnimation.h>
 #include <ArduinoBLE.h>
+#include <Servo.h>
 
 #define MQ9_AO A3
 #define MQ9_DO 13
 #define TRIG_PIN 11
 #define ECHO_PIN 12
+#define SERVO_PIN 9
+// D8 left free for the incoming RGB status LED (green/amber/red = GO/WARN/ABORT).
 #define SONAR_ITER 3            // pings per reading; median drops spikes
 #define SONAR_TIMEOUT_US 25000UL // ~430cm round-trip + margin; no echo = timeout
 #define DIST_ALPHA 0.6 // EMA smoothing on distance — ultrasonic is already clean
@@ -23,7 +26,11 @@
 
 BLEService sensorService("19b10000-e8f2-537e-4f6c-d104768a1214");
 BLEStringCharacteristic sensorChar("19b10001-e8f2-537e-4f6c-d104768a1214", BLERead | BLENotify, 100);
+// Command channel: server (via the browser's Web Bluetooth) writes here to
+// trigger actions. Any write = sweep the servo once.
+BLEStringCharacteristic cmdChar("19b10002-e8f2-537e-4f6c-d104768a1214", BLEWrite, 20);
 
+Servo servo;
 ArduinoLEDMatrix matrix;
 // Max frames ~= text length * font width (5px/char for Font_5x7) — 80 covers
 // "  BLACKOUT  " with headroom.
@@ -39,6 +46,7 @@ void setup() {
   pinMode(MQ9_DO, INPUT);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
+  servo.attach(SERVO_PIN);
 
   matrix.begin();
   matrix.beginDraw();
@@ -63,12 +71,21 @@ void setup() {
   BLE.setLocalName("BLACKOUT-V1");
   BLE.setAdvertisedService(sensorService);
   sensorService.addCharacteristic(sensorChar);
+  sensorService.addCharacteristic(cmdChar);
   BLE.addService(sensorService);
   BLE.advertise();
   Serial.println("BLE advertising as BLACKOUT-V1");
 }
 
 void matrixDone() { matrixReplay = true; } // IRQ context — keep it fast
+
+// One full 0→180→0 sweep, ~1.1s. IMPORTANT NOTE: blocking — the loop (sensor
+// sends + BLE poll) pauses for the duration. Fine under the BLE supervision
+// timeout at once-per-30s cadence; go non-blocking (millis stepper) if it bites.
+void sweepServo() {
+  for (int a = 0; a <= 180; a += 5) { servo.write(a); delay(15); }
+  for (int a = 180; a >= 0; a -= 5) { servo.write(a); delay(15); }
+}
 
 int readAvg(int pin) {
   long sum = 0;
@@ -110,6 +127,8 @@ float medianPingCm() {
 
 void loop() {
   BLE.poll();
+
+  if (cmdChar.written()) sweepServo(); // server said "time to sweep"
 
   if (matrixReplay) { // loop the scroll forever
     matrixReplay = false;

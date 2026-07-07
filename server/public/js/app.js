@@ -700,7 +700,7 @@ function SerialMonitor({ lines, hidden, onToggle, onClear }) {
 }
 
 /* ---------------- masthead ---------------- */
-function Masthead({ connected, ports, currentPort, bridge, onBridge, connMode, onConnMode, ping, packets, uptime, onPort, lang, onLang }) {
+function Masthead({ connected, ports, currentPort, bridge, onBridge, onServo, connMode, onConnMode, ping, packets, uptime, onPort, lang, onLang }) {
   return html`
     <header class="masthead reveal">
       <div class="mast-top">
@@ -737,6 +737,8 @@ function Masthead({ connected, ports, currentPort, bridge, onBridge, connMode, o
                   </button>
                   <button type="button" class="bridge-repair" title=${t("mast.bridgeRepairTitle")}
                     disabled=${bridge.busy} onClick=${() => onBridge("reconnect")}>⟳</button>
+                  <button type="button" class="bridge-repair" title=${t("mast.servoTitle")}
+                    disabled=${bridge.busy || !bridge.running} onClick=${onServo}>⟲cam</button>
                 </div>
               `}
             </div>
@@ -1006,7 +1008,8 @@ function App() {
   // /api/bridge/* just tracks the intent flag server-side (mutual excl. w/ USB).
   const BLE_SERVICE = "19b10000-e8f2-537e-4f6c-d104768a1214";
   const BLE_CHAR = "19b10001-e8f2-537e-4f6c-d104768a1214";
-  const bleRef = useRef({ device: null, char: null });
+  const BLE_CMD = "19b10002-e8f2-537e-4f6c-d104768a1214"; // write = sweep servo (camera pan)
+  const bleRef = useRef({ device: null, char: null, cmd: null });
 
   const onBleNotify = useCallback((e) => {
     const line = new TextDecoder().decode(e.target.value);
@@ -1020,8 +1023,20 @@ function App() {
     const { device, char } = bleRef.current;
     if (char) char.removeEventListener("characteristicvaluechanged", onBleNotify);
     if (device?.gatt?.connected) device.gatt.disconnect();
-    bleRef.current = { device: null, char: null };
+    bleRef.current = { device: null, char: null, cmd: null };
   }, [onBleNotify]);
+
+  // Servo check: any write to the cmd char makes the R4 sweep the servo once
+  // (0→180→0) so we can eyeball the camera pan. Payload is ignored by firmware.
+  const sweepServo = useCallback(async () => {
+    const { device, cmd } = bleRef.current;
+    if (!device?.gatt?.connected) { toast(t("toast.servoNoLink"), "danger"); return; }
+    if (!cmd) { toast(t("toast.servoNoChar"), "danger"); return; } // linked but firmware lacks cmd char
+    try {
+      await cmd.writeValue(new TextEncoder().encode("sweep"));
+      addLog(t("log.servoSweep"), "system");
+    } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); }
+  }, [addLog, toast]);
 
   const loadBridge = useCallback(async () => {
     try { const r = await fetch("/api/bridge"); const d = await r.json();
@@ -1052,14 +1067,15 @@ function App() {
         const server = await device.gatt.connect();
         const service = await server.getPrimaryService(BLE_SERVICE);
         const char = await service.getCharacteristic(BLE_CHAR);
+        const cmd = await service.getCharacteristic(BLE_CMD).catch(() => null); // older firmware lacks it
         await char.startNotifications();
         char.addEventListener("characteristicvaluechanged", onBleNotify);
         device.addEventListener("gattserverdisconnected", () => {
-          bleRef.current = { device: null, char: null };
+          bleRef.current = { device: null, char: null, cmd: null };
           setBridge(b => ({ ...b, running: false }));
           fetch("/api/bridge/stop", { method: "POST" }).catch(() => {});
         });
-        bleRef.current = { device, char };
+        bleRef.current = { device, char, cmd };
         const r = await fetch("/api/bridge/start", { method: "POST" });
         const d = await r.json();
         if (d.ok) { setBridge({ running: true, busy: false }); toast(t("toast.bridgeOn"), "ok"); }
@@ -1166,7 +1182,7 @@ function App() {
     <${React.Fragment}>
       <div class="console">
         <${Masthead} connected=${connected} ports=${ports} currentPort=${currentPort}
-          bridge=${bridge} onBridge=${toggleBridge} connMode=${connMode} onConnMode=${setConnMode}
+          bridge=${bridge} onBridge=${toggleBridge} onServo=${sweepServo} connMode=${connMode} onConnMode=${setConnMode}
           ping=${ping} packets=${packets} uptime=${uptime} onPort=${switchPort}
           lang=${lang} onLang=${changeLang} />
         <${Ticker} packet=${view} connected=${connected} />
