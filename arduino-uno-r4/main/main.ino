@@ -13,7 +13,6 @@
 #define TRIG_PIN 11
 #define ECHO_PIN 12
 #define SERVO_PIN 9
-// D8 left free for the incoming RGB status LED (green/amber/red = GO/WARN/ABORT).
 #define SONAR_ITER 3            // pings per reading; median drops spikes
 #define SONAR_TIMEOUT_US 25000UL // ~430cm round-trip + margin; no echo = timeout
 #define DIST_ALPHA 0.6 // EMA smoothing on distance — ultrasonic is already clean
@@ -103,6 +102,7 @@ float pingCm() {
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
   unsigned long us = pulseIn(ECHO_PIN, HIGH, SONAR_TIMEOUT_US);
+  Serial.print("ping us="); Serial.println(us); // DEBUG: remove once wiring confirmed
   return us > 0 ? us / 58.0 : -1;
 }
 
@@ -151,6 +151,8 @@ void loop() {
   float raw = medianPingCm();
   if (raw >= 0) {
     distF = (distF < 0) ? raw : distF + DIST_ALPHA * (raw - distF);
+  } else {
+    distF = -1; // miss = out of range, don't hold a stale value
   }
   float dist = (distF < 0) ? 0 : distF;
 
