@@ -75,7 +75,11 @@ void setup() {
   c.pixel_format = PIXFORMAT_JPEG;
   // PSRAM present (most AI-Thinker boards): bigger frame + double buffer.
   // No PSRAM: drop to smaller frame so it fits, or camera_init fails.
-  if (psramFound()) { c.frame_size = FRAMESIZE_VGA; c.jpeg_quality = 12; c.fb_count = 2; }
+  // IMPORTANT NOTE: quality/res knobs. frame_size bigger + jpeg_quality lower
+  // (=better) both cost WiFi bandwidth -> lower FPS. SVGA@10 is the sweet spot
+  // for a moving robot; go XGA/UXGA only if you want stills over motion.
+  // frame_size does NOT change field of view — that's the lens (see below).
+  if (psramFound()) { c.frame_size = FRAMESIZE_SVGA; c.jpeg_quality = 10; c.fb_count = 2; }
   else              { c.frame_size = FRAMESIZE_QVGA; c.jpeg_quality = 15; c.fb_count = 1; }
 
   if (esp_camera_init(&c) != ESP_OK) {

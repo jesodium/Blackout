@@ -283,7 +283,7 @@ function Camera() {
           <span class="stage-mark" aria-hidden="true">CAM</span>
           ${state !== "offline"
             ? html`<img src=${src} alt=${t("zone.camera")}
-                style=${{ width: "100%", height: "100%", objectFit: "cover" }}
+                style=${{ width: "100%", height: "100%", objectFit: "contain" }}
                 onLoad=${() => setState("live")} onError=${() => setState("offline")} />`
             : html`<div class="viewport-fallback">${t("cam.offline")}<br/>
                 <small>${CAM_URL}</small><br/>
