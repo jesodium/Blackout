@@ -113,7 +113,8 @@ float medianPingCm() {
   for (uint8_t i = 0; i < SONAR_ITER; i++) {
     float v = pingCm();
     if (v >= 0) s[n++] = v;
-    delay(10); // let the echo settle before the next trigger
+    delay(60); // HC-SR04 needs >=60ms between pings or the transducer ring-down
+               // from the prior burst latches a false ~20cm echo (datasheet spec)
   }
   if (n == 0) return -1;
   for (uint8_t i = 1; i < n; i++) { // insertion sort, n is tiny
