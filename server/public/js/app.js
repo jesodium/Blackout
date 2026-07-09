@@ -9,7 +9,10 @@ const html = htm.bind(React.createElement);
 // ESP32-CAM MJPEG stream. Matches MDNS_NAME in esp32-cam/main/main.ino.
 // IMPORTANT NOTE: mDNS (.local) can fail on some networks/Androids — swap for
 // the cam's raw IP (printed on its serial) if the feed never loads.
-const CAM_URL = "http://blackout-cam.local/stream";
+// IMPORTANT NOTE: iPhone hotspot doesn't pass mDNS, so blackout-cam.local
+// won't resolve — use the DHCP IP. First hotspot client usually gets .10, but
+// if the cam grabs a different IP, read it off serial and update this.
+const CAM_URL = "http://172.20.10.10/stream";
 
 /* ---------------- sensor model ---------------- */
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
@@ -283,7 +286,7 @@ function Camera() {
           <span class="stage-mark" aria-hidden="true">CAM</span>
           ${state !== "offline"
             ? html`<img src=${src} alt=${t("zone.camera")}
-                style=${{ width: "100%", height: "100%", objectFit: "contain" }}
+                style=${{ width: "100%", height: "100%", objectFit: "fill" }}
                 onLoad=${() => setState("live")} onError=${() => setState("offline")} />`
             : html`<div class="viewport-fallback">${t("cam.offline")}<br/>
                 <small>${CAM_URL}</small><br/>
