@@ -1,0 +1,3 @@
+default_fqbn: esp32:esp32:esp32cam
+# No default_port: AI-Thinker has no USB — flash via FTDI/USB-TTL adapter,
+# port varies (e.g. /dev/cu.usbserial-xxxx). GPIO0->GND to enter flash mode.

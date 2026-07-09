@@ -63,6 +63,12 @@ const DICT = {
 
     /* orientation */
     "zone.orientation": "Orientation",
+    "zone.camera": "Camera Feed",
+    "cam.tag.loading": "Link · Connecting",
+    "cam.tag.live": "Link · Live",
+    "cam.tag.offline": "Link · Offline",
+    "cam.offline": "Camera feed unavailable",
+    "cam.retry": "Retry",
     "tag.gyroLocked": "Gyro · Locked",
     "tag.gyroStandby": "Gyro · Standby",
     "view.unavailable": "3D View Unavailable",
@@ -285,6 +291,12 @@ const DICT = {
     "toast.connMode": "Cambiado a modo {mode}",
 
     "zone.orientation": "Orientación",
+    "zone.camera": "Cámara",
+    "cam.tag.loading": "Enlace · Conectando",
+    "cam.tag.live": "Enlace · En Vivo",
+    "cam.tag.offline": "Enlace · Sin Señal",
+    "cam.offline": "Señal de cámara no disponible",
+    "cam.retry": "Reintentar",
     "tag.gyroLocked": "Giro · Fijado",
     "tag.gyroStandby": "Giro · En Espera",
     "view.unavailable": "Vista 3D No Disponible",

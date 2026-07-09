@@ -229,18 +229,18 @@ body {
    ============================================================ */
 .deck { display: flex; flex-direction: column; }
 .row { display: grid; gap: var(--gap); align-items: start; padding-top: var(--gap); }
-/* stage: [3D + environment stacked] · agent · analysis */
-.row--stage  { grid-template-columns: minmax(0, 1.55fr) minmax(270px, 0.96fr) minmax(230px, 0.8fr); }
+/* stage: [3D + environment stacked] · agent · [cam + analysis stacked] */
+.row--stage  { grid-template-columns: minmax(0, 1.2fr) minmax(270px, 0.96fr) minmax(260px, 1fr); }
 .row--report { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-.stage-col { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
-/* at mid widths drop to [stage-col + agent], analysis wraps full-width below */
+.stage-col, .side-col { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
+/* at mid widths drop to [stage-col + agent], cam+analysis wraps full-width below */
 @media (max-width: 1280px) {
   .row--stage { grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr); }
-  .row--stage > .memory { grid-column: 1 / -1; }
+  .row--stage > .side-col { grid-column: 1 / -1; }
 }
 @media (max-width: 880px) {
   .row--stage, .row--report { grid-template-columns: 1fr; }
-  .row--stage > .memory { grid-column: auto; }
+  .row--stage > .side-col { grid-column: auto; }
 }
 
 /* ---- zone shell ---- */

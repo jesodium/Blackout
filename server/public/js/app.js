@@ -6,6 +6,11 @@ import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./
 
 const html = htm.bind(React.createElement);
 
+// ESP32-CAM MJPEG stream. Matches MDNS_NAME in esp32-cam/main/main.ino.
+// IMPORTANT NOTE: mDNS (.local) can fail on some networks/Androids — swap for
+// the cam's raw IP (printed on its serial) if the feed never loads.
+const CAM_URL = "http://blackout-cam.local/stream";
+
 /* ---------------- sensor model ---------------- */
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
 
@@ -260,6 +265,31 @@ function Orientation({ packet, onLog }) {
               <div><dt>${t("hud.yaw")}</dt><dd>${fmt(packet?.yaw, 1)}°</dd></div>
             </dl>
           </div>
+        </div>
+      </div>
+    </section>`;
+}
+
+/* ---------------- camera: ESP32-CAM live feed ---------------- */
+function Camera() {
+  const [state, setState] = useState("loading"); // loading | live | offline
+  const [nonce, setNonce] = useState(0);          // bump to force <img> reload
+  const src = CAM_URL + (CAM_URL.includes("?") ? "&" : "?") + "n=" + nonce;
+  return html`
+    <section class="zone stage reveal" style=${{ animationDelay: "60ms" }} aria-labelledby="cam-h">
+      <${Head} folio="02" title=${t("zone.camera")} tag=${t("cam.tag." + state)} />
+      <div class="zone-body">
+        <div class="viewport">
+          <span class="stage-mark" aria-hidden="true">CAM</span>
+          ${state !== "offline"
+            ? html`<img src=${src} alt=${t("zone.camera")}
+                style=${{ width: "100%", height: "100%", objectFit: "cover" }}
+                onLoad=${() => setState("live")} onError=${() => setState("offline")} />`
+            : html`<div class="viewport-fallback">${t("cam.offline")}<br/>
+                <small>${CAM_URL}</small><br/>
+                <button type="button" class="btn btn--ghost" style=${{ marginTop: "12px" }}
+                  onClick=${() => { setState("loading"); setNonce(n => n + 1); }}>${t("cam.retry")}</button>
+              </div>`}
         </div>
       </div>
     </section>`;
@@ -1197,7 +1227,10 @@ function App() {
               chats=${chats} activeChat=${activeChat} onNewChat=${newChat} onSelectChat=${selectChat}
               onDeleteChat=${deleteChat} onBrief=${briefMission} onSpeak=${speakBrief}
               onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onPick=${pickHistory} onMock=${mockData} onAsk=${ask} />
-            <${Memory} chat=${activeChat} />
+            <div class="side-col">
+              <${Camera} />
+              <${Memory} chat=${activeChat} />
+            </div>
           </div>
 
           <div class="row">

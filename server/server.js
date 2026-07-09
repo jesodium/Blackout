@@ -236,8 +236,12 @@ app.post("/api/ports/switch", async (req, res) => {
     console.error("Serial error:", err.message);
   });
   serialPort.on("close", () => {
+    if (manualDisconnect || bleActive) {
+      console.log("Serial closed by mode switch — not reconnecting.");
+      return;
+    }
     console.log("Serial disconnected. Reconnecting in 5s...");
-    setTimeout(() => connectSerial(selectedPortPath), 5000);
+    scheduleReconnect(selectedPortPath);
   });
 });
 
@@ -534,9 +538,21 @@ async function runAiAnalysis() {
 let serialPort;
 let selectedPortPath = null;
 let manualDisconnect = false; // true = USB serial intentionally closed (BT mode); block auto-reconnect
+let reconnectTimer = null;    // pending auto-reconnect; must be cancelled on a mode switch
+
+// Single choke point for auto-reconnect. Refuses if we're in BT mode or the
+// close was intentional, and always tracks the timer so disconnectSerial can
+// cancel it — otherwise a stale timer revives serial after switching to BT.
+function scheduleReconnect(path) {
+  clearTimeout(reconnectTimer);
+  if (bleActive || manualDisconnect) return;
+  reconnectTimer = setTimeout(() => connectSerial(path), 5000);
+}
 
 function disconnectSerial() {
   manualDisconnect = true;
+  clearTimeout(reconnectTimer); // kill any pending revive
+  reconnectTimer = null;
   if (serialPort) {
     serialPort.removeAllListeners("close");
     serialPort.removeAllListeners("error");
@@ -546,13 +562,14 @@ function disconnectSerial() {
 }
 
 async function connectSerial(path) {
+  if (bleActive) return; // BT owns the link — never open USB underneath it
   manualDisconnect = false;
   if (!path) {
     const ports = await listSerialPorts();
     const usbPorts = ports.filter(p => p.includes("usbserial"));
     if (usbPorts.length === 0) {
       console.log("No usbserial ports found. Waiting for device...");
-      setTimeout(() => connectSerial(), 3000);
+      scheduleReconnect();
       return;
     }
     path = usbPorts[0];
@@ -568,7 +585,7 @@ async function connectSerial(path) {
       console.error(`Failed to open ${path}: ${err.message}`);
       if (!selectedPortPath) {
         console.log("Retrying in 5s...");
-        setTimeout(() => connectSerial(), 5000);
+        scheduleReconnect();
       }
     } else {
       console.log(`Connected to ${path}`);
@@ -582,16 +599,22 @@ async function connectSerial(path) {
   });
 
   serialPort.on("close", () => {
-    if (manualDisconnect) {
+    if (manualDisconnect || bleActive) {
       console.log("Serial closed by mode switch — not reconnecting.");
       return;
     }
     console.log("Serial disconnected. Reconnecting in 5s...");
-    setTimeout(() => connectSerial(selectedPortPath), 5000);
+    scheduleReconnect(selectedPortPath);
   });
 }
 
-connectSerial();
+// No auto-grab at boot: the server used to blindly open the first usbserial
+// port, which stole the ESP32-CAM's FTDI (and isn't even the Uno — that's
+// usbmodem). Sensors arrive over BLE anyway. Connect USB only when explicitly
+// asked: pick a port in the dashboard, or set SERIAL_AUTOCONNECT=true to
+// restore the old behavior.
+if (process.env.SERIAL_AUTOCONNECT === "true") connectSerial();
+else console.log("USB serial auto-connect off — select a port in the dashboard (SERIAL_AUTOCONNECT=true to auto-open).");
 
 // Analysis is on-demand only (request-analysis below) — no auto interval.
 

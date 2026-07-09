@@ -25,6 +25,8 @@ yarn-error.log*
 # Arduino IDE temp files
 *.d
 build/
+# Sketch secrets (WiFi creds) — commit the .example, never the real header
+arduino_secrets.h
 
 # ── CAD / 3D files (large binaries) ─────────────────────
 *.f3d
