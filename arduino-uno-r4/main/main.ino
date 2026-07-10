@@ -26,7 +26,7 @@
 BLEService sensorService("19b10000-e8f2-537e-4f6c-d104768a1214");
 BLEStringCharacteristic sensorChar("19b10001-e8f2-537e-4f6c-d104768a1214", BLERead | BLENotify, 100);
 // Command channel: server (via the browser's Web Bluetooth) writes here to
-// trigger actions. Any write = sweep the servo once.
+// trigger actions. "scan" = slow look-around pan; anything else = quick sweep check.
 BLEStringCharacteristic cmdChar("19b10002-e8f2-537e-4f6c-d104768a1214", BLEWrite, 20);
 
 Servo servo;
@@ -86,6 +86,15 @@ void sweepServo() {
   for (int a = 180; a >= 0; a -= 5) { servo.write(a); delay(15); }
 }
 
+// Slow "look around": pan 0→180 over ~4s so the cam (mounted on this servo) gives
+// clean, distinct stills for the server to grab, then snap back. IMPORTANT NOTE:
+// blocking like sweepServo — sensor sends pause ~4-5s during this deliberate look.
+// Go non-blocking (millis stepper) if it bites the BLE supervision timeout.
+void slowSweep() {
+  for (int a = 0; a <= 180; a += 2) { servo.write(a); delay(45); }
+  for (int a = 180; a >= 0; a -= 5) { servo.write(a); delay(10); }
+}
+
 int readAvg(int pin) {
   long sum = 0;
   for (uint8_t i = 0; i < GAS_SAMPLES; i++) sum += analogRead(pin);
@@ -129,7 +138,10 @@ float medianPingCm() {
 void loop() {
   BLE.poll();
 
-  if (cmdChar.written()) sweepServo(); // server said "time to sweep"
+  if (cmdChar.written()) {            // server said "time to move the servo"
+    if (cmdChar.value() == "scan") slowSweep(); // Sage's look-around
+    else sweepServo();                          // quick manual check
+  }
 
   if (matrixReplay) { // loop the scroll forever
     matrixReplay = false;

@@ -9,10 +9,10 @@ const html = htm.bind(React.createElement);
 // ESP32-CAM MJPEG stream. Matches MDNS_NAME in esp32-cam/main/main.ino.
 // IMPORTANT NOTE: mDNS (.local) can fail on some networks/Androids — swap for
 // the cam's raw IP (printed on its serial) if the feed never loads.
-// IMPORTANT NOTE: iPhone hotspot doesn't pass mDNS, so blackout-cam.local
-// won't resolve — use the DHCP IP. First hotspot client usually gets .10, but
-// if the cam grabs a different IP, read it off serial and update this.
-const CAM_URL = "http://172.20.10.10/stream";
+// mDNS name the ESP32 registers (MDNS.begin("blackout-cam")). Survives DHCP
+// lease changes, works on any real WiFi. IMPORTANT NOTE: iPhone hotspot does
+// NOT pass mDNS — on a hotspot, swap this for the cam's raw IP off serial.
+const CAM_URL = "http://blackout-cam.local/stream";
 
 /* ---------------- sensor model ---------------- */
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
@@ -277,14 +277,27 @@ function Orientation({ packet, onLog }) {
 function Camera() {
   const [state, setState] = useState("loading"); // loading | live | offline
   const [nonce, setNonce] = useState(0);          // bump to force <img> reload
+  const [yielded, setYielded] = useState(false);  // scan owns the cam — drop our feed
+  // The ESP32-CAM's /stream handler is a single infinite worker, so only one client
+  // at a time. During a look-around scan the server needs to grab frames, so we tear
+  // down our <img> (frees the cam's worker) and reconnect fresh when the scan is done.
+  useEffect(() => {
+    const y = () => setYielded(true);
+    const r = () => { setYielded(false); setNonce(n => n + 1); };
+    window.addEventListener("cam:yield", y);
+    window.addEventListener("cam:resume", r);
+    return () => { window.removeEventListener("cam:yield", y); window.removeEventListener("cam:resume", r); };
+  }, []);
   const src = CAM_URL + (CAM_URL.includes("?") ? "&" : "?") + "n=" + nonce;
   return html`
     <section class="zone stage reveal" style=${{ animationDelay: "60ms" }} aria-labelledby="cam-h">
-      <${Head} folio="02" title=${t("zone.camera")} tag=${t("cam.tag." + state)} />
+      <${Head} folio="02" title=${t("zone.camera")} tag=${t(yielded ? "cam.tag.scanning" : "cam.tag." + state)} />
       <div class="zone-body">
         <div class="viewport">
           <span class="stage-mark" aria-hidden="true">CAM</span>
-          ${state !== "offline"
+          ${yielded
+            ? html`<div class="viewport-fallback">${t("cam.scanning")}</div>`
+            : state !== "offline"
             ? html`<img src=${src} alt=${t("zone.camera")}
                 style=${{ width: "100%", height: "100%", objectFit: "fill" }}
                 onLoad=${() => setState("live")} onError=${() => setState("offline")} />`
@@ -504,7 +517,7 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
             : html`<span class="agent-state-label"><span class="agent-face">${animFace(intent.face)}</span> ${t(intent.label)}</span>`}
         </div>
         <div class="agent-speech">
-          <p class="agent-text" key=${ai.text} role="status" aria-live="polite">${ai.text}</p>
+          <p class=${"agent-text" + (ai.status ? " sage-" + ai.status : "")} key=${ai.text} role="status" aria-live="polite">${ai.text}</p>
           <${AgentTiming} ai=${ai} />
         </div>
         <div class=${"verdict is-" + v.kind} role="status" aria-live="polite">
@@ -832,7 +845,7 @@ function App() {
   const [ping, setPing] = useState("—");
   const [packets, setPackets] = useState(0);
   const [logs, setLogs] = useState([]);
-  const [ai, setAi] = useState({ text: t("ai.awaiting"), badge: "badge.standby", analyzing: false, history: [], phase: null, since: 0, llm: null, tts: null });
+  const [ai, setAi] = useState({ text: t("ai.awaiting"), badge: "badge.standby", analyzing: false, history: [], phase: null, since: 0, llm: null, tts: null, status: null });
   const [tts, setTts] = useState(() => localStorage.getItem("tts") !== "false");
   const [ttsProv, setTtsProv] = useState(() => localStorage.getItem("ttsProvider") || "edge");
   const [hasDeepgram, setHasDeepgram] = useState(false);
@@ -955,10 +968,10 @@ function App() {
       }].slice(-300));
     });
     // The agent says something on its own (analysis, instant reaction, or mission ack).
-    const sayAgent = (text, ts, logMsg, logKind) => {
+    const sayAgent = (text, ts, logMsg, logKind, status = null) => {
       addLog(logMsg, logKind);
       setAi(p => ({
-        text, badge: "badge.online", analyzing: false,
+        text, badge: "badge.online", analyzing: false, status,
         phase: null, since: 0, llm: p.since ? Date.now() - p.since : null, tts: null,
         history: [...p.history, { text, time: new Date(ts || Date.now()).toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-20),
       }));
@@ -966,9 +979,9 @@ function App() {
     };
     // Auto analysis + instant reactions only fire when a briefed session is open —
     // otherwise the dashboard talks to itself on boot with no chat active.
-    socket.on("ai-analysis", d => { if (d?.analysis && activeRef.current?.mission) sayAgent(d.analysis, d.timestamp, t("log.aiReceived"), "ai"); });
+    socket.on("ai-analysis", d => { if (d?.analysis && activeRef.current?.mission) sayAgent(d.analysis, d.timestamp, t("log.aiReceived"), "ai", d.status); });
     socket.on("agent-blurt", d => { if (d?.text && activeRef.current?.mission) sayAgent(d.text, d.timestamp, t("log.blurt", { text: d.text }), "warn"); });
-    socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, t("log.missionAck"), "ai"); });
+    socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, t("log.missionAck"), "ai", d.status); });
     addLog(t("log.booted"), "system");
     return () => socket.close();
   }, [addLog, speakTimed]);
@@ -1059,16 +1072,19 @@ function App() {
     bleRef.current = { device: null, char: null, cmd: null };
   }, [onBleNotify]);
 
-  // Servo check: any write to the cmd char makes the R4 sweep the servo once
-  // (0→180→0) so we can eyeball the camera pan. Payload is ignored by firmware.
-  const sweepServo = useCallback(async () => {
+  // Move the camera servo. "sweep" = quick 0→180→0 eyeball check (manual button);
+  // "scan" = slow ~4-5s look-around pan the firmware runs so Sage gets clean stills.
+  // Returns true if the write went out (so runScan knows the pan actually started).
+  const sweepServo = useCallback(async (payload = "sweep") => {
+    const word = typeof payload === "string" ? payload : "sweep"; // onClick passes an event
     const { device, cmd } = bleRef.current;
-    if (!device?.gatt?.connected) { toast(t("toast.servoNoLink"), "danger"); return; }
-    if (!cmd) { toast(t("toast.servoNoChar"), "danger"); return; } // linked but firmware lacks cmd char
+    if (!device?.gatt?.connected) { toast(t("toast.servoNoLink"), "danger"); return false; }
+    if (!cmd) { toast(t("toast.servoNoChar"), "danger"); return false; } // linked but firmware lacks cmd char
     try {
-      await cmd.writeValue(new TextEncoder().encode("sweep"));
+      await cmd.writeValue(new TextEncoder().encode(word));
       addLog(t("log.servoSweep"), "system");
-    } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); }
+      return true;
+    } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); return false; }
   }, [addLog, toast]);
 
   const loadBridge = useCallback(async () => {
@@ -1128,6 +1144,45 @@ function App() {
   }, []);
   // Ask Sage: reply lands in the agent's speech bubble + is spoken. Each chat
   // keeps its own rolling message history so follow-ups have context.
+  // Render a Sage JSON reply {text,status,action}: bubble + status tint + history +
+  // TTS. Only the text field is ever shown or voiced — never the raw JSON.
+  const showSage = useCallback((sage, t0, speak = true) => {
+    const textv = (sage && sage.text) || "No response.";
+    setAi(p => ({
+      text: textv, status: (sage && sage.status) || null,
+      badge: "badge.online", analyzing: false, phase: null, since: 0,
+      llm: t0 ? Date.now() - t0 : p.llm, tts: null,
+      history: [...p.history, { text: textv, time: new Date().toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-20),
+    }));
+    if (speak && ttsRef.current) speakTimed(textv);
+  }, [speakTimed]);
+
+  // Sage asked to look around (action:"sweep"): drive the slow servo pan, then let
+  // the server grab stills across it and hand back Sage's description.
+  const runScan = useCallback(async () => {
+    const started = await sweepServo("scan"); // slow ~4-5s pan; false = no BLE link
+    if (!started) return; // sweepServo already toasted why
+    // Hand the camera to the server: drop our live feed so its single worker is free
+    // to grab frames across the pan, then reconnect once we're done.
+    window.dispatchEvent(new Event("cam:yield"));
+    const t0 = Date.now();
+    setAi(p => ({ ...p, analyzing: true, badge: "badge.thinking", phase: "thinking", since: t0, llm: null, tts: null }));
+    try {
+      await new Promise(r => setTimeout(r, 400)); // let the ESP32 free its worker first
+      const r = await fetch("/api/scan", { method: "POST" });
+      const data = await r.json();
+      const sage = data.reply, ok = !!(sage && sage.text);
+      addLog(t("log.replied"), "ai");
+      showSage(ok ? sage : { text: data.error || "No response.", status: null }, t0, ok);
+      const chat = activeRef.current;
+      if (ok && chat) setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...(c.messages || []), { role: "assistant", content: sage.text }].slice(-12) } : c));
+    } catch (e) {
+      setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
+    } finally {
+      window.dispatchEvent(new Event("cam:resume")); // give the live feed back
+    }
+  }, [sweepServo, showSage, addLog]);
+
   const ask = useCallback(async (text) => {
     text = (text || "").trim();
     const chat = activeRef.current;
@@ -1143,18 +1198,15 @@ function App() {
         body: JSON.stringify({ messages: next, lang: getLang() }),
       });
       const data = await r.json();
-      const reply = data.reply || data.error || "No response.";
-      if (data.reply) setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...next, { role: "assistant", content: reply }].slice(-12) } : c));
+      const sage = data.reply, ok = !!(sage && sage.text);
+      if (ok) setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...next, { role: "assistant", content: sage.text }].slice(-12) } : c));
       addLog(t("log.replied"), "ai");
-      setAi(p => ({
-        text: reply, badge: "badge.online", analyzing: false, phase: null, since: 0, llm: Date.now() - t0, tts: null,
-        history: [...p.history, { text: reply, time: new Date().toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-20),
-      }));
-      if (ttsRef.current && data.reply) speakTimed(reply);
+      showSage(ok ? sage : { text: data.error || "No response.", status: null }, t0, ok);
+      if (ok && sage.action === "sweep") runScan(); // Sage wants a look around
     } catch (e) {
       setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
     }
-  }, [addLog, speakTimed]);
+  }, [addLog, showSage, runScan]);
   const toggleTts = useCallback(() => setTts(p => {
     const n = !p; ttsRef.current = n; localStorage.setItem("tts", n);
     if (!n) { stopSpeech(); setSpeaking(false); }

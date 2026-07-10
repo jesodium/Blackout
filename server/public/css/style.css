@@ -511,6 +511,10 @@ body {
   transition: border-color 0.45s ease;
 }
 .agent.is-analyzing .agent-text { color: var(--ink-2); }
+/* Sage's own read of the situation (from her JSON status field). */
+.agent-text.sage-clear   { border-left-color: var(--go); }
+.agent-text.sage-caution { border-left-color: var(--warn); }
+.agent-text.sage-danger  { border-left-color: var(--abort); }
 @keyframes agent-text-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 .agent-timing {

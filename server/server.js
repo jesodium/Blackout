@@ -9,6 +9,8 @@ const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
+const { eyeParts, grabFrames } = require("./vision");
+const { parseSage } = require("./sage");
 const keypress = require("keypress");
 
 const openai = new OpenAI({
@@ -118,17 +120,43 @@ app.post("/api/chat", async (req, res) => {
   const lang = LANG_INSTRUCT[req.body?.lang] ? req.body.lang : "en";
   try {
     const ctx = latestData ? buildChatContext(latestData) : "No live readings yet — running dark.";
-    const resp = await openai.chat.completions.create({
-      model: process.env.CEREBRAS_MODEL || "gpt-oss-120b",
-      messages: [
-        { role: "system", content: CHAT_SYSTEM },
-        ...langMsg(lang),
-        { role: "system", content: ctx },
-        ...msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") })),
-      ],
-      max_tokens: 400,
-    });
-    res.json({ reply: resp.choices[0]?.message?.content || "No response." });
+    const mapped = msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }));
+    // Attach the live cam frame to the operator's latest turn so gemma sees it.
+    const eyes = await eyeParts();
+    if (eyes.length && mapped.length) {
+      const last = mapped[mapped.length - 1];
+      last.content = [{ type: "text", text: last.content + "\n(Attached is your live forward-camera view.)" }, ...eyes];
+    }
+    const sage = await askSage([
+      { role: "system", content: CHAT_SYSTEM },
+      ...langMsg(lang),
+      { role: "system", content: ctx },
+      ...mapped,
+    ], { maxTokens: 400 });
+    res.json({ reply: sage });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Look-around: Sage asked to sweep (action:"sweep"). The browser drives the pin-9
+// servo through a slow pan and hits this back-to-back; we grab stills across the pan
+// and let Sage narrate what it saw. Same JSON reply shape as /api/chat.
+app.post("/api/scan", async (req, res) => {
+  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  try {
+    const frames = await grabFrames(4, 1000); // ~4s, matches the slow firmware sweep
+    const ctx = latestData ? buildChatContext(latestData) : "No live readings yet — running dark.";
+    const lead = frames.length
+      ? "You just panned your view slowly across the passage. These stills run left-to-right across that sweep — describe what you see out there and what you make of it."
+      : "You tried to pan and look around but your eyes are dark right now — say so briefly.";
+    const sage = await askSage([
+      { role: "system", content: CHAT_SYSTEM },
+      ...langMsg(currentLanguage),
+      { role: "system", content: ctx },
+      { role: "user", content: frames.length ? [{ type: "text", text: lead }, ...frames] : lead },
+    ], { maxTokens: 400 });
+    res.json({ reply: sage });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -369,6 +397,18 @@ const loadPrompt = (name) => fs.readFileSync(path.join(__dirname, "prompts", nam
 const AI_SYSTEM = loadPrompt("analysis.md");
 const CHAT_SYSTEM = loadPrompt("chat.md");
 
+// Sage now answers in JSON: { text, status, action }. text is the only thing
+// voiced/shown; status tints the UI; action:"sweep" lets Sage ask to look around.
+// parseSage lives in ./sage so it's testable without booting the server.
+async function askSage(messages, { maxTokens = 400 } = {}) {
+  const resp = await openai.chat.completions.create({
+    model: process.env.CEREBRAS_MODEL || "gemma-4-31b",
+    messages,
+    max_tokens: maxTokens,
+  });
+  return parseSage(resp.choices[0]?.message?.content);
+}
+
 // ponytail: status thresholds live here (server), single source of truth. The
 // model only verbalizes the tag — it must NOT re-judge from the raw number.
 function band(v, warn, danger) {
@@ -466,23 +506,19 @@ async function ackMission(text) {
     ? "Recibido. Misión confirmada — entrando."
     : "Copy that. Mission's locked in — heading in.";
   if (!process.env.CEREBRAS_API_KEY) {
-    io.emit("mission-ack", { text: fallback, timestamp: Date.now() });
+    io.emit("mission-ack", { text: fallback, status: null, timestamp: Date.now() });
     return;
   }
   try {
-    const resp = await openai.chat.completions.create({
-      model: process.env.CEREBRAS_MODEL || "gpt-oss-120b",
-      messages: [
-        { role: "system", content: CHAT_SYSTEM },
-        ...langMsg(currentLanguage),
-        { role: "user", content: `The operator is briefing you on the mission before you head in: "${text}". Acknowledge it back in character in one or two sentences — confirm you've got it and you're ready. Don't ask questions, just lock it in.` },
-      ],
-      max_tokens: 150,
-    });
-    io.emit("mission-ack", { text: resp.choices[0]?.message?.content || fallback, timestamp: Date.now() });
+    const sage = await askSage([
+      { role: "system", content: CHAT_SYSTEM },
+      ...langMsg(currentLanguage),
+      { role: "user", content: `The operator is briefing you on the mission before you head in: "${text}". Acknowledge it back in character in one or two sentences — confirm you've got it and you're ready. Don't ask questions, just lock it in.` },
+    ], { maxTokens: 150 });
+    io.emit("mission-ack", { text: sage.text || fallback, status: sage.status, timestamp: Date.now() });
   } catch (err) {
     console.error("Mission ack error:", err.message);
-    io.emit("mission-ack", { text: fallback, timestamp: Date.now() });
+    io.emit("mission-ack", { text: fallback, status: null, timestamp: Date.now() });
   }
 }
 
@@ -519,17 +555,14 @@ Roll: ${data.roll}°  Pitch: ${data.pitch}°  Yaw: ${data.yaw}°${trendLine(data
 async function runAiAnalysis() {
   if (!process.env.CEREBRAS_API_KEY || !latestData) return;
   try {
-    const resp = await openai.chat.completions.create({
-      model: process.env.CEREBRAS_MODEL || "gpt-oss-120b",
-      messages: [
-        { role: "system", content: AI_SYSTEM },
-        ...langMsg(currentLanguage),
-        { role: "user", content: buildAiPrompt(latestData) },
-      ],
-      max_tokens: 400,
-    });
-    const analysis = resp.choices[0]?.message?.content || "No analysis returned.";
-    io.emit("ai-analysis", { analysis, timestamp: Date.now() });
+    const eyes = await eyeParts();
+    const promptText = buildAiPrompt(latestData) + (eyes.length ? "\n(Attached is your live forward-camera view — read it for what's ahead.)" : "");
+    const sage = await askSage([
+      { role: "system", content: AI_SYSTEM },
+      ...langMsg(currentLanguage),
+      { role: "user", content: eyes.length ? [{ type: "text", text: promptText }, ...eyes] : promptText },
+    ], { maxTokens: 400 });
+    io.emit("ai-analysis", { analysis: sage.text || "No analysis returned.", status: sage.status, timestamp: Date.now() });
   } catch (err) {
     console.error("AI analysis error:", err.message);
   }

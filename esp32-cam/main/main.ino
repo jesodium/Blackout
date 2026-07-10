@@ -82,16 +82,32 @@ void setup() {
   if (psramFound()) { c.frame_size = FRAMESIZE_SVGA; c.jpeg_quality = 10; c.fb_count = 2; }
   else              { c.frame_size = FRAMESIZE_QVGA; c.jpeg_quality = 15; c.fb_count = 1; }
 
-  if (esp_camera_init(&c) != ESP_OK) {
-    Serial.println("camera init failed — check ribbon cable seating / power");
-    return;
-  }
+  // Don't bail on camera failure — bring WiFi up first so the board is always
+  // reachable and can report *why* it's broken. A bare `return` here made a
+  // loose ribbon indistinguishable from a dead board (silent on every channel).
+  bool camOk = esp_camera_init(&c) == ESP_OK;
+  if (!camOk) Serial.println("camera init failed — check ribbon cable seating / power");
+
+  // DIAGNOSTIC: scan first so we can see whether the target SSID is even on air
+  // and compare its name byte-for-byte with SECRET_SSID (apostrophe gotchas).
+  Serial.printf("looking for SSID=[%s]\n", SECRET_SSID);
+  int nfound = WiFi.scanNetworks();
+  for (int i = 0; i < nfound; i++)
+    Serial.printf("  seen: [%s] rssi=%d ch=%d\n",
+                  WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i));
 
   WiFi.begin(SECRET_SSID, SECRET_PASS);
-  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
+    delay(500); Serial.printf(" st=%d", WiFi.status()); // 1=NO_SSID 4=FAIL 6=DISCONNECT
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.printf("\nWiFi FAILED, status=%d — 1=SSID-not-found 4=bad-password\n", WiFi.status());
+    return;
+  }
   MDNS.begin(MDNS_NAME);
-  Serial.printf("\nstream: http://%s/stream  (or http://" MDNS_NAME ".local/stream)\n",
-                WiFi.localIP().toString().c_str());
+  Serial.printf("\nnet up: http://%s  cam=%s\n",
+                WiFi.localIP().toString().c_str(), camOk ? "OK" : "FAIL");
+  if (camOk) Serial.println("stream: /stream");
   startServer();
 }
 
