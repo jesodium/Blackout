@@ -980,7 +980,11 @@ function App() {
     };
     // Auto analysis + instant reactions only fire when a briefed session is open —
     // otherwise the dashboard talks to itself on boot with no chat active.
-    socket.on("ai-analysis", d => { if (d?.analysis && activeRef.current?.mission) sayAgent(d.analysis, d.timestamp, t("log.aiReceived"), "ai", d.status); });
+    socket.on("ai-analysis", d => {
+      if (!d || !activeRef.current?.mission) return;
+      if (d.analysis) sayAgent(d.analysis, d.timestamp, t("log.aiReceived"), "ai", d.status);
+      else if (d.error) sayAgent(d.error, d.timestamp, t("log.aiReceived"), "warn", null);
+    });
     socket.on("agent-blurt", d => { if (d?.text && activeRef.current?.mission) sayAgent(d.text, d.timestamp, t("log.blurt", { text: d.text }), "warn"); });
     socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, t("log.missionAck"), "ai", d.status); });
     addLog(t("log.booted"), "system");

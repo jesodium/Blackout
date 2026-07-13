@@ -566,11 +566,15 @@ async function runAiAnalysis() {
   }
   try {
     const eyes = await eyeParts();
-    const promptText = buildAiPrompt(latestData) + (eyes.length ? "\n(Attached is your live forward-camera view — read it for what's ahead.)" : "");
+    if (!eyes.length) {
+      io.emit("ai-analysis", { analysis: "I don't detect any camera.", status: null, timestamp: Date.now() });
+      return;
+    }
+    const promptText = buildAiPrompt(latestData) + "\n(Attached is your live forward-camera view — read it for what's ahead.)";
     const sage = await askSage([
       { role: "system", content: AI_SYSTEM },
       ...langMsg(currentLanguage),
-      { role: "user", content: eyes.length ? [{ type: "text", text: promptText }, ...eyes] : promptText },
+      { role: "user", content: [{ type: "text", text: promptText }, ...eyes] },
     ], { maxTokens: 400 });
     io.emit("ai-analysis", { analysis: sage.text || "No analysis returned.", status: sage.status, timestamp: Date.now() });
   } catch (err) {
