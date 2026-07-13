@@ -7,6 +7,8 @@
 #include <TextAnimation.h>
 #include <ArduinoBLE.h>
 #include <Servo.h>
+#include <Wire.h>
+#include <Adafruit_BME280.h>
 
 #define MQ9_AO A3
 #define MQ9_DO 13
@@ -31,6 +33,8 @@ BLEStringCharacteristic cmdChar("19b10002-e8f2-537e-4f6c-d104768a1214", BLEWrite
 
 Servo servo;
 ArduinoLEDMatrix matrix;
+Adafruit_BME280 bme; // I2C: SDA/SCL, addr 0x76 (0x77 if BME280's SDO is pulled high)
+bool bmeOk = false;
 // Max frames ~= text length * font width (5px/char for Font_5x7) — 80 covers
 // "  BLACKOUT  " with headroom.
 TEXT_ANIMATION_DEFINE(matrixAnim, 80)
@@ -46,6 +50,10 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   servo.attach(SERVO_PIN);
+
+  Wire.begin();
+  bmeOk = bme.begin(0x76) || bme.begin(0x77);
+  if (!bmeOk) Serial.println("BME280 not found (checked 0x76/0x77) — temp/humid will read 0");
 
   matrix.begin();
   matrix.beginDraw();
@@ -169,10 +177,16 @@ void loop() {
   }
   float dist = (distF < 0) ? 0 : distF;
 
-  // IMPORTANT NOTE: only DHT11 (unwired) + MQ-9 + HC-SR04 exist — no
-  // MQ-2/MQ-135. airq mirrors the MQ-9 (co) reading until real sensors land;
-  // temp/humid stay zero-filled until DHT11 is wired.
-  String line = "S:0,0,";
+  float temp = bmeOk ? bme.readTemperature() : 0;
+  float humid = bmeOk ? bme.readHumidity() : 0;
+
+  // IMPORTANT NOTE: only BME280 + MQ-9 + HC-SR04 exist — no MQ-2/MQ-135.
+  // airq mirrors the MQ-9 (co) reading until a real air-quality sensor lands.
+  String line = "S:";
+  line += temp;
+  line += ",";
+  line += humid;
+  line += ",";
   line += dist;
   line += ",0,";
   line += co;

@@ -6,7 +6,8 @@ Node.js PC server/dashboard.
 ## Layout
 
 - `arduino-uno-r4/` — Uno R4 WiFi (`main/`): reads sensors, broadcasts CSV
-  over BLE notify. Only MQ-9 (CO/gas) wired so far — analog A3, digital D13.
+  over BLE notify. MQ-9 (CO/gas, analog A3 + digital D13), HC-SR04 (ultrasonic,
+  D11/D12), BME280 (temp/humidity, I2C SDA/SCL, addr 0x76/0x77) wired so far.
   More sensors land here as pins are assigned.
 - `esp32-cam/` — ESP32-CAM (AI-Thinker) (`main/`): standalone MJPEG streamer
   on its own WiFi + power. Never touches the Uno/BLE path; the dashboard
