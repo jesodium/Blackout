@@ -183,6 +183,7 @@ function processLine(raw) {
     yaw: parseFloat(parts[7]),
     co: parts.length > 8 ? parseFloat(parts[8]) : 0,
     co_alert: parts.length > 9 ? parts[9].trim() === "1" : false,
+    pressure: parts.length > 10 ? parseFloat(parts[10]) : 0,
     timestamp: Date.now(),
   };
   latestData = data;
@@ -534,6 +535,7 @@ function buildChatContext(data) {
   return `${missionLine()}Current readings from the rover right now (each line is already judged — trust the [STATUS] tag, do NOT re-judge from the number, and do NOT recite the raw number):
 Temperature: ${data.temp}°C [${s.temp}]
 Humidity: ${data.humid}%
+Pressure: ${data.pressure} hPa
 Distance to the rock face ahead: ${data.dist} cm [${s.dist}]
 Smoke/gas level: ${data.smoke} [${s.smoke}]
 Air quality: ${data.airq} [${s.airq}]
@@ -547,6 +549,7 @@ function buildAiPrompt(data) {
 
 Temperature: ${data.temp}°C [${s.temp}]
 Humidity: ${data.humid}%
+Pressure: ${data.pressure} hPa
 Distance ahead: ${data.dist} cm [${s.dist}]
 Smoke/gas level: ${data.smoke} [${s.smoke}]
 Air quality (CO2/etc): ${data.airq} [${s.airq}]
@@ -682,7 +685,7 @@ io.on("connection", (socket) => {
   socket.on("mock-data", () => {
     const r = (lo, hi, d = 0) => +(lo + Math.random() * (hi - lo)).toFixed(d);
     latestData = {
-      temp: r(20, 50, 1), humid: r(20, 90, 1), dist: r(10, 200),
+      temp: r(20, 50, 1), humid: r(20, 90, 1), pressure: r(980, 1030, 1), dist: r(10, 200),
       smoke: r(0, 800), airq: r(50, 900), co: r(0, 600),
       co_alert: Math.random() > 0.7,
       roll: r(-8, 8, 1), pitch: r(-8, 8, 1), yaw: r(0, 30, 1), // keep rover ~level

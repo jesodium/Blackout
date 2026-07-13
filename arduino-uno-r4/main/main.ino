@@ -1,6 +1,7 @@
 // Uno R4 WiFi — sensor hub. Reads sensors, broadcasts CSV over BLE notify.
 // Same "S:" line format the server already parses (temp,humid,dist,smoke,
-// airq,roll,pitch,yaw,co,co_alert) so server.js needs no protocol change.
+// airq,roll,pitch,yaw,co,co_alert,pressure) — pressure is a trailing optional
+// field like co/co_alert, so older lines without it still parse fine.
 // Order matters: ArduinoGraphics before Arduino_LED_Matrix.
 #include <ArduinoGraphics.h>
 #include <Arduino_LED_Matrix.h>
@@ -179,6 +180,7 @@ void loop() {
 
   float temp = bmeOk ? bme.readTemperature() : 0;
   float humid = bmeOk ? bme.readHumidity() : 0;
+  float pressure = bmeOk ? bme.readPressure() / 100.0F : 0; // Pa -> hPa
 
   // IMPORTANT NOTE: only BME280 + MQ-9 + HC-SR04 exist — no MQ-2/MQ-135.
   // airq mirrors the MQ-9 (co) reading until a real air-quality sensor lands.
@@ -194,6 +196,8 @@ void loop() {
   line += co;
   line += ",";
   line += coAlert;
+  line += ",";
+  line += pressure;
 
   Serial.println(line);
   sensorChar.writeValue(line);

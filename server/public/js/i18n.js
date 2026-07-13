@@ -245,6 +245,7 @@ const DICT = {
     /* ticker */
     "tick.temp": "Temp",
     "tick.humid": "Humid",
+    "tick.pressure": "Pres",
     "tick.dist": "Dist",
     "tick.smoke": "Smoke",
     "tick.air": "Air",
@@ -465,6 +466,7 @@ const DICT = {
 
     "tick.temp": "Temp",
     "tick.humid": "Húmd",
+    "tick.pressure": "Pres",
     "tick.dist": "Dist",
     "tick.smoke": "Humo",
     "tick.air": "Aire",

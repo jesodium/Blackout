@@ -815,6 +815,7 @@ function Ticker({ packet, connected }) {
   const items = [
     [t("tick.temp"), fmt(packet?.temp, 1) + "°C"],
     [t("tick.humid"), fmt(packet?.humid, 0) + "%"],
+    [t("tick.pressure"), fmt(packet?.pressure, 0) + "hPa"],
     [t("tick.dist"), fmt(packet?.dist, 0) + "cm"],
     [t("tick.smoke"), fmt(packet?.smoke, 0) + "ppm"],
     [t("tick.air"), fmt(packet?.airq, 0) + "ppm"],
