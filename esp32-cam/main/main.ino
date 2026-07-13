@@ -9,7 +9,19 @@
 #include "esp_http_server.h"
 #include "arduino_secrets.h"  // SECRET_SSID / SECRET_PASS — gitignored, copy from .example
 
-#define MDNS_NAME "blackout-cam"   // -> http://blackout-cam.local/stream
+#define MDNS_NAME "blackout-cam"   // -> http://blackout-cam.local/stream (backup addr)
+
+// Static IP on our OWN iPhone hotspot so the cam is ALWAYS at the same address at
+// competition — no mDNS, no DHCP guessing, nothing to reconfigure venue-to-venue.
+// iPhone hotspot is a fixed 172.20.10.0/28: gateway .1, usable .2-.14. We take .10
+// (high in range) so the phone's DHCP — which hands out from .2 — won't collide.
+// IMPORTANT NOTE: these are iPhone-hotspot values. Android hotspot uses a different
+// subnet (usually 192.168.x) — change all four if you switch phones. Comment out the
+// WiFi.config() call to fall back to plain DHCP + mDNS on an arbitrary network.
+#define USE_STATIC_IP 1
+IPAddress CAM_IP (172, 20, 10, 10);
+IPAddress CAM_GW (172, 20, 10, 1);
+IPAddress CAM_MASK(255, 255, 255, 240);   // /28
 
 // AI-Thinker ESP32-CAM pin map (don't change unless you have a different board)
 #define PWDN_GPIO_NUM  32
@@ -34,6 +46,19 @@ static const char* STREAM_CT = "multipart/x-mixed-replace;boundary=" PART_BOUNDA
 static const char* STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
 static const char* STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
 
+// Single-shot JPEG. Returns immediately, so it can share a server task with other
+// quick requests. This is what SAGE grabs (see server/vision.js) — never the stream,
+// which is an infinite loop that would starve everything else on its task.
+static esp_err_t capture_handler(httpd_req_t* req) {
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) { httpd_resp_send_500(req); return ESP_FAIL; }
+  httpd_resp_set_type(req, "image/jpeg");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  esp_err_t r = httpd_resp_send(req, (const char*)fb->buf, fb->len);
+  esp_camera_fb_return(fb);
+  return r;
+}
+
 static esp_err_t stream_handler(httpd_req_t* req) {
   httpd_resp_set_type(req, STREAM_CT);
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -54,11 +79,22 @@ static esp_err_t stream_handler(httpd_req_t* req) {
 }
 
 void startServer() {
-  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-  httpd_handle_t server = NULL;
+  // Two instances on purpose: each httpd runs ONE handler task, and stream_handler
+  // never returns. Sharing a task, the browser's /stream would block SAGE's /capture
+  // forever. So /capture lives on :80 and /stream on :81 (own ctrl_port so both start).
+  httpd_handle_t main_srv = NULL, stream_srv = NULL;
+
+  httpd_config_t mc = HTTPD_DEFAULT_CONFIG();
+  httpd_uri_t capture_uri = { "/capture", HTTP_GET, capture_handler, NULL };
+  if (httpd_start(&main_srv, &mc) == ESP_OK)
+    httpd_register_uri_handler(main_srv, &capture_uri);
+
+  httpd_config_t sc = HTTPD_DEFAULT_CONFIG();
+  sc.server_port = 81;
+  sc.ctrl_port   = 32769;  // must differ from mc's 32768 or the 2nd start fails
   httpd_uri_t stream_uri = { "/stream", HTTP_GET, stream_handler, NULL };
-  if (httpd_start(&server, &config) == ESP_OK)
-    httpd_register_uri_handler(server, &stream_uri);
+  if (httpd_start(&stream_srv, &sc) == ESP_OK)
+    httpd_register_uri_handler(stream_srv, &stream_uri);
 }
 
 void setup() {
@@ -96,6 +132,12 @@ void setup() {
     Serial.printf("  seen: [%s] rssi=%d ch=%d\n",
                   WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i));
 
+#if USE_STATIC_IP
+  // DNS = gateway so the cam can still resolve names if ever needed. Config BEFORE
+  // begin(). If it fails (wrong subnet for this network) begin() still tries DHCP.
+  if (!WiFi.config(CAM_IP, CAM_GW, CAM_MASK, CAM_GW))
+    Serial.println("WiFi.config failed — falling back to DHCP");
+#endif
   WiFi.begin(SECRET_SSID, SECRET_PASS);
   for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
     delay(500); Serial.printf(" st=%d", WiFi.status()); // 1=NO_SSID 4=FAIL 6=DISCONNECT
@@ -107,7 +149,7 @@ void setup() {
   MDNS.begin(MDNS_NAME);
   Serial.printf("\nnet up: http://%s  cam=%s\n",
                 WiFi.localIP().toString().c_str(), camOk ? "OK" : "FAIL");
-  if (camOk) Serial.println("stream: /stream");
+  if (camOk) Serial.println("stream: :81/stream   capture: /capture");
   startServer();
 }
 

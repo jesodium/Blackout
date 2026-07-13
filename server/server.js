@@ -145,7 +145,9 @@ app.post("/api/chat", async (req, res) => {
 app.post("/api/scan", async (req, res) => {
   if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
   try {
-    const frames = await grabFrames(4, 1000); // ~4s, matches the slow firmware sweep
+    // 2 frames (sweep start + end): 4 SVGA stills base64'd blow past Cerebras' request
+    // size cap (413). 2 spans the pan and stays under. Bump if the model gets bigger.
+    const frames = await grabFrames(2, 3000); // ~3s pan, matches the slow firmware sweep
     const ctx = latestData ? buildChatContext(latestData) : "No live readings yet — running dark.";
     const lead = frames.length
       ? "You just panned your view slowly across the passage. These stills run left-to-right across that sweep — describe what you see out there and what you make of it."
@@ -553,7 +555,12 @@ Roll: ${data.roll}°  Pitch: ${data.pitch}°  Yaw: ${data.yaw}°${trendLine(data
 }
 
 async function runAiAnalysis() {
-  if (!process.env.CEREBRAS_API_KEY || !latestData) return;
+  // Always emit a result: the dashboard locks into "analyzing" on request and only
+  // an ai-analysis event releases it, so a silent return here = infinite spinner.
+  if (!process.env.CEREBRAS_API_KEY || !latestData) {
+    io.emit("ai-analysis", { error: latestData ? "AI key not set" : "No telemetry yet.", timestamp: Date.now() });
+    return;
+  }
   try {
     const eyes = await eyeParts();
     const promptText = buildAiPrompt(latestData) + (eyes.length ? "\n(Attached is your live forward-camera view — read it for what's ahead.)" : "");
@@ -565,6 +572,7 @@ async function runAiAnalysis() {
     io.emit("ai-analysis", { analysis: sage.text || "No analysis returned.", status: sage.status, timestamp: Date.now() });
   } catch (err) {
     console.error("AI analysis error:", err.message);
+    io.emit("ai-analysis", { error: err.message, timestamp: Date.now() });
   }
 }
 
