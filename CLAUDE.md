@@ -6,9 +6,10 @@ Node.js PC server/dashboard.
 ## Layout
 
 - `arduino-uno-r4/` — Uno R4 WiFi (`main/`): reads sensors, broadcasts CSV
-  over BLE notify. MQ-9 (CO/gas, analog A3 + digital D13), HC-SR04 (ultrasonic,
-  D11/D12), BME280 (temp/humidity, I2C SDA/SCL, addr 0x76/0x77) wired so far.
-  More sensors land here as pins are assigned.
+  over BLE notify. DHT11 (temp/humidity, data D2), HC-SR04 (ultrasonic,
+  D11/D12) wired so far. CSV still carries the full field set
+  (temp,humid,dist,smoke,airq,roll,pitch,yaw,co,co_alert,pressure); unwired
+  fields send 0. More sensors land here as pins are assigned.
 - `esp32-cam/` — ESP32-CAM (AI-Thinker) (`main/`): standalone MJPEG streamer
   on its own WiFi + power. Never touches the Uno/BLE path; the dashboard
   `<img>` pulls `http://blackout-cam.local/stream` directly.

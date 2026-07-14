@@ -18,7 +18,7 @@
 // IMPORTANT NOTE: these are iPhone-hotspot values. Android hotspot uses a different
 // subnet (usually 192.168.x) — change all four if you switch phones. Comment out the
 // WiFi.config() call to fall back to plain DHCP + mDNS on an arbitrary network.
-#define USE_STATIC_IP 1
+#define USE_STATIC_IP 0   // school net (SCHOOL-WIFI): use DHCP, static .10 only valid on iPhone hotspot
 IPAddress CAM_IP (172, 20, 10, 10);
 IPAddress CAM_GW (172, 20, 10, 1);
 IPAddress CAM_MASK(255, 255, 255, 240);   // /28
@@ -123,6 +123,15 @@ void setup() {
   // loose ribbon indistinguishable from a dead board (silent on every channel).
   bool camOk = esp_camera_init(&c) == ESP_OK;
   if (!camOk) Serial.println("camera init failed — check ribbon cable seating / power");
+
+  // Defective module mounted upside-down: rotate 180 in the sensor itself so BOTH
+  // the /stream (browser) and /capture (Sage vision) come out upright — no CSS/agent
+  // hacks. IMPORTANT NOTE: hardware defect flip; drop these two if the module is swapped.
+  if (camOk) {
+    sensor_t* s = esp_camera_sensor_get();
+    s->set_vflip(s, 1);
+    s->set_hmirror(s, 1);
+  }
 
   // DIAGNOSTIC: scan first so we can see whether the target SSID is even on air
   // and compare its name byte-for-byte with SECRET_SSID (apostrophe gotchas).

@@ -12,7 +12,12 @@ const html = htm.bind(React.createElement);
 // mDNS name the ESP32 registers (MDNS.begin("blackout-cam")). Survives DHCP
 // lease changes, works on any real WiFi. IMPORTANT NOTE: iPhone hotspot does
 // NOT pass mDNS — on a hotspot, swap this for the cam's raw IP off serial.
-const CAM_URL = "http://blackout-cam.local/stream";
+// Cam host is the mDNS name by default; onsite you can override it with the cam's raw
+// IP (printed on serial: "net up: http://<IP>") via the field in the offline panel.
+// Persisted in localStorage so the choice sticks across reloads. Stream is always :81.
+const CAM_HOST_DEFAULT = "blackout-cam.local";
+const camHost = () => localStorage.getItem("camHost") || CAM_HOST_DEFAULT;
+const camUrl = (host) => `http://${host}:81/stream`;
 
 /* ---------------- sensor model ---------------- */
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
@@ -278,6 +283,7 @@ function Camera() {
   const [state, setState] = useState("loading"); // loading | live | offline
   const [nonce, setNonce] = useState(0);          // bump to force <img> reload
   const [yielded, setYielded] = useState(false);  // scan owns the cam — drop our feed
+  const [host, setHost] = useState(camHost());     // mDNS name or raw IP, onsite-editable
   // The ESP32-CAM's /stream handler is a single infinite worker, so only one client
   // at a time. During a look-around scan the server needs to grab frames, so we tear
   // down our <img> (frees the cam's worker) and reconnect fresh when the scan is done.
@@ -288,7 +294,13 @@ function Camera() {
     window.addEventListener("cam:resume", r);
     return () => { window.removeEventListener("cam:yield", y); window.removeEventListener("cam:resume", r); };
   }, []);
-  const src = CAM_URL + (CAM_URL.includes("?") ? "&" : "?") + "n=" + nonce;
+  const base = camUrl(host);
+  const src = base + "?n=" + nonce;
+  const applyHost = (v) => {
+    const h = v.trim() || CAM_HOST_DEFAULT;
+    localStorage.setItem("camHost", h);
+    setHost(h); setState("loading"); setNonce(n => n + 1);
+  };
   return html`
     <section class="zone stage reveal" style=${{ animationDelay: "60ms" }} aria-labelledby="cam-h">
       <${Head} folio="02" title=${t("zone.camera")} tag=${t(yielded ? "cam.tag.scanning" : "cam.tag." + state)} />
@@ -302,7 +314,12 @@ function Camera() {
                 style=${{ width: "100%", height: "100%", objectFit: "fill" }}
                 onLoad=${() => setState("live")} onError=${() => setState("offline")} />`
             : html`<div class="viewport-fallback">${t("cam.offline")}<br/>
-                <small>${CAM_URL}</small><br/>
+                <small>${base}</small><br/>
+                <input type="text" defaultValue=${host} aria-label=${t("zone.camera")}
+                  placeholder="blackout-cam.local"
+                  style=${{ marginTop: "12px", textAlign: "center", width: "80%" }}
+                  onKeyDown=${(e) => { if (e.key === "Enter") applyHost(e.target.value); }}
+                  onBlur=${(e) => applyHost(e.target.value)} /><br/>
                 <button type="button" class="btn btn--ghost" style=${{ marginTop: "12px" }}
                   onClick=${() => { setState("loading"); setNonce(n => n + 1); }}>${t("cam.retry")}</button>
               </div>`}

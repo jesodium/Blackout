@@ -8,22 +8,33 @@
 #include <TextAnimation.h>
 #include <ArduinoBLE.h>
 #include <Servo.h>
-#include <Wire.h>
-#include <Adafruit_BME280.h>
+#include <DHT11.h>
 
-#define MQ9_AO A3
-#define MQ9_DO 13
+#define DHT_PIN 2   // DHT11 data pin. D2 = clean digital; NOT D13 (onboard LED
+                    // shares that line and glitches the bit-banged timing).
 #define TRIG_PIN 11
 #define ECHO_PIN 12
 #define SERVO_PIN 9
+// L298N direction pins. D4-D7 = contiguous free block, no timer/peripheral
+// conflict (D9 servo, D11/D12 sonar, D2 DHT, D13 onboard LED all clear).
+#define IN1 4  // motor A
+#define IN2 5
+#define IN3 6  // motor B
+#define IN4 7
+// Enable pins = PWM speed control. D3/D10 are the free PWM-capable pins here.
+// IMPORTANT NOTE: pull the ENA/ENB jumpers off the L298N first — left on, they
+// tie enable to 5V and these pins do nothing (motors stay full speed).
+#define ENA 3  // motor A speed
+#define ENB 10 // motor B speed
+// Duty cycle 0-255. Below ~90 most geared DC motors won't break stiction — they
+// just buzz. Tune per chassis/battery; a loaded robot needs more than a bench test.
+#define SPEED_SLOW 120
 #define SONAR_ITER 3            // pings per reading; median drops spikes
 #define SONAR_TIMEOUT_US 25000UL // ~430cm round-trip + margin; no echo = timeout
 #define DIST_ALPHA 0.6 // EMA smoothing on distance — ultrasonic is already clean
                         // (median-of-3 kills spikes), so light smoothing is enough.
 
-// Burst-average kills per-sample ADC noise, EMA across cycles smooths the stream.
-#define GAS_SAMPLES 8
-#define GAS_ALPHA 0.15
+#define DHT_INTERVAL 2000 // DHT11 tops out ~1Hz; read every 2s, cache between.
 #define SEND_INTERVAL 100
 
 BLEService sensorService("19b10000-e8f2-537e-4f6c-d104768a1214");
@@ -34,27 +45,27 @@ BLEStringCharacteristic cmdChar("19b10002-e8f2-537e-4f6c-d104768a1214", BLEWrite
 
 Servo servo;
 ArduinoLEDMatrix matrix;
-Adafruit_BME280 bme; // I2C: SDA/SCL, addr 0x76 (0x77 if BME280's SDO is pulled high)
-bool bmeOk = false;
+DHT11 dht(DHT_PIN);
+int dhtTemp = 0, dhtHumid = 0; // last good DHT11 read, cached between polls
 // Max frames ~= text length * font width (5px/char for Font_5x7) — 80 covers
 // "  BLACKOUT  " with headroom.
 TEXT_ANIMATION_DEFINE(matrixAnim, 80)
 volatile bool matrixReplay = false;
 
 unsigned long lastSend = 0;
-float coF = -1;   // EMA state, -1 = uninitialised
+unsigned long lastDht = 0;
 float distF = -1; // EMA state, -1 = uninitialised
 
 void setup() {
   Serial.begin(9600);
-  pinMode(MQ9_DO, INPUT);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   servo.attach(SERVO_PIN);
 
-  Wire.begin();
-  bmeOk = bme.begin(0x76) || bme.begin(0x77);
-  if (!bmeOk) Serial.println("BME280 not found (checked 0x76/0x77) — temp/humid will read 0");
+  for (int p = IN1; p <= IN4; p++) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
+  pinMode(ENA, OUTPUT); pinMode(ENB, OUTPUT);
+  analogWrite(ENA, 0); analogWrite(ENB, 0); // stopped until told otherwise
+  forward(SPEED_SLOW);
 
   matrix.begin();
   matrix.beginDraw();
@@ -87,6 +98,15 @@ void setup() {
 
 void matrixDone() { matrixReplay = true; } // IRQ context — keep it fast
 
+// Both motors forward at `speed` (0-255 PWM). If a motor spins backward, swap
+// that motor's two output wires at the L298N screw terminals — don't flip the
+// pin logic here or forward/back stop meaning the same thing.
+void forward(uint8_t speed) {
+  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+  analogWrite(ENA, speed); analogWrite(ENB, speed);
+}
+
 // One full 0→180→0 sweep, ~1.1s. IMPORTANT NOTE: blocking — the loop (sensor
 // sends + BLE poll) pauses for the duration. Fine under the BLE supervision
 // timeout at once-per-30s cadence; go non-blocking (millis stepper) if it bites.
@@ -102,12 +122,6 @@ void sweepServo() {
 void slowSweep() {
   for (int a = 0; a <= 180; a += 2) { servo.write(a); delay(45); }
   for (int a = 180; a >= 0; a -= 5) { servo.write(a); delay(10); }
-}
-
-int readAvg(int pin) {
-  long sum = 0;
-  for (uint8_t i = 0; i < GAS_SAMPLES; i++) sum += analogRead(pin);
-  return sum / GAS_SAMPLES;
 }
 
 // One HC-SR04 ping in cm via plain pulseIn() — portable across cores, unlike
@@ -165,11 +179,6 @@ void loop() {
   if (now - lastSend < SEND_INTERVAL) return;
   lastSend = now;
 
-  int coRaw   = readAvg(MQ9_AO);
-  int coAlert = digitalRead(MQ9_DO);
-  coF = (coF < 0) ? coRaw : coF + GAS_ALPHA * (coRaw - coF);
-  int co = (int)(coF + 0.5);
-
   float raw = medianPingCm();
   if (raw >= 0) {
     distF = (distF < 0) ? raw : distF + DIST_ALPHA * (raw - distF);
@@ -178,26 +187,22 @@ void loop() {
   }
   float dist = (distF < 0) ? 0 : distF;
 
-  float temp = bmeOk ? bme.readTemperature() : 0;
-  float humid = bmeOk ? bme.readHumidity() : 0;
-  float pressure = bmeOk ? bme.readPressure() / 100.0F : 0; // Pa -> hPa
+  // DHT11 caps at ~1Hz — poll on its own slow cadence, hold last good value.
+  if (now - lastDht >= DHT_INTERVAL) {
+    lastDht = now;
+    int t, h;
+    if (dht.readTemperatureHumidity(t, h) == 0) { dhtTemp = t; dhtHumid = h; }
+  }
 
-  // IMPORTANT NOTE: only BME280 + MQ-9 + HC-SR04 exist — no MQ-2/MQ-135.
-  // airq mirrors the MQ-9 (co) reading until a real air-quality sensor lands.
+  // IMPORTANT NOTE: only DHT11 + HC-SR04 exist now — no gas/pressure sensor.
+  // smoke/airq/co/co_alert/pressure fields stay 0 until a real one lands.
   String line = "S:";
-  line += temp;
+  line += dhtTemp;
   line += ",";
-  line += humid;
+  line += dhtHumid;
   line += ",";
   line += dist;
-  line += ",0,";
-  line += co;
-  line += ",0,0,0,";
-  line += co;
-  line += ",";
-  line += coAlert;
-  line += ",";
-  line += pressure;
+  line += ",0,0,0,0,0,0,0,0";
 
   Serial.println(line);
   sensorChar.writeValue(line);
