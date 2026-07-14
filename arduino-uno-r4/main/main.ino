@@ -16,6 +16,16 @@
 #define TRIG_PIN 11
 #define ECHO_PIN 12
 #define SERVO_PIN 9
+// L298N dual motor driver. Motor A = left, Motor B = right (swap OUT pairs if
+// a wheel spins the wrong way). ENA/ENB on PWM pins (D3/D6) for speed control.
+// DRIVE_SPEED 0-255; below ~60 the L298N drop stalls the motors.
+#define ENA 3
+#define IN1 2
+#define IN2 4
+#define IN3 5
+#define IN4 7
+#define ENB 6
+#define DRIVE_SPEED 110
 #define SONAR_ITER 3            // pings per reading; median drops spikes
 #define SONAR_TIMEOUT_US 25000UL // ~430cm round-trip + margin; no echo = timeout
 #define DIST_ALPHA 0.6 // EMA smoothing on distance — ultrasonic is already clean
@@ -52,6 +62,11 @@ void setup() {
   pinMode(ECHO_PIN, INPUT);
   servo.attach(SERVO_PIN);
 
+  for (int p : {ENA, IN1, IN2, IN3, IN4, ENB}) pinMode(p, OUTPUT);
+  analogWrite(ENA, DRIVE_SPEED); // set both motor speeds (PWM)
+  analogWrite(ENB, DRIVE_SPEED);
+  stopMotors();
+
   Wire.begin();
   bmeOk = bme.begin(0x76) || bme.begin(0x77);
   if (!bmeOk) Serial.println("BME280 not found (checked 0x76/0x77) — temp/humid will read 0");
@@ -86,6 +101,16 @@ void setup() {
 }
 
 void matrixDone() { matrixReplay = true; } // IRQ context — keep it fast
+
+// L298N: each motor is one IN pair. HIGH/LOW = one direction, LOW/HIGH = other,
+// LOW/LOW = coast/stop. Motor A left, Motor B right.
+void motorA(bool fwd) { digitalWrite(IN1, fwd); digitalWrite(IN2, !fwd); }
+void motorB(bool fwd) { digitalWrite(IN3, fwd); digitalWrite(IN4, !fwd); }
+void stopMotors()  { digitalWrite(IN1,LOW); digitalWrite(IN2,LOW); digitalWrite(IN3,LOW); digitalWrite(IN4,LOW); }
+void forward()     { motorA(true);  motorB(true);  }
+void reverse()     { motorA(false); motorB(false); }
+void turnLeft()    { motorA(false); motorB(true);  } // spin in place
+void turnRight()   { motorA(true);  motorB(false); }
 
 // One full 0→180→0 sweep, ~1.1s. IMPORTANT NOTE: blocking — the loop (sensor
 // sends + BLE poll) pauses for the duration. Fine under the BLE supervision
@@ -147,9 +172,15 @@ float medianPingCm() {
 void loop() {
   BLE.poll();
 
-  if (cmdChar.written()) {            // server said "time to move the servo"
-    if (cmdChar.value() == "scan") slowSweep(); // Sage's look-around
-    else sweepServo();                          // quick manual check
+  if (cmdChar.written()) {            // server-issued command
+    String c = cmdChar.value();
+    if      (c == "scan")  slowSweep();     // Sage's look-around
+    else if (c == "fwd")   forward();
+    else if (c == "rev")   reverse();
+    else if (c == "left")  turnLeft();
+    else if (c == "right") turnRight();
+    else if (c == "stop")  stopMotors();
+    else sweepServo();                      // quick manual check
   }
 
   if (matrixReplay) { // loop the scroll forever

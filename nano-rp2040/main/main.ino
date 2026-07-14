@@ -5,16 +5,16 @@
 //
 // Two deltas vs the R4:
 //   1. No onboard LED matrix — the "BLACKOUT" scroll is gone (R4-only hardware).
-//   2. RP2040 is 3.3V, NOT 5V-tolerant. BME280 + L298N logic are fine at 3.3V,
+//   2. RP2040 is 3.3V, NOT 5V-tolerant. DHT11 + L298N logic are fine at 3.3V,
 //      but the two 5V sensors below MUST NOT be wired direct — see the NOTE at
 //      their pin defs. Leave them unwired until you have resistor dividers.
 //
 // Same "S:" line format the server parses (temp,humid,dist,smoke,airq,roll,pitch,
-// yaw,co,co_alert,pressure) — pressure is a trailing optional field.
+// yaw,co,co_alert,pressure) — pressure is a trailing optional field, sent as 0
+// here since the DHT11 (which replaced the BME280) has no pressure sensor.
 #include <ArduinoBLE.h>
 #include <Servo.h>
-#include <Wire.h>
-#include <Adafruit_BME280.h>
+#include <DHT11.h>
 
 // IMPORTANT NOTE: 5V sensor — HC-SR04 ECHO and MQ-9 AO swing to ~5V. On this 3.3V
 // board they need a divider (e.g. 1k/2k: 5V*2/3 ≈ 3.3V) before the pin, or they
@@ -25,6 +25,7 @@
 #define TRIG_PIN 11
 #define ECHO_PIN 12
 #define SERVO_PIN 9
+#define DHT_PIN 8               // DHT11 single-wire data (3.3V-safe, no divider)
 // L298N dual motor driver. Motor A = left, Motor B = right (swap OUT pairs if
 // a wheel spins the wrong way). ENA/ENB on PWM pins (D3/D6) for speed control.
 // L298N logic triggers fine at 3.3V. DRIVE_SPEED 0-255; below ~60 it stalls.
@@ -52,10 +53,11 @@ BLEStringCharacteristic sensorChar("19b10001-e8f2-537e-4f6c-d104768a1214", BLERe
 BLEStringCharacteristic cmdChar("19b10002-e8f2-537e-4f6c-d104768a1214", BLEWrite, 20);
 
 Servo servo;
-Adafruit_BME280 bme; // I2C: SDA/SCL, addr 0x76 (0x77 if BME280's SDO is pulled high)
-bool bmeOk = false;
+DHT11 dht(DHT_PIN); // temp/humid over single-wire; no pressure (unlike the old BME280)
 
 unsigned long lastSend = 0;
+int dhtTemp = 0, dhtHumid = 0; // last good DHT11 reading (1°C / 1% resolution)
+unsigned long lastDht = 0;
 float coF = -1;   // EMA state, -1 = uninitialised
 float distF = -1; // EMA state, -1 = uninitialised
 
@@ -71,9 +73,7 @@ void setup() {
   analogWrite(ENB, DRIVE_SPEED);
   stopMotors();
 
-  Wire.begin();
-  bmeOk = bme.begin(0x76) || bme.begin(0x77);
-  if (!bmeOk) Serial.println("BME280 not found (checked 0x76/0x77) — temp/humid will read 0");
+  dht.setDelay(0); // we throttle reads to 1Hz ourselves; skip the lib's blocking delay
 
   if (!BLE.begin()) {
     while (1) { Serial.println("BLE init failed"); delay(1000); }
@@ -184,11 +184,18 @@ void loop() {
   }
   float dist = (distF < 0) ? 0 : distF;
 
-  float temp = bmeOk ? bme.readTemperature() : 0;
-  float humid = bmeOk ? bme.readHumidity() : 0;
-  float pressure = bmeOk ? bme.readPressure() / 100.0F : 0; // Pa -> hPa
+  // DHT11 tops out at 1 read/sec; sample once a second and reuse the cached value
+  // on the faster send cadence. Keep the last good reading on a transient error.
+  if (now - lastDht >= 1000) {
+    lastDht = now;
+    int t, h;
+    if (dht.readTemperatureHumidity(t, h) == 0) { dhtTemp = t; dhtHumid = h; }
+  }
+  int temp = dhtTemp;
+  int humid = dhtHumid;
+  int pressure = 0; // DHT11 has no barometer; field kept 0 for CSV/parser compat
 
-  // IMPORTANT NOTE: only BME280 + MQ-9 + HC-SR04 exist — no MQ-2/MQ-135.
+  // IMPORTANT NOTE: only DHT11 + MQ-9 + HC-SR04 exist — no MQ-2/MQ-135.
   // airq mirrors the MQ-9 (co) reading until a real air-quality sensor lands.
   String line = "S:";
   line += temp;

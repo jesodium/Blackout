@@ -12,7 +12,9 @@ const html = htm.bind(React.createElement);
 // mDNS name the ESP32 registers (MDNS.begin("blackout-cam")). Survives DHCP
 // lease changes, works on any real WiFi. IMPORTANT NOTE: iPhone hotspot does
 // NOT pass mDNS — on a hotspot, swap this for the cam's raw IP off serial.
-const CAM_URL = "http://blackout-cam.local/stream";
+// Port :81 — firmware serves the MJPEG /stream on its own httpd task there;
+// :80 is /capture only (SAGE's stills). See esp32-cam startServer().
+const CAM_URL = "http://blackout-cam.local:81/stream";
 
 /* ---------------- sensor model ---------------- */
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
@@ -25,13 +27,18 @@ const SENSORS = [
   // Distance is a navigation cue, never a hazard: only caution when right up on a
   // wall (<10cm), clear otherwise — it's something to steer around, not a danger.
   { key: "dist",  unit: "cm",  d: 0, min: 0, max: 200,  invert: true, st: v => v < 10 ? ["st.tooClose", "warn"] : ["st.clear", "go"] },
-  { key: "smoke", unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 600 ? ["st.hazard", "abort"] : v > 300 ? ["st.warning", "warn"] : ["st.normal", "go"] },
-  { key: "airq",  unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 800 ? ["st.poor", "abort"] : v > 450 ? ["st.moderate", "warn"] : ["st.good", "go"] },
+  // BME280 barometric readings — informational, never a hazard band.
+  { key: "pressure", unit: "hPa", d: 0, min: 950, max: 1050, st: () => ["st.steady", "go"] },
+  { key: "altitude", unit: "m",   d: 0, min: 0,   max: 1000, st: () => ["st.steady", "go"] },
 ];
+
+// Altitude derived from BME280 pressure (barometric formula, sea-level 1013.25 hPa).
+// IMPORTANT NOTE: fixed sea-level reference — expose a calibration field if absolute altitude matters.
+const altitudeFrom = p => (p == null || isNaN(p) || p <= 0) ? null : 44330 * (1 - Math.pow(p / 1013.25, 1 / 5.255));
 
 const TRENDS = [
   { key: "dist", tkey: "trend.dist", color: "#9a9384" },
-  { key: "airq", tkey: "trend.air",  color: "#44cf86" },
+  { key: "pressure", tkey: "trend.pressure", color: "#44cf86" },
   { key: "temp", tkey: "trend.temp", color: "#ff3b2f" },
 ];
 
@@ -816,9 +823,8 @@ function Ticker({ packet, connected }) {
     [t("tick.temp"), fmt(packet?.temp, 1) + "°C"],
     [t("tick.humid"), fmt(packet?.humid, 0) + "%"],
     [t("tick.pressure"), fmt(packet?.pressure, 0) + "hPa"],
+    [t("tick.altitude"), fmt(packet?.altitude, 0) + "m"],
     [t("tick.dist"), fmt(packet?.dist, 0) + "cm"],
-    [t("tick.smoke"), fmt(packet?.smoke, 0) + "ppm"],
-    [t("tick.air"), fmt(packet?.airq, 0) + "ppm"],
     [t("tick.roll"), fmt(packet?.roll, 0) + "°"],
     [t("tick.pitch"), fmt(packet?.pitch, 0) + "°"],
     [t("tick.yaw"), fmt(packet?.yaw, 0) + "°"],
@@ -866,6 +872,7 @@ function App() {
   const activeChat = chats.find(c => c.id === activeId) || null;
   const activeRef = useRef(null);
   useEffect(() => { activeRef.current = activeChat; }, [activeChat]);
+  const runScanRef = useRef(() => {});
   useEffect(() => { localStorage.setItem("chats", JSON.stringify(chats)); }, [chats]);
   useEffect(() => { localStorage.setItem("activeChat", activeId); }, [activeId]);
   useEffect(() => { localStorage.setItem("ttsProvider", ttsProv); ttsProviderRef = ttsProv; }, [ttsProv]);
@@ -883,19 +890,7 @@ function App() {
   const lastBands = useRef({}); // per-metric severity, to detect when something newly worsens
   useEffect(() => { lastBands.current = {}; }, [activeId]); // fresh findings per session
 
-  // Smoke/air gas readings are noisy MQ sensors — sample them every 5s so the
-  // display doesn't flicker. Everything else stays live.
-  const packetRef = useRef(null);
-  useEffect(() => { packetRef.current = packet; }, [packet]);
-  const [slowGas, setSlowGas] = useState({});
-  useEffect(() => {
-    const id = setInterval(() => {
-      const p = packetRef.current;
-      if (p) setSlowGas({ smoke: p.smoke, airq: p.airq });
-    }, 5000);
-    return () => clearInterval(id);
-  }, []);
-  const view = packet ? { ...packet, ...slowGas } : packet;
+  const view = packet ? { ...packet, altitude: altitudeFrom(packet.pressure) } : packet;
 
   const addLog = useCallback((text, type = "system") => {
     setLogs(p => [...p, { text, type, time: new Date().toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-80));
@@ -982,8 +977,10 @@ function App() {
     // otherwise the dashboard talks to itself on boot with no chat active.
     socket.on("ai-analysis", d => {
       if (!d || !activeRef.current?.mission) return;
-      if (d.analysis) sayAgent(d.analysis, d.timestamp, t("log.aiReceived"), "ai", d.status);
-      else if (d.error) sayAgent(d.error, d.timestamp, t("log.aiReceived"), "warn", null);
+      if (d.analysis) {
+        sayAgent(d.analysis, d.timestamp, t("log.aiReceived"), "ai", d.status);
+        if (d.action === "sweep") runScanRef.current(); // Sage wants a look around
+      } else if (d.error) sayAgent(d.error, d.timestamp, t("log.aiReceived"), "warn", null);
     });
     socket.on("agent-blurt", d => { if (d?.text && activeRef.current?.mission) sayAgent(d.text, d.timestamp, t("log.blurt", { text: d.text }), "warn"); });
     socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, t("log.missionAck"), "ai", d.status); });
@@ -1187,6 +1184,7 @@ function App() {
       window.dispatchEvent(new Event("cam:resume")); // give the live feed back
     }
   }, [sweepServo, showSage, addLog]);
+  useEffect(() => { runScanRef.current = runScan; }, [runScan]);
 
   const ask = useCallback(async (text) => {
     text = (text || "").trim();

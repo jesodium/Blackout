@@ -574,7 +574,7 @@ async function runAiAnalysis() {
       ...langMsg(currentLanguage),
       { role: "user", content: eyes.length ? [{ type: "text", text: promptText }, ...eyes] : promptText },
     ], { maxTokens: 400 });
-    io.emit("ai-analysis", { analysis: sage.text || "No analysis returned.", status: sage.status, timestamp: Date.now() });
+    io.emit("ai-analysis", { analysis: sage.text || "No analysis returned.", status: sage.status, action: sage.action, timestamp: Date.now() });
   } catch (err) {
     console.error("AI analysis error:", err.message);
     io.emit("ai-analysis", { error: err.message, timestamp: Date.now() });
