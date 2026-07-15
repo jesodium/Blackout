@@ -34,6 +34,16 @@ const SENSORS = [
   { key: "airq",  unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 800 ? ["st.poor", "abort"] : v > 450 ? ["st.moderate", "warn"] : ["st.good", "go"] },
 ];
 
+// Voice/chat sequence triggers: typing one of these phrases (EN or ES, accents
+// optional) fires a motion routine directly over BLE instead of going to the
+// LLM — a routine is a fixed on-board script (routines.h), not something Sage's
+// reply can start, so matching happens locally before the /api/chat round trip.
+const norm = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const SEQUENCE_TRIGGERS = [
+  { re: /present yourself|presentate/, cmd: "go,presentation", ackKey: "sage.presentAck" },
+  { re: /time to explore|hora de explorar/, cmd: "go,run", ackKey: "sage.exploreAck" },
+];
+
 const TRENDS = [
   { key: "dist", tkey: "trend.dist", color: "#9a9384" },
   { key: "airq", tkey: "trend.air",  color: "#44cf86" },
@@ -323,6 +333,80 @@ function MotorDebug({ onCmd, enabled }) {
         </div>
       </div>
     </details>`;
+}
+
+/* ---------------- manual control: gamepad (Xbox / DualSense) ---------------- */
+// Browser Gamepad API — both pads use the "standard" mapping, so one code path.
+// Autopilot ON = pad ignored. Disabling autopilot arms the pad and Sage announces it.
+// Drive is sent as short timed bursts ("drv,<verb>,<pwm>,300") re-sent every 150ms
+// while the stick is held: firmware auto-halts 300ms after the last burst, so a
+// dropped BLE link or a yanked controller can never leave the wheels spinning.
+// Bench-style panel — labels stay English on purpose, same as MotorDebug.
+function GamepadCtl({ onCmd, enabled }) {
+  const [autopilot, setAutopilot] = useState(true);
+  const [padName, setPadName] = useState(null);
+  const [verb, setVerb] = useState(null); // live verb for the UI readout
+  const armed = !autopilot && enabled;
+  const armedRef = useRef(armed);
+  armedRef.current = armed;
+  const moving = useRef(false);
+
+  useEffect(() => {
+    const seen = () => setPadName([...navigator.getGamepads()].find(Boolean)?.id || null);
+    window.addEventListener("gamepadconnected", seen);
+    window.addEventListener("gamepaddisconnected", seen);
+    seen();
+    return () => { window.removeEventListener("gamepadconnected", seen); window.removeEventListener("gamepaddisconnected", seen); };
+  }, []);
+
+  // Dpad ↑/↓ drives, right stick X rotates. Fixed slow PWM — manual is for
+  // precision, not speed. Drive wins over rotate when both are held.
+  const MANUAL_PWM = 110;
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!armedRef.current) return;
+      const pad = [...navigator.getGamepads()].find(Boolean);
+      if (!pad) return;
+      const rx = pad.axes[2] ?? 0;         // right stick X (standard mapping)
+      const v = pad.buttons[12]?.pressed ? "fwd"
+        : pad.buttons[13]?.pressed ? "back"
+        : Math.abs(rx) > 0.35 ? (rx < 0 ? "left" : "right")
+        : null;
+      if (!v) {
+        if (moving.current) { moving.current = false; setVerb(null); onCmd("stop"); }
+        return;
+      }
+      moving.current = true; setVerb(v);
+      onCmd(`drv,${v},${MANUAL_PWM},300`);
+    }, 150);
+    return () => clearInterval(id);
+  }, [onCmd]);
+
+  // Announcements use the pre-rendered per-language clips (same pipeline as the
+  // briefing wizard) — instant playback, no 5-7s TTS synth wait, follows lang.
+  const toggle = () => {
+    const ap = !autopilot;
+    setAutopilot(ap);
+    const key = ap ? "apOn" : "apOff";
+    if (ap) { moving.current = false; setVerb(null); onCmd("stop"); }
+    playOnboard(key, ONBOARDING[getLang()][key]);
+  };
+
+  return html`
+    <section class="zone reveal" style=${{ animationDelay: "150ms" }}>
+      <${Head} folio="08" title="MANUAL CONTROL" tag=${padName ? "PAD OK" : "NO PAD"} />
+      <div class="zone-body" style=${{ display: "grid", gap: "10px" }}>
+        <button type="button" class=${"btn " + (autopilot ? "btn--ghost" : "btn--primary")} onClick=${toggle}>
+          ${autopilot ? "AUTOPILOT ON — press to take over" : "MANUAL — press for autopilot"}
+        </button>
+        <small style=${{ opacity: 0.7 }}>
+          ${!padName ? "Connect Xbox/DualSense (BT or USB), press any button."
+            : autopilot ? padName.slice(0, 40)
+            : !enabled ? "Pad armed — BT bridge off, no link to rover."
+            : verb ? `▶ ${verb.toUpperCase()}` : "Dpad ↑↓ drives · right stick rotates."}
+        </small>
+      </div>
+    </section>`;
 }
 
 /* ---------------- camera: ESP32-CAM live feed ---------------- */
@@ -1293,6 +1377,17 @@ function App() {
     const chat = activeRef.current;
     if (!text || !chat) return;
     addLog(t("log.operator", { text }), "system");
+    // Sequence phrase ("present yourself" / "time to explore", EN or ES) — fire the
+    // on-board routine straight over BLE, no LLM round trip; Sage can't steer a
+    // routine anyway (routines.h), so this is just the starting gun plus a canned ack.
+    const trigger = SEQUENCE_TRIGGERS.find(s => s.re.test(norm(text)));
+    if (trigger) {
+      const sent = await sendCmd(trigger.cmd);
+      const ack = { text: t(sent ? trigger.ackKey : "toast.cmdNoLink"), status: null };
+      setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...(c.messages || []), { role: "user", content: text }, { role: "assistant", content: ack.text }].slice(-12) } : c));
+      showSage(ack, null, sent);
+      return;
+    }
     const t0 = Date.now();
     setAi(p => ({ ...p, analyzing: true, badge: "badge.thinking", phase: "thinking", since: t0, llm: null, tts: null }));
     const next = [...(chat.messages || []), { role: "user", content: text }].slice(-12);
@@ -1311,7 +1406,7 @@ function App() {
     } catch (e) {
       setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
     }
-  }, [addLog, showSage, runScan]);
+  }, [addLog, showSage, runScan, sendCmd]);
   const toggleTts = useCallback(() => setTts(p => {
     const n = !p; ttsRef.current = n; localStorage.setItem("tts", n);
     if (!n) { stopSpeech(); setSpeaking(false); }
@@ -1389,6 +1484,7 @@ function App() {
               onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onPick=${pickHistory} onMock=${mockData} onAsk=${ask} />
             <div class="side-col">
               <${Camera} />
+              <${GamepadCtl} onCmd=${sendCmd} enabled=${bridge.running} />
               <${Memory} chat=${activeChat} />
             </div>
           </div>

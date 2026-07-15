@@ -18,6 +18,8 @@ export const ONBOARDING = {
     q1: "What kind of place am I dropping into?",
     q2: "What should I be watching for down there?",
     rundown: "Got it — here's the rundown. Good to go?",
+    apOff: "Autopilot disabled. You're on your own now!",
+    apOn: "Autopilot engaged.",
   },
   es: {
     intro: "Hola — soy Sage, la IA que controla la unidad de reconocimiento que envías a la oscuridad. Cuéntame el trabajo, paso a paso.",
@@ -25,6 +27,8 @@ export const ONBOARDING = {
     q1: "¿A qué tipo de lugar voy a entrar?",
     q2: "¿Qué debo vigilar allí abajo?",
     rundown: "Entendido — aquí está el resumen. ¿Todo listo?",
+    apOff: "Piloto automático desactivado. ¡Ahora estás solo!",
+    apOn: "Piloto automático activado.",
   },
 };
 
@@ -235,6 +239,8 @@ const DICT = {
     "toast.error": "Error · {msg}",
     "ai.awaiting": "Awaiting telemetry…",
     "ai.comms": "Comms error: {msg}",
+    "sage.presentAck": "On it — say hello, everyone!",
+    "sage.exploreAck": "Copy that — time to explore!",
 
     /* serial */
     "zone.serial": "Serial Monitor",
@@ -462,6 +468,8 @@ const DICT = {
     "toast.error": "Error · {msg}",
     "ai.awaiting": "Esperando telemetría…",
     "ai.comms": "Error de comunicación: {msg}",
+    "sage.presentAck": "Enseguida — ¡saluden todos!",
+    "sage.exploreAck": "Entendido — ¡hora de explorar!",
 
     "zone.serial": "Monitor Serial",
     "serial.pause": "Pausar",

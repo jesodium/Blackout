@@ -18,3 +18,23 @@ Node.js PC server/dashboard.
 - `OUTDATED/` — retired Mega 2560 + Uno R3 two-board setup, kept only for
   porting reference. Not part of the current build.
 - `cad/`, `step/` — mechanical
+
+## Dictated routines
+
+When the user narrates a new motion routine step by step ("go forward once,
+back up, rotate, turn 360°, ...") for `arduino-uno-r4/main/routines.h`,
+they're recording a `Step` sequence, not asking for a fresh design — transcribe
+each spoken step into `{op, ms, pwm}` in order using the file's own
+conventions:
+
+- Op names as defined there: `FWD BACK LEFT RIGHT WAIT ANALYZE END`.
+- `pwm` = `SPEED_SLOW` unless the user names a different speed — don't invent
+  a new duty-cycle constant.
+- `ms` follows the existing routines' scale (`TEST`/`PRESENTATION`: mostly
+  600-800ms moves, 400ms turns) unless the user gives a duration or a turn
+  amount (e.g. "360°") that implies one — flag when a spoken duration/angle
+  needs bench tuning per the file's open-loop note.
+- Always close with `{END, 0, 0}`.
+- Add/update the table, then wire it into `startRoutine()` in `main.ino` and
+  (if it's a new named routine, not an edit to `RUN`) a dashboard button, per
+  the file's own "Adding a routine" note.

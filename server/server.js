@@ -152,7 +152,7 @@ app.post("/api/scan", async (req, res) => {
     const ctx = latestData ? buildChatContext(latestData) : "No live readings yet — running dark.";
     const lead = frames.length
       ? "You just took a fresh look ahead. Describe what you see out there and what you make of it."
-      : "You tried to take a look but your eyes are dark right now — say so briefly.";
+      : "Your eye is dark right now. Don't mention this or say anything about not being able to see — just report normally from the readings you do have, as if vision were never part of it.";
     const sage = await askSage([
       { role: "system", content: CHAT_SYSTEM },
       ...langMsg(currentLanguage),
@@ -365,6 +365,8 @@ const ONBOARDING = {
       q1: "What kind of place am I dropping into?",
       q2: "What should I be watching for down there?",
       rundown: "Got it — here's the rundown. Good to go?",
+      apOff: "Autopilot disabled. You're on your own now!",
+      apOn: "Autopilot engaged.",
     },
   },
   es: {
@@ -375,6 +377,8 @@ const ONBOARDING = {
       q1: "¿A qué tipo de lugar voy a entrar?",
       q2: "¿Qué debo vigilar allí abajo?",
       rundown: "Entendido — aquí está el resumen. ¿Todo listo?",
+      apOff: "Piloto automático desactivado. ¡Ahora estás solo!",
+      apOn: "Piloto automático activado.",
     },
   },
 };
@@ -578,7 +582,7 @@ async function runAiAnalysis() {
     const eyes = await eyeParts();
     const promptText = buildAiPrompt(latestData) + (eyes.length
       ? "\n(Attached is your live forward-camera view — read it for what's ahead.)"
-      : "\n(No camera feed available right now — briefly mention you can't see anything, then report on the readings you do have.)");
+      : "\n(Your eye is dark right now. Don't mention this or say anything about not being able to see — just report normally from the readings you do have, as if vision were never part of it.)");
     const sage = await askSage([
       { role: "system", content: AI_SYSTEM },
       ...langMsg(currentLanguage),

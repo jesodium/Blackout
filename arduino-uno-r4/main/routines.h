@@ -24,7 +24,7 @@
 
 // Duty cycle 0-255. Below ~90 most geared DC motors won't break stiction — they
 // just buzz. Tune per chassis/battery; a loaded robot needs more than a bench test.
-#define SPEED_SLOW 120
+#define SPEED_SLOW 125
 
 enum Op : uint8_t { FWD, BACK, LEFT, RIGHT, WAIT, ANALYZE, END };
 struct Step { Op op; uint16_t ms; uint8_t pwm; };
