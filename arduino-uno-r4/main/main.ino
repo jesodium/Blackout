@@ -66,6 +66,8 @@ float distF = -1; // EMA state, -1 = uninitialised
 
 void setup() {
   Serial.begin(9600);
+  Serial.setTimeout(50); // readStringUntil on a partial line must not block the
+                         // default 1s — that stalls BLE.poll + the routine stepper
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
@@ -108,14 +110,14 @@ void matrixDone() { matrixReplay = true; } // IRQ context — keep it fast
 // that motor's two output wires at the L298N screw terminals — don't flip the
 // pin logic here or forward/back stop meaning the same thing.
 void forward(uint8_t speed) {
-  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
-  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
   analogWrite(ENA, speed); analogWrite(ENB, speed);
 }
 
 void back(uint8_t speed) {
-  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
-  digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
+  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
   analogWrite(ENA, speed); analogWrite(ENB, speed);
 }
 
@@ -191,6 +193,7 @@ void startRoutine(const String& name) {
   else if (name == "run") routine = RUN;
   else if (name == "test") routine = TEST;
   else return; // unknown name: stay idle rather than guess
+  drvEnd = 0;  // kill any pending debug-drive auto-halt or it fires mid-step
   stepIdx = 0;
   stepStart = millis();
   applyStep(routine[0]);
@@ -285,7 +288,9 @@ void loop() {
   } else {
     distF = -1; // miss = out of range, don't hold a stale value
   }
-  float dist = (distF < 0) ? 0 : distF;
+  // Miss = no echo within ~430cm = CLEAR ahead. Send 999, never 0 — 0 reads as
+  // "touching a wall" downstream (dashboard TOO CLOSE, server NEAR blurt).
+  float dist = (distF < 0) ? 999 : distF;
 
   // DHT11 caps at ~1Hz — poll on its own slow cadence, hold last good value.
   if (now - lastDht >= DHT_INTERVAL) {

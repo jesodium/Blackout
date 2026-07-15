@@ -6,15 +6,16 @@ import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./
 
 const html = htm.bind(React.createElement);
 
-// ESP32-CAM MJPEG stream. Raw IPs, not blackout-cam.local — the TP-Link router
-// poisons .local (answers every query with 127.0.0.1), so the feed pointed at the
-// dev machine. Both known homes of the cam: TP-Link (192.168.1.111, DHCP-reserved
-// for the cam's MAC) and iPhone hotspot (172.20.10.10, static in the sketch). The
-// Camera component walks this list on failure until one loads, so the feed
+// ESP32-CAM MJPEG stream. Known homes of the cam: TP-Link (192.168.1.111,
+// DHCP-reserved for the cam's MAC), iPhone hotspot (172.20.10.10, static in the
+// sketch), and school (DHCP, no fixed IP — use blackout-cam.local instead; that
+// router doesn't poison .local like TP-Link does, which answers every query
+// with 127.0.0.1 and would point the feed at the dev machine on that network).
+// The Camera component walks this list on failure until one loads, so the feed
 // self-heals when the cam moves networks. The offline panel's field still
 // overrides (localStorage, sticks across reloads) for anything not listed here.
 // Stream is always :81.
-const CAM_HOSTS = ["192.168.1.111", "172.20.10.10"];
+const CAM_HOSTS = ["172.20.10.10", "192.168.1.111", "blackout-cam.local"];
 const CAM_HOST_DEFAULT = CAM_HOSTS[0];
 const camHost = () => localStorage.getItem("camHost") || CAM_HOST_DEFAULT;
 const camUrl = (host) => `http://${host}:81/stream`;
@@ -411,13 +412,13 @@ function GamepadCtl({ onCmd, enabled }) {
 
 /* ---------------- camera: ESP32-CAM live feed ---------------- */
 function Camera() {
-  const [state, setState] = useState("loading"); // loading | live | offline
-  const [nonce, setNonce] = useState(0);          // bump to force <img> reload
-  const [yielded, setYielded] = useState(false);  // scan owns the cam — drop our feed
-  const [host, setHost] = useState(camHost());     // mDNS name or raw IP, onsite-editable
-  // The ESP32-CAM's /stream handler is a single infinite worker, so only one client
-  // at a time. During a look-around scan the server needs to grab frames, so we tear
-  // down our <img> (frees the cam's worker) and reconnect fresh when the scan is done.
+  const [state, setState] = useState("loading");
+  const [nonce, setNonce] = useState(0);
+  const [yielded, setYielded] = useState(false);
+  const [host, setHost] = useState(camHost());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sliders, setSliders] = useState({ brightness: -1, contrast: -1, ae_level: 0 });
+
   useEffect(() => {
     const y = () => setYielded(true);
     const r = () => { setYielded(false); setNonce(n => n + 1); };
@@ -425,38 +426,35 @@ function Camera() {
     window.addEventListener("cam:resume", r);
     return () => { window.removeEventListener("cam:yield", y); window.removeEventListener("cam:resume", r); };
   }, []);
-  // On failure, walk CAM_HOSTS before declaring offline: the cam lives at a
-  // different IP per network (home vs hotspot), so a dead host usually just means
-  // "wrong network — try the other one". Only when every known host has failed do
-  // we show the offline panel. The winning host is persisted so the next reload
-  // starts on it.
-  const tried = useRef(new Set());
-  const fail = useCallback(() => {
-    tried.current.add(host);
-    const next = CAM_HOSTS.find(h => !tried.current.has(h));
-    if (next) { setHost(next); setNonce(n => n + 1); }
-    else setState("offline");
-  }, [host]);
-  // A wrong/dead host can HANG instead of refusing (127.0.0.1:81 with nothing on it
-  // does exactly this), so onError never fires and state pins at "loading" forever —
-  // which hides the offline panel, the only place to correct the host. Self-inflicted
-  // lockout. Give up after a while so the field is always reachable.
-  // IMPORTANT NOTE: 12s because a weak-signal grab already measured ~5s; raise it if a
-  // slow-but-live cam starts getting declared offline. Worst case to the offline
-  // panel is 12s x CAM_HOSTS.length.
+
+  const fail = useCallback(() => setState("offline"), []);
+
   useEffect(() => {
     if (yielded || state !== "loading") return;
     const id = setTimeout(fail, 12000);
     return () => clearTimeout(id);
   }, [state, yielded, nonce, host, fail]);
+
+  useEffect(() => {
+    if (yielded || state !== "live") return;
+    const id = setInterval(() => { setState("loading"); setNonce(n => n + 1); }, 60000);
+    return () => clearInterval(id);
+  }, [state, yielded]);
+
   const base = camUrl(host);
   const src = base + "?n=" + nonce;
+
   const applyHost = (v) => {
     const h = v.trim() || CAM_HOST_DEFAULT;
     localStorage.setItem("camHost", h);
-    tried.current.clear();
     setHost(h); setState("loading"); setNonce(n => n + 1);
   };
+
+  const ctrl = (varName, val) => {
+    setSliders(p => ({ ...p, [varName]: val }));
+    fetch(`http://${host}/control?var=${varName}&val=${val}`).catch(() => {});
+  };
+
   return html`
     <section class="zone stage reveal" style=${{ animationDelay: "60ms" }} aria-labelledby="cam-h">
       <${Head} folio="02" title=${t("zone.camera")} tag=${t(yielded ? "cam.tag.scanning" : "cam.tag." + state)} />
@@ -467,19 +465,39 @@ function Camera() {
             ? html`<div class="viewport-fallback">${t("cam.scanning")}</div>`
             : state !== "offline"
             ? html`<img src=${src} alt=${t("zone.camera")} class="cam-feed"
-                onLoad=${() => { setState("live"); localStorage.setItem("camHost", host); tried.current.clear(); }}
+                onLoad=${() => { setState("live"); localStorage.setItem("camHost", host); }}
                 onError=${fail} />`
             : html`<div class="viewport-fallback">${t("cam.offline")}<br/>
                 <small>${base}</small><br/>
                 <input type="text" defaultValue=${host} aria-label=${t("zone.camera")}
                   placeholder=${CAM_HOST_DEFAULT}
-                  style=${{ marginTop: "12px", textAlign: "center", width: "80%" }}
+                  style=${{ marginTop: "12px", textAlign: "center", width: "80%", fontFamily: "monospace" }}
                   onKeyDown=${(e) => { if (e.key === "Enter") applyHost(e.target.value); }}
                   onBlur=${(e) => applyHost(e.target.value)} /><br/>
                 <button type="button" class="btn btn--ghost" style=${{ marginTop: "12px" }}
-                  onClick=${() => { tried.current.clear(); setState("loading"); setNonce(n => n + 1); }}>${t("cam.retry")}</button>
+                  onClick=${() => { setState("loading"); setNonce(n => n + 1); }}>${t("cam.retry")}</button>
               </div>`}
         </div>
+        ${state === "live" && !yielded ? html`
+          <div class="cam-settings">
+            <button class="btn btn--ghost" style=${{ width: "100%", textAlign: "center", fontSize: "12px", padding: "4px", marginTop: "4px" }}
+              onClick=${() => setSettingsOpen(o => !o)}>
+              ${settingsOpen ? "▲" : "▼"} ${t("cam.settings")}
+            </button>
+            ${settingsOpen ? html`
+              <div style=${{ padding: "8px", fontSize: "12px" }}>
+                ${[["brightness", -2, 2], ["contrast", -2, 2], ["ae_level", -2, 2]].map(([k, min, max]) => html`
+                  <div style=${{ marginBottom: "6px" }}>
+                    <div style=${{ display: "flex", justifyContent: "space-between" }}>
+                      <span>${k}</span>
+                      <span style=${{ color: "#888" }}>${sliders[k]}</span>
+                    </div>
+                    <input type="range" min=${min} max=${max} step="1" value=${sliders[k]}
+                      style=${{ width: "100%" }}
+                      onInput=${(e) => ctrl(k, parseInt(e.target.value))} />
+                  </div>`)}
+              </div>` : null}
+          </div>` : null}
       </div>
     </section>`;
 }
@@ -983,7 +1001,7 @@ function Masthead({ connected, ports, currentPort, bridge, onBridge, onCmd, conn
         <h1>Blackout<span class="ver">V1</span></h1>
         <div class="mast-sub">
           <span>${t("mast.subTele")}</span>
-          <span class="dim">Mega 2560 · Uno R3</span>
+          <span class="dim">ESP32-CAM // ARDUINO UNO R4 WIFI</span>
         </div>
       </div>
     </header>`;
@@ -1160,11 +1178,23 @@ function App() {
     // Auto analysis + instant reactions only fire when a briefed session is open —
     // otherwise the dashboard talks to itself on boot with no chat active.
     socket.on("ai-analysis", d => {
-      if (!d || !activeRef.current?.mission) return;
+      if (!d) return;
+      // No briefed session: don't display/voice the result, but ALWAYS release the
+      // spinner — a routine's E:analyze at the bench sets analyzing, and a swallowed
+      // reply here locked the whole briefing UI behind `busy` forever.
+      if (!activeRef.current?.mission) {
+        setAi(p => ({ ...p, analyzing: false, phase: null, badge: "badge.standby" }));
+        return;
+      }
       if (d.analysis) sayAgent(d.analysis, d.timestamp, t("log.aiReceived"), "ai", d.status);
       else if (d.error) sayAgent(d.error, d.timestamp, t("log.aiReceived"), "warn", null);
     });
     socket.on("agent-blurt", d => { if (d?.text && activeRef.current?.mission) sayAgent(d.text, d.timestamp, t("log.blurt", { text: d.text }), "warn"); });
+    // Server-driven camera yield: runAiAnalysis grabs a still from /capture, which
+    // fights the live /stream for the cam's starved RAM. Relayed to the same
+    // window events Camera already listens for (see runScan's client-side yield).
+    socket.on("cam-yield", () => window.dispatchEvent(new Event("cam:yield")));
+    socket.on("cam-resume", () => window.dispatchEvent(new Event("cam:resume")));
     socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, t("log.missionAck"), "ai", d.status); });
     addLog(t("log.booted"), "system");
     return () => socket.close();
@@ -1436,7 +1466,13 @@ function App() {
   }, [chats]);
   const deleteChat = useCallback((id) => {
     setChats(cs => cs.filter(c => c.id !== id));
-    setActiveId(a => (a === id ? "" : a));
+    setActiveId(a => {
+      if (a !== id) return a;
+      // Deleting the ACTIVE session: clear the server's mission too, or it keeps
+      // firing auto-analysis LLM calls nobody will ever see.
+      socketRef.current?.emit("set-mission", "");
+      return "";
+    });
   }, []);
   const briefMission = useCallback((text) => {
     text = (text || "").trim();
@@ -1509,8 +1545,8 @@ function App() {
         <footer class="colophon">
           <span><b>Blackout V1</b></span><span class="dot">/</span>
           <span>WRO 2026</span><span class="dot">/</span>
-          <span>${t("colo.sensorHub")} <b>Mega 2560</b></span><span class="dot">/</span>
-          <span>${t("colo.motor")} <b>Uno R3</b></span><span class="dot">/</span>
+          <span>${t("colo.sensorHub")} <b>Uno R4 WiFi</b></span><span class="dot">/</span>
+          <span>Cam <b>ESP32-CAM</b></span><span class="dot">/</span>
           <span>${t("colo.field")}</span>
         </footer>
       </div>

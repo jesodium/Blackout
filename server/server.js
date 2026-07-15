@@ -11,7 +11,6 @@ const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
 const { eyeParts, grabFrames } = require("./vision");
 const { parseSage } = require("./sage");
-const keypress = require("keypress");
 
 const openai = new OpenAI({
   baseURL: "https://api.cerebras.ai/v1",
@@ -119,7 +118,8 @@ app.post("/api/chat", async (req, res) => {
   if (!msgs.length) return res.status(400).json({ error: "messages required" });
   const lang = LANG_INSTRUCT[req.body?.lang] ? req.body.lang : "en";
   try {
-    const ctx = latestData ? buildChatContext(latestData) : "No live readings yet — running dark.";
+    const d = freshData();
+    const ctx = d ? buildChatContext(d) : "No live readings right now — running dark.";
     const mapped = msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }));
     // Attach the live cam frame to the operator's latest turn so gemma sees it.
     const eyes = await eyeParts();
@@ -149,7 +149,8 @@ app.post("/api/scan", async (req, res) => {
     // 1 frame: the view no longer moves, so extra stills would be the same picture
     // at more base64 bytes — and 4 SVGA stills blow past Cerebras' request cap (413).
     const frames = await grabFrames(1);
-    const ctx = latestData ? buildChatContext(latestData) : "No live readings yet — running dark.";
+    const d = freshData();
+    const ctx = d ? buildChatContext(d) : "No live readings right now — running dark.";
     const lead = frames.length
       ? "You just took a fresh look ahead. Describe what you see out there and what you make of it."
       : "Your eye is dark right now. Don't mention this or say anything about not being able to see — just report normally from the readings you do have, as if vision were never part of it.";
@@ -250,99 +251,23 @@ app.post("/api/connMode", async (req, res) => {
   res.json({ ok: true, mode });
 });
 
-app.post("/api/ports/switch", async (req, res) => {
+app.post("/api/ports/switch", (req, res) => {
   const { path } = req.body;
   if (!path) return res.status(400).json({ error: "path required" });
-  selectedPortPath = path;
-  if (serialPort) {
-    serialPort.removeAllListeners("close");
-    serialPort.close();
-  }
-  serialPort = new SerialPort({ path, baudRate: SERIAL_BAUD }, (err) => {
-    if (err) {
-      console.error(`Failed to open ${path}: ${err.message}`);
-      return res.status(500).json({ error: err.message });
-    }
+  if (bleActive) return res.status(409).json({ error: "BT mode active — switch link to USB first" });
+  connectSerial(path, (err) => {
+    if (err) return res.status(500).json({ error: err.message });
     console.log(`Switched to ${path}`);
     res.json({ ok: true, path });
   });
-  attachParser(serialPort);
-  serialPort.on("error", (err) => {
-    console.error("Serial error:", err.message);
-  });
-  serialPort.on("close", () => {
-    if (manualDisconnect || bleActive) {
-      console.log("Serial closed by mode switch — not reconnecting.");
-      return;
-    }
-    console.log("Serial disconnected. Reconnecting in 5s...");
-    scheduleReconnect(selectedPortPath);
-  });
 });
-
-function selectPortMenu(ports) {
-  return new Promise((resolve) => {
-    let selectedIndex = 0;
-
-    function render() {
-      console.clear();
-      console.log("\n  Select serial port (↑/↓ arrows, Enter to confirm):\n");
-      ports.forEach((port, i) => {
-        const prefix = i === selectedIndex ? "▸ " : "  ";
-        const marker = port.includes("usbserial") ? " ← Arduino?" : "";
-        console.log(`  ${prefix}${port}${marker}`);
-      });
-      console.log("\n  Press 'r' to refresh, 'q' to quit\n");
-    }
-
-    function handleKey(ch, key) {
-      if (!key) return;
-      if (key.name === "up") {
-        selectedIndex = (selectedIndex - 1 + ports.length) % ports.length;
-        render();
-      } else if (key.name === "down") {
-        selectedIndex = (selectedIndex + 1) % ports.length;
-        render();
-      } else if (key.name === "return") {
-        cleanup();
-        resolve(ports[selectedIndex]);
-      } else if (key.name === "r") {
-        refreshPorts();
-      } else if (key.name === "q" || (key.ctrl && key.name === "c")) {
-        cleanup();
-        process.exit(0);
-      }
-    }
-
-    async function refreshPorts() {
-      const newPorts = await listSerialPorts();
-      if (newPorts.length === 0) {
-        console.log("\n  No serial ports found. Waiting...");
-        setTimeout(refreshPorts, 2000);
-        return;
-      }
-      ports.length = 0;
-      ports.push(...newPorts);
-      selectedIndex = 0;
-      render();
-    }
-
-    function cleanup() {
-      process.stdin.removeListener("keypress", handleKey);
-      keypress.disableMouse();
-      process.stdin.pause();
-    }
-
-    keypress(process.stdin);
-    process.stdin.on("keypress", handleKey);
-    process.stdin.resume();
-
-    render();
-  });
-}
 
 let latestData = null;
 let dataHistory = [];
+// latestData is only "current" while the link is alive — telemetry lands every
+// ~100ms, so anything older than 10s means the link died. Don't present a
+// minutes-old reading to Sage as "right now".
+const freshData = () => (latestData && Date.now() - latestData.timestamp < 10000 ? latestData : null);
 let currentMission = "";   // operator's briefing — colors all agent replies until changed
 let currentLanguage = "en"; // UI language — the agent must reply in this language
 
@@ -432,10 +357,9 @@ function statuses(d) {
     dist: d.dist < 10 ? "NEAR" : "CLEAR",
     smoke: band(d.smoke, 300, 600),
     airq: band(d.airq, 450, 800),
-    // MQ-9 raw: ~250-300 is normal room air, danger >=350.
-    // ponytail: hardware DO flag (d.co_alert) is IGNORED — the module's digital out is
-    // active-low and pot-tuned, so it false-fires DANGER in clean air. Judge from raw.
-    // Re-enable only after fixing the pin polarity in the Mega firmware.
+    // IMPORTANT NOTE: no gas sensor wired right now (MQ-9/MQ-2 retired with the
+    // Mega) — smoke/airq/co arrive as 0 from the R4 firmware. Thresholds kept
+    // for mock data and for when a sensor lands. d.co_alert stays ignored.
     co: band(d.co, 300, 350),
   };
 }
@@ -544,43 +468,51 @@ async function ackMission(text) {
 const missionLine = () => (currentMission ? `Your mission, briefed by the operator: ${currentMission}\n\n` : "");
 const trendLine = (data) => { const t = buildTrend(data); return t ? `\n${t}` : ""; };
 
-function buildChatContext(data) {
+// One line per reading. Gas/pressure/IMU aren't wired yet (R4 firmware sends 0)
+// — skip their lines so Sage isn't told "Pressure: 0 hPa" as a real reading.
+// Mock data still populates them, so the demo keeps its flavor.
+function readingLines(data) {
   const s = statuses(data);
+  return [
+    `Temperature: ${data.temp}°C [${s.temp}]`,
+    `Humidity: ${data.humid}%`,
+    data.pressure ? `Pressure: ${data.pressure} hPa` : null,
+    `Distance to the rock face ahead: ${data.dist} cm [${s.dist}]`,
+    data.smoke ? `Smoke/gas level: ${data.smoke} [${s.smoke}]` : null,
+    data.airq ? `Air quality: ${data.airq} [${s.airq}]` : null,
+    data.co ? `Combustible gas: ${data.co} [${s.co}]` : null,
+    (data.roll || data.pitch || data.yaw) ? `Tilt: roll ${data.roll}°, pitch ${data.pitch}°, yaw ${data.yaw}°` : null,
+  ].filter(Boolean).join("\n");
+}
+
+function buildChatContext(data) {
   return `${missionLine()}Current readings from the rover right now (each line is already judged — trust the [STATUS] tag, do NOT re-judge from the number, and do NOT recite the raw number):
-Temperature: ${data.temp}°C [${s.temp}]
-Humidity: ${data.humid}%
-Pressure: ${data.pressure} hPa
-Distance to the rock face ahead: ${data.dist} cm [${s.dist}]
-Smoke/gas level: ${data.smoke} [${s.smoke}]
-Air quality: ${data.airq} [${s.airq}]
-Combustible gas: ${data.co} [${s.co}]
-Tilt: roll ${data.roll}°, pitch ${data.pitch}°, yaw ${data.yaw}°${trendLine(data)}`;
+${readingLines(data)}${trendLine(data)}`;
 }
 
 function buildAiPrompt(data) {
-  const s = statuses(data);
   return `${missionLine()}Latest telemetry from your sensors — read the room and report to the operator. Each line is already judged: trust the [STATUS] tag, do NOT re-judge from the raw number, and do NOT recite the raw number aloud.
 
-Temperature: ${data.temp}°C [${s.temp}]
-Humidity: ${data.humid}%
-Pressure: ${data.pressure} hPa
-Distance ahead: ${data.dist} cm [${s.dist}]
-Smoke/gas level: ${data.smoke} [${s.smoke}]
-Air quality (CO2/etc): ${data.airq} [${s.airq}]
-CO/combustible gas: ${data.co} [${s.co}]
-Roll: ${data.roll}°  Pitch: ${data.pitch}°  Yaw: ${data.yaw}°${trendLine(data)}`;
+${readingLines(data)}${trendLine(data)}`;
 }
 
 async function runAiAnalysis() {
   // Always emit a result: the dashboard locks into "analyzing" on request and only
   // an ai-analysis event releases it, so a silent return here = infinite spinner.
-  if (!process.env.CEREBRAS_API_KEY || !latestData) {
-    io.emit("ai-analysis", { error: latestData ? "AI key not set" : "No telemetry yet.", timestamp: Date.now() });
+  const data = freshData();
+  if (!process.env.CEREBRAS_API_KEY || !data) {
+    io.emit("ai-analysis", { error: data ? "AI key not set" : "No telemetry yet.", timestamp: Date.now() });
     return;
   }
+  // Grabbing eyeParts() hits the cam's /capture, which fights its /stream task for
+  // the same starved RAM — tell the dashboard to drop its live feed for the grab,
+  // same trade the single-shot scan (runScan in app.js) already makes. Auto-fired
+  // analysis has no client-side call site to yield from, so the signal has to come
+  // from here instead.
+  io.emit("cam-yield");
   try {
     const eyes = await eyeParts();
-    const promptText = buildAiPrompt(latestData) + (eyes.length
+    const promptText = buildAiPrompt(data) + (eyes.length
       ? "\n(Attached is your live forward-camera view — read it for what's ahead.)"
       : "\n(Your eye is dark right now. Don't mention this or say anything about not being able to see — just report normally from the readings you do have, as if vision were never part of it.)");
     const sage = await askSage([
@@ -592,27 +524,15 @@ async function runAiAnalysis() {
   } catch (err) {
     console.error("AI analysis error:", err.message);
     io.emit("ai-analysis", { error: err.message, timestamp: Date.now() });
+  } finally {
+    io.emit("cam-resume");
   }
 }
 
 let serialPort;
 let selectedPortPath = null;
-let manualDisconnect = false; // true = USB serial intentionally closed (BT mode); block auto-reconnect
-let reconnectTimer = null;    // pending auto-reconnect; must be cancelled on a mode switch
-
-// Single choke point for auto-reconnect. Refuses if we're in BT mode or the
-// close was intentional, and always tracks the timer so disconnectSerial can
-// cancel it — otherwise a stale timer revives serial after switching to BT.
-function scheduleReconnect(path) {
-  clearTimeout(reconnectTimer);
-  if (bleActive || manualDisconnect) return;
-  reconnectTimer = setTimeout(() => connectSerial(path), 5000);
-}
 
 function disconnectSerial() {
-  manualDisconnect = true;
-  clearTimeout(reconnectTimer); // kill any pending revive
-  reconnectTimer = null;
   if (serialPort) {
     serialPort.removeAllListeners("close");
     serialPort.removeAllListeners("error");
@@ -621,51 +541,35 @@ function disconnectSerial() {
   }
 }
 
-async function connectSerial(path) {
-  if (bleActive) return; // BT owns the link — never open USB underneath it
-  manualDisconnect = false;
+// Open `path` (or auto-pick the first usbserial port) as the active link.
+// cb(err) fires once with the open result. IMPORTANT NOTE: no auto-reconnect
+// anywhere, on purpose — an unplugged/closed port stays closed until the
+// dashboard explicitly picks one again.
+async function connectSerial(path, cb) {
+  if (bleActive) { cb?.(new Error("BT mode active")); return; } // BT owns the link
   if (!path) {
     const ports = await listSerialPorts();
     const usbPorts = ports.filter(p => p.includes("usbserial"));
     if (usbPorts.length === 0) {
-      console.log("No usbserial ports found. Waiting for device...");
-      scheduleReconnect();
+      console.log("No usbserial ports found.");
+      cb?.(new Error("no usbserial ports found"));
       return;
     }
     path = usbPorts[0];
-    selectedPortPath = path;
     console.log(`Auto-selected: ${path}`);
-  } else {
-    selectedPortPath = path;
-    console.log(`Connecting to selected port: ${path}`);
   }
+  disconnectSerial(); // one link at a time
+  selectedPortPath = path;
 
   serialPort = new SerialPort({ path, baudRate: SERIAL_BAUD }, (err) => {
-    if (err) {
-      console.error(`Failed to open ${path}: ${err.message}`);
-      if (!selectedPortPath) {
-        console.log("Retrying in 5s...");
-        scheduleReconnect();
-      }
-    } else {
-      console.log(`Connected to ${path}`);
-    }
+    if (err) console.error(`Failed to open ${path}: ${err.message}`);
+    else console.log(`Connected to ${path}`);
+    cb?.(err);
   });
 
   attachParser(serialPort);
-
-  serialPort.on("error", (err) => {
-    console.error("Serial error:", err.message);
-  });
-
-  serialPort.on("close", () => {
-    if (manualDisconnect || bleActive) {
-      console.log("Serial closed by mode switch — not reconnecting.");
-      return;
-    }
-    console.log("Serial disconnected. Reconnecting in 5s...");
-    scheduleReconnect(selectedPortPath);
-  });
+  serialPort.on("error", (err) => console.error("Serial error:", err.message));
+  serialPort.on("close", () => console.log("Serial closed."));
 }
 
 // No auto-grab at boot: the server used to blindly open the first usbserial

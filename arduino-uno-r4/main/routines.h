@@ -48,8 +48,9 @@ const Step TEST[] = {
 
 // IMPORTANT NOTE: placeholder timings — tune against the real chassis/battery.
 const Step PRESENTATION[] = {
-  {FWD, 800, SPEED_SLOW}, {ANALYZE, 2500, 0}, {RIGHT, 400, SPEED_SLOW},
-  {FWD, 800, SPEED_SLOW}, {END, 0, 0},
+  {RIGHT, 400, 105}, {WAIT, 1000, 0}, 
+  {LEFT, 400, 105},
+  {END, 0, 0},
 };
 
 const Step RUN[] = { {END, 0, 0} }; // filled in on the field

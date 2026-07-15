@@ -13,6 +13,42 @@ const CAM_URLS = (process.env.CAM_URL || "http://192.168.1.111/capture")
 let camIdx = 0; // sticky index of the last URL that answered
 const sharp = require("sharp");
 
+// Node's own resolver (dns.lookup / undici fetch) can't do mDNS — getaddrinfo()
+// on .local names just times out, confirmed live (ping resolves .local fine,
+// node/curl don't; Apple special-cases ping, not getaddrinfo). So a .local
+// CAM_URL entry is resolved by hand here via a direct multicast query, with a
+// short cache since a DHCP network can reassign the cam's IP.
+const mdns = require("multicast-dns")();
+const mdnsCache = new Map(); // hostname -> { ip, at }
+const MDNS_TTL = 60_000;
+function resolveMdns(hostname, timeoutMs = 2000) {
+  const cached = mdnsCache.get(hostname);
+  if (cached && Date.now() - cached.at < MDNS_TTL) return Promise.resolve(cached.ip);
+  return new Promise((resolve, reject) => {
+    const onResponse = (resp) => {
+      const a = resp.answers.find((r) => r.type === "A" && r.name === hostname);
+      if (!a) return;
+      clearTimeout(timer);
+      mdns.removeListener("response", onResponse);
+      mdnsCache.set(hostname, { ip: a.data, at: Date.now() });
+      resolve(a.data);
+    };
+    const timer = setTimeout(() => {
+      mdns.removeListener("response", onResponse);
+      reject(new Error(`mDNS timeout resolving ${hostname}`));
+    }, timeoutMs);
+    mdns.on("response", onResponse);
+    mdns.query({ questions: [{ name: hostname, type: "A" }] });
+  });
+}
+// Swap a .local hostname in a cam URL for its resolved IP; passes other URLs through untouched.
+async function resolveCamUrl(url) {
+  const u = new URL(url);
+  if (!u.hostname.endsWith(".local")) return url;
+  u.hostname = await resolveMdns(u.hostname);
+  return u.toString();
+}
+
 // Cam is mounted rotated 90°, and the OV2640 can only vflip/hmirror in-sensor — never
 // rotate. The dashboard <img> un-rotates in CSS (.cam-feed), but Sage eats the raw
 // /capture bytes, so it has to be un-rotated here too or the model reads the scene
@@ -62,10 +98,11 @@ async function grabFrame(timeoutMs = 8000) {
 }
 
 async function grabFrameFrom(url, timeoutMs) {
+  const resolved = await resolveCamUrl(url);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const resp = await fetch(url, { signal: ctrl.signal });
+    const resp = await fetch(resolved, { signal: ctrl.signal });
     if (!resp.ok) throw new Error(`cam HTTP ${resp.status}`);
     const reader = resp.body.getReader();
     let buf = Buffer.alloc(0);
@@ -94,6 +131,10 @@ async function grabFrameFrom(url, timeoutMs) {
 let frameCache = { data: "", at: 0 };
 const FRESH_TTL = parseInt(process.env.VISION_FRESH_MS || "1500", 10);
 const FAIL_THROTTLE = parseInt(process.env.VISION_TTL || "6", 10) * 1000;
+// Hard ceiling on how old a cached frame may be served as "live". A cam that
+// died shouldn't leave Sage confidently narrating a stale scene — past this
+// age Sage goes blind instead.
+const MAX_FRAME_AGE = parseInt(process.env.VISION_MAX_AGE_MS || "30000", 10);
 let lastFail = 0;
 async function eyeParts() {
   const stale = Date.now() - frameCache.at >= FRESH_TTL;
@@ -106,6 +147,9 @@ async function eyeParts() {
       console.error("vision error:", err.message);
       lastFail = Date.now(); // cam down — hold off re-grabbing, reuse last good frame
     }
+  }
+  if (frameCache.data && Date.now() - frameCache.at >= MAX_FRAME_AGE) {
+    frameCache = { data: "", at: 0 }; // too old to pass off as live
   }
   return frameCache.data
     ? [{ type: "image_url", image_url: { url: `data:image/jpeg;base64,${frameCache.data}` } }]
