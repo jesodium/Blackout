@@ -417,7 +417,7 @@ function Camera() {
   const [yielded, setYielded] = useState(false);
   const [host, setHost] = useState(camHost());
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [sliders, setSliders] = useState({ brightness: -1, contrast: -1, ae_level: 0 });
+  const [sliders, setSliders] = useState({ brightness: -1, contrast: -1, ae_level: 0, led: 15 });
 
   useEffect(() => {
     const y = () => setYielded(true);
@@ -488,7 +488,7 @@ function Camera() {
             </button>
             ${settingsOpen ? html`
               <div style=${{ padding: "8px", fontSize: "12px" }}>
-                ${[["brightness", -2, 2], ["contrast", -2, 2], ["ae_level", -2, 2]].map(([k, min, max]) => html`
+                ${[["brightness", -2, 2], ["contrast", -2, 2], ["ae_level", -2, 2], ["led", 0, 255]].map(([k, min, max]) => html`
                   <div style=${{ marginBottom: "6px" }}>
                     <div style=${{ display: "flex", justifyContent: "space-between" }}>
                       <span>${k}</span>
@@ -944,7 +944,7 @@ function Masthead({ connected, ports, currentPort, bridge, onBridge, onCmd, conn
     <header class="masthead reveal">
       <div class="mast-top">
         <div class="mast-id">
-          <span class="folio-sm">BLK-01</span>
+          <span class="folio-sm">BLK-02</span>
           <span class="label">${t("mast.console")}</span>
         </div>
         <div class="mast-strip">
@@ -1000,7 +1000,7 @@ function Masthead({ connected, ports, currentPort, bridge, onBridge, onCmd, conn
         </div>
       </div>
       <div class="mast-title">
-        <h1>Blackout<span class="ver">V1</span></h1>
+        <h1>Blackout<span class="ver">V2</span></h1>
         <div class="mast-sub">
           <span>${t("mast.subTele")}</span>
           <span class="dim">ESP32-CAM // ARDUINO UNO R4 WIFI</span>
@@ -1545,7 +1545,7 @@ function App() {
         </main>
 
         <footer class="colophon">
-          <span><b>Blackout V1</b></span><span class="dot">/</span>
+          <span><b>Blackout V2</b></span><span class="dot">/</span>
           <span>WRO 2026</span><span class="dot">/</span>
           <span>${t("colo.sensorHub")} <b>Uno R4 WiFi</b></span><span class="dot">/</span>
           <span>Cam <b>ESP32-CAM</b></span><span class="dot">/</span>

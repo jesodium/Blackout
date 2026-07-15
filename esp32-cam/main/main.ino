@@ -120,6 +120,7 @@ static esp_err_t control_handler(httpd_req_t* req) {
   else if (!strcmp(var, "hmirror"))      ok = s->set_hmirror(s, v);
   else if (!strcmp(var, "vflip"))        ok = s->set_vflip(s, v);
   else if (!strcmp(var, "colorbar"))     ok = s->set_colorbar(s, v);
+  else if (!strcmp(var, "led"))          { ledcWrite(4, v); ok = 0; }
   int n = snprintf(buf, sizeof(buf), "OK:%s=%d", var, ok == -1 ? -1 : v);
   httpd_resp_set_type(req, "text/plain");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
