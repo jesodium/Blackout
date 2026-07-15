@@ -16,7 +16,7 @@ function parseSage(raw) {
       return {
         text: String(o.text || "").trim() || s,
         status: SAGE_STATUS.has(o.status) ? o.status : null,
-        action: o.action === "sweep" ? "sweep" : null,
+        action: o.action === "analyze" ? "analyze" : null,
       };
     } catch { /* fall through to raw */ }
   }

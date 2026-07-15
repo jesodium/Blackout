@@ -1,22 +1,24 @@
-// Uno R4 WiFi — sensor hub. Reads sensors, broadcasts CSV over BLE notify.
-// Same "S:" line format the server already parses (temp,humid,dist,smoke,
-// airq,roll,pitch,yaw,co,co_alert,pressure) — pressure is a trailing optional
-// field like co/co_alert, so older lines without it still parse fine.
+// Uno R4 WiFi — sensor hub + motion routines. Reads sensors, broadcasts CSV over
+// BLE notify. Same "S:" line format the server already parses (temp,humid,dist,
+// smoke,airq,roll,pitch,yaw,co,co_alert,pressure,routine) — everything from co
+// onward is a trailing optional field, so older lines without them still parse.
+// Also emits "E:analyze" lines: routine-driven events for the dashboard, not
+// telemetry. The server ignores anything that isn't "S:".
 // Order matters: ArduinoGraphics before Arduino_LED_Matrix.
 #include <ArduinoGraphics.h>
 #include <Arduino_LED_Matrix.h>
 #include <TextAnimation.h>
 #include <ArduinoBLE.h>
-#include <Servo.h>
 #include <DHT11.h>
+#include "routines.h" // Op/Step + the PRESENTATION and RUN tables
 
 #define DHT_PIN 2   // DHT11 data pin. D2 = clean digital; NOT D13 (onboard LED
                     // shares that line and glitches the bit-banged timing).
 #define TRIG_PIN 11
 #define ECHO_PIN 12
-#define SERVO_PIN 9
 // L298N direction pins. D4-D7 = contiguous free block, no timer/peripheral
-// conflict (D9 servo, D11/D12 sonar, D2 DHT, D13 onboard LED all clear).
+// conflict (D11/D12 sonar, D2 DHT, D13 onboard LED all clear). D9 is free —
+// it drove the camera servo before the camera was fixed in place.
 #define IN1 4  // motor A
 #define IN2 5
 #define IN3 6  // motor B
@@ -26,9 +28,6 @@
 // tie enable to 5V and these pins do nothing (motors stay full speed).
 #define ENA 3  // motor A speed
 #define ENB 10 // motor B speed
-// Duty cycle 0-255. Below ~90 most geared DC motors won't break stiction — they
-// just buzz. Tune per chassis/battery; a loaded robot needs more than a bench test.
-#define SPEED_SLOW 120
 #define SONAR_ITER 3            // pings per reading; median drops spikes
 #define SONAR_TIMEOUT_US 25000UL // ~430cm round-trip + margin; no echo = timeout
 #define DIST_ALPHA 0.6 // EMA smoothing on distance — ultrasonic is already clean
@@ -40,10 +39,19 @@
 BLEService sensorService("19b10000-e8f2-537e-4f6c-d104768a1214");
 BLEStringCharacteristic sensorChar("19b10001-e8f2-537e-4f6c-d104768a1214", BLERead | BLENotify, 100);
 // Command channel: server (via the browser's Web Bluetooth) writes here to
-// trigger actions. "scan" = slow look-around pan; anything else = quick sweep check.
+// trigger actions. "go,<routine>" starts a motion routine; "stop" cuts the motors.
 BLEStringCharacteristic cmdChar("19b10002-e8f2-537e-4f6c-d104768a1214", BLEWrite, 20);
 
-Servo servo;
+// The routine tables live in routines.h — that's the file to edit to change what
+// the robot does. Everything here is the machinery that runs them: the board plays
+// a routine standalone (the browser just writes "go,presentation"), so a BLE
+// dropout mid-run doesn't strand it. Steps advance on a millis() stepper, never
+// delay() — a blocking routine would freeze loop(), killing BLE.poll() and the
+// telemetry send for the whole run.
+const Step* routine = nullptr; // null = idle
+uint8_t stepIdx = 0;
+unsigned long stepStart = 0;
+
 ArduinoLEDMatrix matrix;
 DHT11 dht(DHT_PIN);
 int dhtTemp = 0, dhtHumid = 0; // last good DHT11 read, cached between polls
@@ -60,12 +68,10 @@ void setup() {
   Serial.begin(9600);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
-  servo.attach(SERVO_PIN);
 
   for (int p = IN1; p <= IN4; p++) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
   pinMode(ENA, OUTPUT); pinMode(ENB, OUTPUT);
   analogWrite(ENA, 0); analogWrite(ENB, 0); // stopped until told otherwise
-  forward(SPEED_SLOW);
 
   matrix.begin();
   matrix.beginDraw();
@@ -107,21 +113,109 @@ void forward(uint8_t speed) {
   analogWrite(ENA, speed); analogWrite(ENB, speed);
 }
 
-// One full 0→180→0 sweep, ~1.1s. IMPORTANT NOTE: blocking — the loop (sensor
-// sends + BLE poll) pauses for the duration. Fine under the BLE supervision
-// timeout at once-per-30s cadence; go non-blocking (millis stepper) if it bites.
-void sweepServo() {
-  for (int a = 0; a <= 180; a += 5) { servo.write(a); delay(15); }
-  for (int a = 180; a >= 0; a -= 5) { servo.write(a); delay(15); }
+void back(uint8_t speed) {
+  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
+  analogWrite(ENA, speed); analogWrite(ENB, speed);
 }
 
-// Slow "look around": pan 0→180 over ~4s so the cam (mounted on this servo) gives
-// clean, distinct stills for the server to grab, then snap back. IMPORTANT NOTE:
-// blocking like sweepServo — sensor sends pause ~4-5s during this deliberate look.
-// Go non-blocking (millis stepper) if it bites the BLE supervision timeout.
-void slowSweep() {
-  for (int a = 0; a <= 180; a += 2) { servo.write(a); delay(45); }
-  for (int a = 180; a >= 0; a -= 5) { servo.write(a); delay(10); }
+// Pivot turns: motors oppose, so the robot spins about its own centre rather
+// than arcing. Turn *angle* is whatever `ms` buys you at this speed — open loop,
+// no encoders, so it drifts with battery charge. Tune on the field, not the bench.
+void left(uint8_t speed) {
+  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+  analogWrite(ENA, speed); analogWrite(ENB, speed);
+}
+
+void right(uint8_t speed) {
+  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
+  analogWrite(ENA, speed); analogWrite(ENB, speed);
+}
+
+void halt() {
+  analogWrite(ENA, 0); analogWrite(ENB, 0);
+  digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
+}
+
+void applyStep(const Step& s) {
+  switch (s.op) {
+    case FWD:   forward(s.pwm); break;
+    case BACK:  back(s.pwm);    break;
+    case LEFT:  left(s.pwm);    break;
+    case RIGHT: right(s.pwm);   break;
+    case ANALYZE:
+      halt(); // stand still — the camera grabs a frame and a moving one is a blurry one
+      // Fire-and-forget on the notify channel the browser already listens to. If
+      // the notify is dropped we just miss one analysis; the routine is unaffected.
+      sensorChar.writeValue("E:analyze");
+      Serial.println("E:analyze");
+      break;
+    default:    halt();         break; // WAIT + END both mean wheels still
+  }
+}
+
+// Direct drive for the dashboard's motor-debug panel: "drv,<fwd|back|left|right>,<pwm>[,<ms>]".
+// Always time-limited (default 800ms, cap 10s) so a dropped link or a missed stop
+// can never leave the wheels spinning. Overrides any running routine.
+unsigned long drvEnd = 0;
+
+void stopRoutine() { routine = nullptr; drvEnd = 0; halt(); }
+
+void startDrive(const String& c) {   // c = "drv,verb,pwm[,ms]"
+  int a = c.indexOf(',', 4);
+  if (a < 0) return;
+  String verb = c.substring(4, a);
+  int b = c.indexOf(',', a + 1);
+  int pwm = constrain((b < 0 ? c.substring(a + 1) : c.substring(a + 1, b)).toInt(), 0, 255);
+  long ms = b < 0 ? 800 : constrain(c.substring(b + 1).toInt(), 50, 10000);
+  routine = nullptr;
+  if      (verb == "fwd")   forward(pwm);
+  else if (verb == "back")  back(pwm);
+  else if (verb == "left")  left(pwm);
+  else if (verb == "right") right(pwm);
+  else { halt(); return; } // unknown verb: wheels stay still
+  drvEnd = millis() + ms;
+  Serial.print("drv: "); Serial.println(c);
+}
+
+// Auto-halt an expired debug drive. Called every loop(), non-blocking.
+void tickDrive() {
+  if (drvEnd && millis() >= drvEnd) { drvEnd = 0; halt(); }
+}
+
+void startRoutine(const String& name) {
+  if (name == "presentation") routine = PRESENTATION;
+  else if (name == "run") routine = RUN;
+  else if (name == "test") routine = TEST;
+  else return; // unknown name: stay idle rather than guess
+  stepIdx = 0;
+  stepStart = millis();
+  applyStep(routine[0]);
+  Serial.print("routine start: "); Serial.println(name);
+}
+
+// Advance the active routine if the current step has run out its time. Called
+// every loop() — must stay non-blocking.
+void tickRoutine() {
+  if (!routine) return;
+  if (routine[stepIdx].op == END) { stopRoutine(); Serial.println("routine done"); return; }
+  if (millis() - stepStart < routine[stepIdx].ms) return;
+  stepIdx++;
+  stepStart = millis();
+  applyStep(routine[stepIdx]);
+}
+
+// One parser for both transports: BLE cmdChar and USB serial. Serial parity means
+// routines are testable at the bench with no BLE, no browser, no pairing.
+void handleCmd(String c) {
+  c.trim();
+  if (c == "stop") stopRoutine();
+  else if (c.startsWith("go,")) startRoutine(c.substring(3));
+  else if (c.startsWith("drv,")) startDrive(c);
+  // Unknown verb: ignore. The board only moves when explicitly told to.
 }
 
 // One HC-SR04 ping in cm via plain pulseIn() — portable across cores, unlike
@@ -134,7 +228,6 @@ float pingCm() {
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
   unsigned long us = pulseIn(ECHO_PIN, HIGH, SONAR_TIMEOUT_US);
-  Serial.print("ping us="); Serial.println(us); // DEBUG: remove once wiring confirmed
   return us > 0 ? us / 58.0 : -1;
 }
 
@@ -161,10 +254,12 @@ float medianPingCm() {
 void loop() {
   BLE.poll();
 
-  if (cmdChar.written()) {            // server said "time to move the servo"
-    if (cmdChar.value() == "scan") slowSweep(); // Sage's look-around
-    else sweepServo();                          // quick manual check
-  }
+  if (cmdChar.written()) handleCmd(cmdChar.value());
+  if (Serial.available()) handleCmd(Serial.readStringUntil('\n'));
+
+  tickRoutine(); // before the SEND_INTERVAL return below — that skips the rest
+                 // of loop() most iterations, which would stall the routine.
+  tickDrive();
 
   if (matrixReplay) { // loop the scroll forever
     matrixReplay = false;
@@ -179,7 +274,12 @@ void loop() {
   if (now - lastSend < SEND_INTERVAL) return;
   lastSend = now;
 
-  float raw = medianPingCm();
+  // Median-of-3 blocks ~180-250ms (60ms enforced between pings), which would cap
+  // the routine stepper's resolution at that same figure — a 400ms turn could
+  // overshoot 60%. During a routine take a single ~25ms ping instead: noisier
+  // distance, but steps land on time and telemetry keeps flowing. Consecutive
+  // pings still land SEND_INTERVAL (100ms) apart, clear of the 60ms ring-down.
+  float raw = routine ? pingCm() : medianPingCm();
   if (raw >= 0) {
     distF = (distF < 0) ? raw : distF + DIST_ALPHA * (raw - distF);
   } else {
@@ -203,6 +303,10 @@ void loop() {
   line += ",";
   line += dist;
   line += ",0,0,0,0,0,0,0,0";
+  // Field 11: routine running? The server gates auto-analysis on this. Sent on
+  // every line rather than as a start/end event on purpose — a dropped event
+  // would strand the server thinking a routine runs forever; a flag self-heals.
+  line += routine ? ",1" : ",0";
 
   Serial.println(line);
   sensorChar.writeValue(line);

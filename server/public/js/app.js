@@ -6,16 +6,16 @@ import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./
 
 const html = htm.bind(React.createElement);
 
-// ESP32-CAM MJPEG stream. Matches MDNS_NAME in esp32-cam/main/main.ino.
-// IMPORTANT NOTE: mDNS (.local) can fail on some networks/Androids — swap for
-// the cam's raw IP (printed on its serial) if the feed never loads.
-// mDNS name the ESP32 registers (MDNS.begin("blackout-cam")). Survives DHCP
-// lease changes, works on any real WiFi. IMPORTANT NOTE: iPhone hotspot does
-// NOT pass mDNS — on a hotspot, swap this for the cam's raw IP off serial.
-// Cam host is the mDNS name by default; onsite you can override it with the cam's raw
-// IP (printed on serial: "net up: http://<IP>") via the field in the offline panel.
-// Persisted in localStorage so the choice sticks across reloads. Stream is always :81.
-const CAM_HOST_DEFAULT = "blackout-cam.local";
+// ESP32-CAM MJPEG stream. Raw IPs, not blackout-cam.local — the TP-Link router
+// poisons .local (answers every query with 127.0.0.1), so the feed pointed at the
+// dev machine. Both known homes of the cam: TP-Link (192.168.1.111, DHCP-reserved
+// for the cam's MAC) and iPhone hotspot (172.20.10.10, static in the sketch). The
+// Camera component walks this list on failure until one loads, so the feed
+// self-heals when the cam moves networks. The offline panel's field still
+// overrides (localStorage, sticks across reloads) for anything not listed here.
+// Stream is always :81.
+const CAM_HOSTS = ["192.168.1.111", "172.20.10.10"];
+const CAM_HOST_DEFAULT = CAM_HOSTS[0];
 const camHost = () => localStorage.getItem("camHost") || CAM_HOST_DEFAULT;
 const camUrl = (host) => `http://${host}:81/stream`;
 
@@ -278,6 +278,53 @@ function Orientation({ packet, onLog }) {
     </section>`;
 }
 
+/* ---------------- motor debug: direct-drive bench panel ---------------- */
+// Bench tool — labels stay English on purpose, not worth 6-language i18n keys.
+// Every button sends a one-shot "drv,<verb>,<pwm>,<ms>": the firmware auto-halts
+// when <ms> runs out, so a dropped BLE link can never leave the wheels spinning.
+// 360s are TIMED spins (no IMU feedback) — the "360 ms" knob is the calibration:
+// nudge it until one press is one full turn at your usual speed. Knobs persist
+// in localStorage. BLE cmd char caps at 20 bytes, hence the input max limits.
+function MotorDebug({ onCmd, enabled }) {
+  const knob = (key, def) => {
+    const [v, setV] = useState(+localStorage.getItem(key) || def);
+    return [v, (x) => { setV(x); localStorage.setItem(key, x); }];
+  };
+  const [pwm, setPwm]       = knob("dbgPwm", 180);     // 60 floor: below ~60 the L298N stalls
+  const [ms, setMs]         = knob("dbgMs", 800);
+  const [spinMs, setSpinMs] = knob("dbgSpinMs", 1200);
+  const drv = (verb, dur) => onCmd(`drv,${verb},${pwm},${dur}`);
+  const btn = (label, fn, extra = "") => html`
+    <button type="button" class=${"btn btn--ghost " + extra} disabled=${!enabled} onClick=${fn}>${label}</button>`;
+  const num = (label, v, set, min, max) => html`
+    <label class="dbg-knob"><span class="label">${label}</span>
+      <input type="number" min=${min} max=${max} value=${v}
+        onChange=${e => set(Math.min(max, Math.max(min, +e.target.value || min)))} /></label>`;
+  return html`
+    <details class="zone dbg">
+      <summary>MOTOR DEBUG ${enabled ? "" : "— BT bridge off, buttons dead"}</summary>
+      <div class="zone-body dbg-body">
+        <div class="dbg-grid">
+          ${btn("▲ Forward",  () => drv("fwd", ms))}
+          ${btn("▼ Backward", () => drv("back", ms))}
+          ${btn("◀ Pivot L",  () => drv("left", ms))}
+          ${btn("▶ Pivot R",  () => drv("right", ms))}
+          ${btn("↺ 360 CCW",  () => drv("left", spinMs))}
+          ${btn("↻ 360 CW",   () => drv("right", spinMs))}
+          ${btn("▶▶ Fwd 3s",  () => drv("fwd", 3000))}
+          ${btn("◀◀ Back 3s", () => drv("back", 3000))}
+          <button type="button" class="btn dbg-stop" onClick=${() => onCmd("stop")}>■ STOP</button>
+        </div>
+        <div class="dbg-knobs">
+          <label class="dbg-knob dbg-knob--wide"><span class="label">Speed ${pwm}</span>
+            <input type="range" min="60" max="255" value=${pwm} onInput=${e => setPwm(+e.target.value)} /></label>
+          ${num("Burst ms", ms, setMs, 50, 9999)}
+          ${num("360 ms", spinMs, setSpinMs, 50, 9999)}
+        </div>
+      </div>
+    </details>`;
+}
+
 /* ---------------- camera: ESP32-CAM live feed ---------------- */
 function Camera() {
   const [state, setState] = useState("loading"); // loading | live | offline
@@ -294,11 +341,36 @@ function Camera() {
     window.addEventListener("cam:resume", r);
     return () => { window.removeEventListener("cam:yield", y); window.removeEventListener("cam:resume", r); };
   }, []);
+  // On failure, walk CAM_HOSTS before declaring offline: the cam lives at a
+  // different IP per network (home vs hotspot), so a dead host usually just means
+  // "wrong network — try the other one". Only when every known host has failed do
+  // we show the offline panel. The winning host is persisted so the next reload
+  // starts on it.
+  const tried = useRef(new Set());
+  const fail = useCallback(() => {
+    tried.current.add(host);
+    const next = CAM_HOSTS.find(h => !tried.current.has(h));
+    if (next) { setHost(next); setNonce(n => n + 1); }
+    else setState("offline");
+  }, [host]);
+  // A wrong/dead host can HANG instead of refusing (127.0.0.1:81 with nothing on it
+  // does exactly this), so onError never fires and state pins at "loading" forever —
+  // which hides the offline panel, the only place to correct the host. Self-inflicted
+  // lockout. Give up after a while so the field is always reachable.
+  // IMPORTANT NOTE: 12s because a weak-signal grab already measured ~5s; raise it if a
+  // slow-but-live cam starts getting declared offline. Worst case to the offline
+  // panel is 12s x CAM_HOSTS.length.
+  useEffect(() => {
+    if (yielded || state !== "loading") return;
+    const id = setTimeout(fail, 12000);
+    return () => clearTimeout(id);
+  }, [state, yielded, nonce, host, fail]);
   const base = camUrl(host);
   const src = base + "?n=" + nonce;
   const applyHost = (v) => {
     const h = v.trim() || CAM_HOST_DEFAULT;
     localStorage.setItem("camHost", h);
+    tried.current.clear();
     setHost(h); setState("loading"); setNonce(n => n + 1);
   };
   return html`
@@ -310,18 +382,18 @@ function Camera() {
           ${yielded
             ? html`<div class="viewport-fallback">${t("cam.scanning")}</div>`
             : state !== "offline"
-            ? html`<img src=${src} alt=${t("zone.camera")}
-                style=${{ width: "100%", height: "100%", objectFit: "fill" }}
-                onLoad=${() => setState("live")} onError=${() => setState("offline")} />`
+            ? html`<img src=${src} alt=${t("zone.camera")} class="cam-feed"
+                onLoad=${() => { setState("live"); localStorage.setItem("camHost", host); tried.current.clear(); }}
+                onError=${fail} />`
             : html`<div class="viewport-fallback">${t("cam.offline")}<br/>
                 <small>${base}</small><br/>
                 <input type="text" defaultValue=${host} aria-label=${t("zone.camera")}
-                  placeholder="blackout-cam.local"
+                  placeholder=${CAM_HOST_DEFAULT}
                   style=${{ marginTop: "12px", textAlign: "center", width: "80%" }}
                   onKeyDown=${(e) => { if (e.key === "Enter") applyHost(e.target.value); }}
                   onBlur=${(e) => applyHost(e.target.value)} /><br/>
                 <button type="button" class="btn btn--ghost" style=${{ marginTop: "12px" }}
-                  onClick=${() => { setState("loading"); setNonce(n => n + 1); }}>${t("cam.retry")}</button>
+                  onClick=${() => { tried.current.clear(); setState("loading"); setNonce(n => n + 1); }}>${t("cam.retry")}</button>
               </div>`}
         </div>
       </div>
@@ -763,7 +835,7 @@ function SerialMonitor({ lines, hidden, onToggle, onClear }) {
 }
 
 /* ---------------- masthead ---------------- */
-function Masthead({ connected, ports, currentPort, bridge, onBridge, onServo, connMode, onConnMode, ping, packets, uptime, onPort, lang, onLang }) {
+function Masthead({ connected, ports, currentPort, bridge, onBridge, onCmd, connMode, onConnMode, ping, packets, uptime, onPort, lang, onLang }) {
   return html`
     <header class="masthead reveal">
       <div class="mast-top">
@@ -800,8 +872,14 @@ function Masthead({ connected, ports, currentPort, bridge, onBridge, onServo, co
                   </button>
                   <button type="button" class="bridge-repair" title=${t("mast.bridgeRepairTitle")}
                     disabled=${bridge.busy} onClick=${() => onBridge("reconnect")}>⟳</button>
-                  <button type="button" class="bridge-repair" title=${t("mast.servoTitle")}
-                    disabled=${bridge.busy || !bridge.running} onClick=${onServo}>⟲cam</button>
+                  <button type="button" class="bridge-repair" title=${t("mast.routinePresTitle")}
+                    disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,presentation")}>▶pres</button>
+                  <button type="button" class="bridge-repair" title=${t("mast.routineRunTitle")}
+                    disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,run")}>▶run</button>
+                  <button type="button" class="bridge-repair" title=${t("mast.routineTestTitle")}
+                    disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,test")}>▶test</button>
+                  <button type="button" class="bridge-repair" title=${t("mast.routineStopTitle")}
+                    disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("stop")}>■</button>
                 </div>
               `}
             </div>
@@ -1076,16 +1154,27 @@ function App() {
   // /api/bridge/* just tracks the intent flag server-side (mutual excl. w/ USB).
   const BLE_SERVICE = "19b10000-e8f2-537e-4f6c-d104768a1214";
   const BLE_CHAR = "19b10001-e8f2-537e-4f6c-d104768a1214";
-  const BLE_CMD = "19b10002-e8f2-537e-4f6c-d104768a1214"; // write = sweep servo (camera pan)
+  const BLE_CMD = "19b10002-e8f2-537e-4f6c-d104768a1214"; // write = motion routine verbs
   const bleRef = useRef({ device: null, char: null, cmd: null });
 
+  // Defined above onBleNotify because that handler calls it — deps are evaluated
+  // during render, so a later `const` would be in the temporal dead zone.
+  const analyze = useCallback(() => {
+    setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
+    socketRef.current?.emit("request-analysis");
+  }, []);
+
+  // The board notifies two kinds of line: "S:" telemetry, and "E:" events a
+  // routine raises as it runs (an ANALYZE step asking for an AI read). Events are
+  // ours to act on and aren't telemetry, so they don't go to /api/mega/sensor.
   const onBleNotify = useCallback((e) => {
     const line = new TextDecoder().decode(e.target.value);
     console.log("BLE notify:", line);
+    if (line.startsWith("E:analyze")) { addLog(t("log.routineAnalyze"), "ai"); analyze(); return; }
     fetch("/api/mega/sensor", { method: "POST", headers: { "Content-Type": "text/plain" }, body: line })
       .then((r) => { if (!r.ok) console.error("BLE forward failed:", r.status); })
       .catch((err) => console.error("BLE forward error:", err.message));
-  }, []);
+  }, [analyze, addLog]);
 
   const disconnectBle = useCallback(() => {
     const { device, char } = bleRef.current;
@@ -1094,17 +1183,16 @@ function App() {
     bleRef.current = { device: null, char: null, cmd: null };
   }, [onBleNotify]);
 
-  // Move the camera servo. "sweep" = quick 0→180→0 eyeball check (manual button);
-  // "scan" = slow ~4-5s look-around pan the firmware runs so Sage gets clean stills.
-  // Returns true if the write went out (so runScan knows the pan actually started).
-  const sweepServo = useCallback(async (payload = "sweep") => {
-    const word = typeof payload === "string" ? payload : "sweep"; // onClick passes an event
+  // One verb to the firmware over the BLE cmd char: "go,<name>" starts a motion
+  // routine, "stop" cuts the motors. Routines run standalone on the board — this
+  // only fires the starting gun, so a dropped link mid-run doesn't strand the robot.
+  const sendCmd = useCallback(async (word) => {
     const { device, cmd } = bleRef.current;
-    if (!device?.gatt?.connected) { toast(t("toast.servoNoLink"), "danger"); return false; }
-    if (!cmd) { toast(t("toast.servoNoChar"), "danger"); return false; } // linked but firmware lacks cmd char
+    if (!device?.gatt?.connected) { toast(t("toast.cmdNoLink"), "danger"); return false; }
+    if (!cmd) { toast(t("toast.cmdNoChar"), "danger"); return false; } // linked but firmware lacks cmd char
     try {
       await cmd.writeValue(new TextEncoder().encode(word));
-      addLog(t("log.servoSweep"), "system");
+      addLog(t("log.cmdSent", { cmd: word }), "system");
       return true;
     } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); return false; }
   }, [addLog, toast]);
@@ -1156,10 +1244,6 @@ function App() {
     loadBridge();
   }, [bridge.running, addLog, toast, loadBridge, disconnectBle, onBleNotify]);
 
-  const analyze = useCallback(() => {
-    setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
-    socketRef.current?.emit("request-analysis");
-  }, []);
   const mockData = useCallback(() => {
     setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
     socketRef.current?.emit("mock-data");
@@ -1179,13 +1263,12 @@ function App() {
     if (speak && ttsRef.current) speakTimed(textv);
   }, [speakTimed]);
 
-  // Sage asked to look around (action:"sweep"): drive the slow servo pan, then let
-  // the server grab stills across it and hand back Sage's description.
+  // Sage asked for a fresh look (action:"analyze"): let the server grab a still and
+  // hand back Sage's description. No BLE write — the camera is fixed forward, so
+  // this is purely a camera read and works with the board unplugged.
   const runScan = useCallback(async () => {
-    const started = await sweepServo("scan"); // slow ~4-5s pan; false = no BLE link
-    if (!started) return; // sweepServo already toasted why
     // Hand the camera to the server: drop our live feed so its single worker is free
-    // to grab frames across the pan, then reconnect once we're done.
+    // to grab the frame, then reconnect once we're done.
     window.dispatchEvent(new Event("cam:yield"));
     const t0 = Date.now();
     setAi(p => ({ ...p, analyzing: true, badge: "badge.thinking", phase: "thinking", since: t0, llm: null, tts: null }));
@@ -1203,7 +1286,7 @@ function App() {
     } finally {
       window.dispatchEvent(new Event("cam:resume")); // give the live feed back
     }
-  }, [sweepServo, showSage, addLog]);
+  }, [showSage, addLog]);
 
   const ask = useCallback(async (text) => {
     text = (text || "").trim();
@@ -1224,7 +1307,7 @@ function App() {
       if (ok) setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...next, { role: "assistant", content: sage.text }].slice(-12) } : c));
       addLog(t("log.replied"), "ai");
       showSage(ok ? sage : { text: data.error || "No response.", status: null }, t0, ok);
-      if (ok && sage.action === "sweep") runScan(); // Sage wants a look around
+      if (ok && sage.action === "analyze") runScan(); // Sage wants a fresh look
     } catch (e) {
       setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
     }
@@ -1289,7 +1372,7 @@ function App() {
     <${React.Fragment}>
       <div class="console">
         <${Masthead} connected=${connected} ports=${ports} currentPort=${currentPort}
-          bridge=${bridge} onBridge=${toggleBridge} onServo=${sweepServo} connMode=${connMode} onConnMode=${setConnMode}
+          bridge=${bridge} onBridge=${toggleBridge} onCmd=${sendCmd} connMode=${connMode} onConnMode=${setConnMode}
           ping=${ping} packets=${packets} uptime=${uptime} onPort=${switchPort}
           lang=${lang} onLang=${changeLang} />
         <${Ticker} packet=${view} connected=${connected} />
@@ -1312,6 +1395,10 @@ function App() {
 
           <div class="row">
             <${TrendsPanel} packet=${packet} />
+          </div>
+
+          <div class="row">
+            <${MotorDebug} onCmd=${sendCmd} enabled=${bridge.running} />
           </div>
 
           <div class="row">

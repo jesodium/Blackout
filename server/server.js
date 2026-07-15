@@ -139,19 +139,20 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-// Look-around: Sage asked to sweep (action:"sweep"). The browser drives the pin-9
-// servo through a slow pan and hits this back-to-back; we grab stills across the pan
-// and let Sage narrate what it saw. Same JSON reply shape as /api/chat.
+// Take a look: Sage asked for a fresh view (action:"analyze"). Grabs a still and
+// lets Sage narrate what it sees. Same JSON reply shape as /api/chat.
+// The camera is fixed forward — it used to ride a pin-9 servo and this grabbed
+// several stills across a slow pan, hence the frame-count arg below.
 app.post("/api/scan", async (req, res) => {
   if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
   try {
-    // 2 frames (sweep start + end): 4 SVGA stills base64'd blow past Cerebras' request
-    // size cap (413). 2 spans the pan and stays under. Bump if the model gets bigger.
-    const frames = await grabFrames(2, 3000); // ~3s pan, matches the slow firmware sweep
+    // 1 frame: the view no longer moves, so extra stills would be the same picture
+    // at more base64 bytes — and 4 SVGA stills blow past Cerebras' request cap (413).
+    const frames = await grabFrames(1);
     const ctx = latestData ? buildChatContext(latestData) : "No live readings yet — running dark.";
     const lead = frames.length
-      ? "You just panned your view slowly across the passage. These stills run left-to-right across that sweep — describe what you see out there and what you make of it."
-      : "You tried to pan and look around but your eyes are dark right now — say so briefly.";
+      ? "You just took a fresh look ahead. Describe what you see out there and what you make of it."
+      : "You tried to take a look but your eyes are dark right now — say so briefly.";
     const sage = await askSage([
       { role: "system", content: CHAT_SYSTEM },
       ...langMsg(currentLanguage),
@@ -184,6 +185,9 @@ function processLine(raw) {
     co: parts.length > 8 ? parseFloat(parts[8]) : 0,
     co_alert: parts.length > 9 ? parts[9].trim() === "1" : false,
     pressure: parts.length > 10 ? parseFloat(parts[10]) : 0,
+    // Board says whether a motion routine is running. Absent on older firmware →
+    // false, which just means auto-analysis behaves exactly as it always did.
+    routine: parts.length > 11 ? parts[11].trim() === "1" : false,
     timestamp: Date.now(),
   };
   latestData = data;
@@ -401,7 +405,7 @@ const AI_SYSTEM = loadPrompt("analysis.md");
 const CHAT_SYSTEM = loadPrompt("chat.md");
 
 // Sage now answers in JSON: { text, status, action }. text is the only thing
-// voiced/shown; status tints the UI; action:"sweep" lets Sage ask to look around.
+// voiced/shown; status tints the UI; action:"analyze" lets Sage ask for a fresh look.
 // parseSage lives in ./sage so it's testable without booting the server.
 async function askSage(messages, { maxTokens = 400 } = {}) {
   const resp = await openai.chat.completions.create({
@@ -496,6 +500,12 @@ function maybeAutoAnalyze(data) {
   if (changed && currentMission) emitBlurt(lastStatuses, s);
   lastStatuses = s;
   if (!changed || !currentMission) return; // no active mission → agent stays quiet
+  // A routine picks its own analysis moments with ANALYZE steps. Auto-analysis
+  // fires on status changes at arbitrary times, so during a run it would land on
+  // top of those deliberate reads. Blurts above still play — they're canned lines,
+  // no LLM call. The flag rides every telemetry line, so this clears itself when
+  // the routine ends, even if the board is reset mid-run.
+  if (data.routine) return;
   const now = Date.now();
   if (now - lastAutoAnalysis < AUTO_MIN_GAP) return; // don't spam the LLM on flapping
   lastAutoAnalysis = now;

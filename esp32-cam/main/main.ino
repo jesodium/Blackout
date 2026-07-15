@@ -7,18 +7,28 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include "esp_http_server.h"
-#include "arduino_secrets.h"  // SECRET_SSID / SECRET_PASS — gitignored, copy from .example
+#include "arduino_secrets.h"  // SECRET_*_HOME / SECRET_*_HOTSPOT — gitignored, copy from .example
 
-#define MDNS_NAME "blackout-cam"   // -> http://blackout-cam.local/stream (backup addr)
+// -> http://blackout-cam.local/stream
+// IMPORTANT NOTE: do NOT rely on this name — point clients at the cam's raw IP instead
+// (app.js CAM_HOST_DEFAULT, .env CAM_URL). The TP-Link_B964 router HIJACKS .local: it
+// answers EVERY *.local query with 127.0.0.1, even names that cannot exist (verified:
+// `dig @192.168.1.1 zzz-nonexistent.local` -> 127.0.0.1). The cam's real mDNS record
+// still publishes fine, so clients get BOTH answers and pick one at random — an
+// intermittent feed that points at localhost half the time. Renaming does not help;
+// any .local name is poisoned. Real fixes: disable the router's .local interception,
+// or set the Mac's DNS off 192.168.1.1. Registration stays for networks that behave.
+#define MDNS_NAME "blackout-cam"
 
-// Static IP on our OWN iPhone hotspot so the cam is ALWAYS at the same address at
-// competition — no mDNS, no DHCP guessing, nothing to reconfigure venue-to-venue.
-// iPhone hotspot is a fixed 172.20.10.0/28: gateway .1, usable .2-.14. We take .10
+// Network is picked at boot by scanning: hotspot if its SSID is on air (turning it
+// on signals intent), home otherwise — one flash works at home AND at competition.
+// On the hotspot the cam takes a static IP so it's ALWAYS at the same address:
+// iPhone hotspot is a fixed 172.20.10.0/28, gateway .1, usable .2-.14; we take .10
 // (high in range) so the phone's DHCP — which hands out from .2 — won't collide.
-// IMPORTANT NOTE: these are iPhone-hotspot values. Android hotspot uses a different
-// subnet (usually 192.168.x) — change all four if you switch phones. Comment out the
-// WiFi.config() call to fall back to plain DHCP + mDNS on an arbitrary network.
-#define USE_STATIC_IP 0   // school net (SCHOOL-WIFI): use DHCP, static .10 only valid on iPhone hotspot
+// On the home router it's plain DHCP — reserve 192.168.1.111 for the cam's MAC
+// (E0-8C-FE-30-38-28) in the router so that side is fixed too.
+// IMPORTANT NOTE: static values are iPhone-hotspot ones. Android hotspot uses a
+// different subnet (varies per phone) — change all three if you switch phones.
 IPAddress CAM_IP (172, 20, 10, 10);
 IPAddress CAM_GW (172, 20, 10, 1);
 IPAddress CAM_MASK(255, 255, 255, 240);   // /28
@@ -133,21 +143,26 @@ void setup() {
     s->set_hmirror(s, 1);
   }
 
-  // DIAGNOSTIC: scan first so we can see whether the target SSID is even on air
-  // and compare its name byte-for-byte with SECRET_SSID (apostrophe gotchas).
-  Serial.printf("looking for SSID=[%s]\n", SECRET_SSID);
+  // Scan, then join whichever known network is on air — hotspot preferred. The
+  // listing doubles as a diagnostic: compare names byte-for-byte with the secrets
+  // (apostrophe gotchas). Static IP is applied ONLY for the hotspot, so the
+  // wrong-subnet trap (static 172.20.10.10 on the 192.168.x router = associated
+  // but unroutable) can't happen anymore.
+  const char *ssid = SECRET_SSID_HOME, *pass = SECRET_PASS_HOME;
+  bool hotspot = false;
   int nfound = WiFi.scanNetworks();
-  for (int i = 0; i < nfound; i++)
+  for (int i = 0; i < nfound; i++) {
     Serial.printf("  seen: [%s] rssi=%d ch=%d\n",
                   WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i));
-
-#if USE_STATIC_IP
+    if (WiFi.SSID(i) == SECRET_SSID_HOTSPOT) hotspot = true;
+  }
+  if (hotspot) { ssid = SECRET_SSID_HOTSPOT; pass = SECRET_PASS_HOTSPOT; }
+  Serial.printf("joining [%s] (%s)\n", ssid, hotspot ? "hotspot, static IP" : "home, DHCP");
   // DNS = gateway so the cam can still resolve names if ever needed. Config BEFORE
-  // begin(). If it fails (wrong subnet for this network) begin() still tries DHCP.
-  if (!WiFi.config(CAM_IP, CAM_GW, CAM_MASK, CAM_GW))
+  // begin(); only returns false on a malformed address.
+  if (hotspot && !WiFi.config(CAM_IP, CAM_GW, CAM_MASK, CAM_GW))
     Serial.println("WiFi.config failed — falling back to DHCP");
-#endif
-  WiFi.begin(SECRET_SSID, SECRET_PASS);
+  WiFi.begin(ssid, pass);
   for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
     delay(500); Serial.printf(" st=%d", WiFi.status()); // 1=NO_SSID 4=FAIL 6=DISCONNECT
   }

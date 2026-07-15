@@ -1,7 +1,8 @@
 // Run: node test-vision.js  — checks the MJPEG frame carver + Sage JSON parse, no cam needed.
 const assert = require("assert");
-const { carveJpeg } = require("./vision");
+const { carveJpeg, upright } = require("./vision");
 const { parseSage } = require("./sage");
+const sharp = require("sharp");
 
 const J = (n) => Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(n, 0x41), Buffer.from([0xff, 0xd9])]);
 
@@ -24,6 +25,23 @@ assert.strictEqual(carveJpeg(Buffer.from("garbage")), null);
 
 console.log("ok — carveJpeg passes");
 
+// --- upright: the 90°-mounted cam's frames come back turned ---
+// The cam sends landscape SVGA; un-rotating a 90° mount must yield portrait, or Sage
+// reads the scene sideways. Async, so run it last and let the process end on the promise.
+(async () => {
+  const landscape = await sharp({ create: { width: 800, height: 600, channels: 3, background: "#444" } })
+    .jpeg().toBuffer();
+  const turned = await sharp(await upright(landscape)).metadata();
+  assert.strictEqual(turned.width, 600);
+  assert.strictEqual(turned.height, 800);
+
+  // a frame sharp can't decode still comes back as-is — a bad rotate must not blind Sage
+  const junk = Buffer.from([0xff, 0xd8, 0x41, 0xff, 0xd9]);
+  assert.deepStrictEqual(await upright(junk), junk);
+
+  console.log("ok — upright passes");
+})();
+
 // --- parseSage: tolerant JSON parse for Sage's replies ---
 // clean object parses through
 assert.deepStrictEqual(
@@ -32,8 +50,8 @@ assert.deepStrictEqual(
 
 // ```json fences + surrounding prose still extract the {...}
 assert.deepStrictEqual(
-  parseSage('Sure!\n```json\n{"text":"clear ahead","status":"clear","action":"sweep"}\n```'),
-  { text: "clear ahead", status: "clear", action: "sweep" });
+  parseSage('Sure!\n```json\n{"text":"clear ahead","status":"clear","action":"analyze"}\n```'),
+  { text: "clear ahead", status: "clear", action: "analyze" });
 
 // garbage / non-JSON falls back to voicing the raw string
 assert.deepStrictEqual(
