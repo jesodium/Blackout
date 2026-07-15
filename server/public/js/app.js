@@ -435,10 +435,12 @@ function Camera() {
     return () => clearTimeout(id);
   }, [state, yielded, nonce, host, fail]);
 
+  // A dropped feed (cam-yield contention, wifi hiccup) shouldn't strand the
+  // operator behind the manual Retry button — keep trying on its own.
   useEffect(() => {
-    if (yielded || state !== "live") return;
-    const id = setInterval(() => { setState("loading"); setNonce(n => n + 1); }, 60000);
-    return () => clearInterval(id);
+    if (yielded || state !== "offline") return;
+    const id = setTimeout(() => { setState("loading"); setNonce(n => n + 1); }, 5000);
+    return () => clearTimeout(id);
   }, [state, yielded]);
 
   const base = camUrl(host);

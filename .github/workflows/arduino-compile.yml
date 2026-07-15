@@ -19,3 +19,5 @@ jobs:
           sketch-paths: arduino-uno-r4/main
           libraries: |
             - name: ArduinoBLE
+            - name: ArduinoGraphics
+            - name: DHT11
