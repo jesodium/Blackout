@@ -46,10 +46,49 @@ const Step TEST[] = {
   {END, 0, 0},
 };
 
-// IMPORTANT NOTE: placeholder timings — tune against the real chassis/battery.
+// Audience scan, dictated on the field. Pivot left / right / right / left in 501ms bursts
+// at 140 — the whole move is theatre, it shows the judges the robot drives — then settle
+// and analyse ONCE at the end. ~15s total. Net rotation is zero (LEFT and RIGHT cancel)
+// so the final look faces where it started, at the audience.
+//
+// IMPORTANT NOTE: one ANALYZE, deliberately, and it goes last. Analysing between pivots
+// made Sage greet the room four times over and talk over her own TTS — the camera-grab +
+// model + TTS round trip is slower than the moves are. The pivots are for the audience to
+// watch, not for Sage to look at; she only speaks once the robot is parked and still.
+//
+// The 1500 settle before it is what buys the still frame — analysing mid-coast gets a
+// motion-blurred grab. The 10s dwell after is Sage's talking room; MISSION parks 10s too.
+//
+// IMPORTANT NOTE: 501ms at 140 is an unknown angle — open loop, see the note up top. Tune
+// ms down if the pivots swing past the audience; leave pwm alone, it's clear of stiction.
 const Step PRESENTATION[] = {
-  {RIGHT, 400, 105}, {WAIT, 1000, 0}, 
-  {LEFT, 400, 105},
+  {LEFT, 501, 140},
+  {RIGHT, 501, 140},
+  {RIGHT, 501, 140},
+  {LEFT, 501, 140},
+  {WAIT, 1500, 0},
+  {ANALYZE, 10000, 0},
+  {END, 0, 0},
+};
+
+// Dictated on the field. Moves are 125ms bursts at 103 — nudges, not travel — with
+// 1.5s of settle between them and 10s parked on each ANALYZE so Sage gets a still
+// frame of a robot that isn't moving.
+//
+// IMPORTANT NOTE: 125ms at pwm 103 is short and close to stiction on geared DC motors.
+// It was 50ms and may have only buzzed; 125 gives the motors time to actually break
+// away. Bench it — if a burst still does nothing, raise pwm rather than ms, the pwm is
+// what beats stiction.
+const Step MISSION[] = {
+  {FWD, 125, 103},   {WAIT, 1500, 0},
+  {FWD, 125, 103},   {WAIT, 1500, 0},
+  {ANALYZE, 10000, 0},
+  {BACK, 125, 103},  {WAIT, 1500, 0},
+  {BACK, 125, 103},  {WAIT, 1500, 0},
+  {RIGHT, 125, 103}, {WAIT, 1500, 0},
+  {ANALYZE, 10000, 0},
+  {BACK, 125, 103},  {WAIT, 1500, 0},
+  {BACK, 125, 103},
   {END, 0, 0},
 };
 

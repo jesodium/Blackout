@@ -56,6 +56,7 @@ const DICT = {
     "mast.bridgeRepairTitle": "Re-pair Bluetooth & restart bridge",
     "mast.routinePresTitle": "Run the presentation routine",
     "mast.routineRunTitle": "Run the competition routine",
+    "mast.routineMissionTitle": "Run the mission routine — Sage stays quiet until its ANALYZE steps",
     "mast.routineTestTitle": "Bench check — fires every move once. Wheels off the ground.",
     "mast.routineStopTitle": "Stop the routine — cut the motors now",
     "log.cmdSent": "Sent to board: {cmd}",
@@ -243,8 +244,9 @@ const DICT = {
     "toast.error": "Error · {msg}",
     "ai.awaiting": "Awaiting telemetry…",
     "ai.comms": "Comms error: {msg}",
-    "sage.presentAck": "On it — say hello, everyone!",
+    "sage.presentAck": "Hello to all of you!",
     "sage.exploreAck": "Copy that — time to explore!",
+    "sage.missionAck": "Mission's live — going quiet until I've got something.",
 
     /* serial */
     "zone.serial": "Serial Monitor",
@@ -298,6 +300,7 @@ const DICT = {
     "mast.bridgeRepairTitle": "Re-emparejar Bluetooth y reiniciar puente",
     "mast.routinePresTitle": "Ejecutar la rutina de presentación",
     "mast.routineRunTitle": "Ejecutar la rutina de competencia",
+    "mast.routineMissionTitle": "Ejecutar la rutina de misión — Sage calla hasta sus pasos ANALYZE",
     "mast.routineTestTitle": "Prueba de banco — ejecuta cada movimiento una vez. Ruedas en el aire.",
     "mast.routineStopTitle": "Detener la rutina — cortar los motores ahora",
     "log.cmdSent": "Enviado a la placa: {cmd}",
@@ -476,8 +479,9 @@ const DICT = {
     "toast.error": "Error · {msg}",
     "ai.awaiting": "Esperando telemetría…",
     "ai.comms": "Error de comunicación: {msg}",
-    "sage.presentAck": "Enseguida — ¡saluden todos!",
+    "sage.presentAck": "¡Hola a todos ustedes!",
     "sage.exploreAck": "Entendido — ¡hora de explorar!",
+    "sage.missionAck": "Misión en marcha — me callo hasta que tenga algo.",
 
     "zone.serial": "Monitor Serial",
     "serial.pause": "Pausar",

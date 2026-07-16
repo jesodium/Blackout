@@ -332,6 +332,9 @@ async function pregenOnboarding() {
 const loadPrompt = (name) => fs.readFileSync(path.join(__dirname, "prompts", name), "utf8").trim();
 const AI_SYSTEM = loadPrompt("analysis.md");
 const CHAT_SYSTEM = loadPrompt("chat.md");
+// The presentation routine's closing look is a greeting to the judges, not a cave
+// read — same camera grab, different system prompt.
+const PRESENT_SYSTEM = loadPrompt("present.md");
 
 // Sage's discoveries land in the dashboard's Analysis panel with the still she saw.
 // The image is written to disk and the finding carries only its URL: findings ride
@@ -483,15 +486,15 @@ function emitBlurt(prev, cur) {
 function maybeAutoAnalyze(data) {
   const s = statuses(data);
   const changed = lastStatuses && Object.keys(s).some(k => lastStatuses[k] !== s[k]);
+  // A routine picks its own analysis moments with ANALYZE steps. Auto-analysis and
+  // blurts fire on status changes at arbitrary times — a proximity trip mid-run
+  // would talk over those deliberate reads. Stay silent for the whole run. The flag
+  // rides every telemetry line, so this clears itself when the routine ends, even if
+  // the board is reset mid-run.
+  if (data.routine) { lastStatuses = s; return; }
   if (changed && currentMission) emitBlurt(lastStatuses, s);
   lastStatuses = s;
   if (!changed || !currentMission) return; // no active mission → agent stays quiet
-  // A routine picks its own analysis moments with ANALYZE steps. Auto-analysis
-  // fires on status changes at arbitrary times, so during a run it would land on
-  // top of those deliberate reads. Blurts above still play — they're canned lines,
-  // no LLM call. The flag rides every telemetry line, so this clears itself when
-  // the routine ends, even if the board is reset mid-run.
-  if (data.routine) return;
   const now = Date.now();
   if (now - lastAutoAnalysis < AUTO_MIN_GAP) return; // don't spam the LLM on flapping
   lastAutoAnalysis = now;
@@ -556,7 +559,8 @@ function buildAiPrompt(data) {
 ${readingLines(data)}${trendLine(data)}${lampLine()}`;
 }
 
-async function runAiAnalysis() {
+async function runAiAnalysis(mode) {
+  const present = mode === "present";
   // Always emit a result: the dashboard locks into "analyzing" on request and only
   // an ai-analysis event releases it, so a silent return here = infinite spinner.
   const data = freshData();
@@ -576,7 +580,7 @@ async function runAiAnalysis() {
       ? "\n(Attached is your live forward-camera view — read it for what's ahead.)"
       : "\n(Your eye is dark right now. Don't mention this or say anything about not being able to see — just report normally from the readings you do have, as if vision were never part of it.)");
     const sage = await askSage([
-      { role: "system", content: AI_SYSTEM },
+      { role: "system", content: present ? PRESENT_SYSTEM : AI_SYSTEM },
       ...langMsg(currentLanguage),
       { role: "user", content: eyes.length ? [{ type: "text", text: promptText }, ...eyes] : promptText },
     ], { maxTokens: 400 });
@@ -645,9 +649,10 @@ else console.log("USB serial auto-connect off — select a port in the dashboard
 io.on("connection", (socket) => {
   console.log("Client connected");
   if (latestData) socket.emit("sensor-data", latestData);
-  socket.on("request-analysis", () => {
-    console.log("On-demand analysis requested");
-    runAiAnalysis();
+  socket.on("request-analysis", (opts) => {
+    const mode = opts?.mode;
+    console.log(`On-demand analysis requested${mode ? ` (${mode})` : ""}`);
+    runAiAnalysis(mode);
   });
   // Send the agent the current mission so a freshly-connected dashboard shows it.
   socket.emit("mission-set", { mission: currentMission });

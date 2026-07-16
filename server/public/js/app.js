@@ -43,6 +43,7 @@ const norm = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCa
 const SEQUENCE_TRIGGERS = [
   { re: /present yourself|presentate/, cmd: "go,presentation", ackKey: "sage.presentAck" },
   { re: /time to explore|hora de explorar/, cmd: "go,run", ackKey: "sage.exploreAck" },
+  { re: /start the mission|inicia la mision/, cmd: "go,mission", ackKey: "sage.missionAck" },
 ];
 
 const TRENDS = [
@@ -343,7 +344,7 @@ function MotorDebug({ onCmd, enabled }) {
 // while the stick is held: firmware auto-halts 300ms after the last burst, so a
 // dropped BLE link or a yanked controller can never leave the wheels spinning.
 // Bench-style panel — labels stay English on purpose, same as MotorDebug.
-function GamepadCtl({ onCmd, enabled }) {
+function GamepadCtl({ onCmd, onAnalyze, enabled }) {
   const [autopilot, setAutopilot] = useState(true);
   const [padName, setPadName] = useState(null);
   const [verb, setVerb] = useState(null); // live verb for the UI readout
@@ -351,6 +352,9 @@ function GamepadCtl({ onCmd, enabled }) {
   const armedRef = useRef(armed);
   armedRef.current = armed;
   const moving = useRef(false);
+  const sqWas = useRef(false);
+  const analyzeRef = useRef(onAnalyze);
+  analyzeRef.current = onAnalyze;
 
   useEffect(() => {
     const seen = () => setPadName([...navigator.getGamepads()].find(Boolean)?.id || null);
@@ -368,6 +372,13 @@ function GamepadCtl({ onCmd, enabled }) {
       if (!armedRef.current) return;
       const pad = [...navigator.getGamepads()].find(Boolean);
       if (!pad) return;
+
+      // Square (X on Xbox) = button 2 in standard mapping. Fire on press edge only,
+      // so holding it doesn't queue a burst of analyses.
+      const sq = !!pad.buttons[2]?.pressed;
+      if (sq && !sqWas.current) analyzeRef.current?.();
+      sqWas.current = sq;
+
       const rx = pad.axes[2] ?? 0;         // right stick X (standard mapping)
       const v = pad.buttons[12]?.pressed ? "fwd"
         : pad.buttons[13]?.pressed ? "back"
@@ -404,7 +415,7 @@ function GamepadCtl({ onCmd, enabled }) {
           ${!padName ? "Connect Xbox/DualSense (BT or USB), press any button."
             : autopilot ? padName.slice(0, 40)
             : !enabled ? "Pad armed — BT bridge off, no link to rover."
-            : verb ? `▶ ${verb.toUpperCase()}` : "Dpad ↑↓ drives · right stick rotates."}
+            : verb ? `▶ ${verb.toUpperCase()}` : "Dpad ↑↓ drives · right stick rotates · □/X analyzes."}
         </small>
       </div>
     </section>`;
@@ -730,7 +741,7 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
           <span class="verdict-cause">${v.cause}</span>
         </div>
         <div class="agent-foot">
-          <button class="btn btn--primary" type="button" onClick=${onAnalyze} disabled=${ai.analyzing}>
+          <button class="btn btn--primary" type="button" onClick=${() => onAnalyze()} disabled=${ai.analyzing}>
             ${ai.analyzing ? t("agent.analyzing") : t("agent.runAnalysis")}
           </button>
           <button class="btn" type="button" onClick=${onMock} disabled=${ai.analyzing} title=${t("agent.mockTitle")}>
@@ -991,6 +1002,8 @@ function Masthead({ connected, ports, currentPort, bridge, onBridge, onCmd, conn
                     disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,presentation")}>▶pres</button>
                   <button type="button" class="bridge-repair" title=${t("mast.routineRunTitle")}
                     disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,run")}>▶run</button>
+                  <button type="button" class="bridge-repair" title=${t("mast.routineMissionTitle")}
+                    disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,mission")}>▶mission</button>
                   <button type="button" class="bridge-repair" title=${t("mast.routineTestTitle")}
                     disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,test")}>▶test</button>
                   <button type="button" class="bridge-repair" title=${t("mast.routineStopTitle")}
@@ -1057,6 +1070,11 @@ function App() {
   const [packets, setPackets] = useState(0);
   const [logs, setLogs] = useState([]);
   const [ai, setAi] = useState({ text: t("ai.awaiting"), badge: "badge.standby", analyzing: false, history: [], phase: null, since: 0, llm: null, tts: null, status: null });
+  // Mirrors ai.analyzing for callers with no render to gate on (gamepad poll,
+  // routine E:analyze). Re-synced every render, so a server-side clear releases it.
+  const analyzingRef = useRef(false);
+  analyzingRef.current = ai.analyzing;
+  const presentingRef = useRef(false); // last routine started was PRESENTATION
   const [tts, setTts] = useState(() => localStorage.getItem("tts") !== "false");
   const [ttsProv, setTtsProv] = useState(() => localStorage.getItem("ttsProvider") || "edge");
   const [hasDeepgram, setHasDeepgram] = useState(false);
@@ -1297,9 +1315,11 @@ function App() {
 
   // Defined above onBleNotify because that handler calls it — deps are evaluated
   // during render, so a later `const` would be in the temporal dead zone.
-  const analyze = useCallback(() => {
+  const analyze = useCallback((mode) => {
+    if (analyzingRef.current) return;
+    analyzingRef.current = true; // set now, not on re-render — two calls in one tick must not both emit
     setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
-    socketRef.current?.emit("request-analysis");
+    socketRef.current?.emit("request-analysis", { mode: mode || null });
   }, []);
 
   // The board notifies two kinds of line: "S:" telemetry, and "E:" events a
@@ -1308,7 +1328,15 @@ function App() {
   const onBleNotify = useCallback((e) => {
     const line = new TextDecoder().decode(e.target.value);
     console.log("BLE notify:", line);
-    if (line.startsWith("E:analyze")) { addLog(t("log.routineAnalyze"), "ai"); analyze(); return; }
+    // PRESENTATION's single closing ANALYZE is a greeting to the judges, not a cave
+    // read. The board can't say which routine raised the event, so we go by the last
+    // "go," we sent; consume the flag so a later manual analyze is a normal one.
+    if (line.startsWith("E:analyze")) {
+      addLog(t("log.routineAnalyze"), "ai");
+      analyze(presentingRef.current ? "present" : null);
+      presentingRef.current = false;
+      return;
+    }
     fetch("/api/mega/sensor", { method: "POST", headers: { "Content-Type": "text/plain" }, body: line })
       .then((r) => { if (!r.ok) console.error("BLE forward failed:", r.status); })
       .catch((err) => console.error("BLE forward error:", err.message));
@@ -1325,6 +1353,7 @@ function App() {
   // routine, "stop" cuts the motors. Routines run standalone on the board — this
   // only fires the starting gun, so a dropped link mid-run doesn't strand the robot.
   const sendCmd = useCallback(async (word) => {
+    if (word.startsWith("go,")) presentingRef.current = word === "go,presentation";
     const { device, cmd } = bleRef.current;
     if (!device?.gatt?.connected) { toast(t("toast.cmdNoLink"), "danger"); return false; }
     if (!cmd) { toast(t("toast.cmdNoChar"), "danger"); return false; } // linked but firmware lacks cmd char
@@ -1544,7 +1573,7 @@ function App() {
               onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onPick=${pickHistory} onMock=${mockData} onAsk=${ask} />
             <div class="side-col">
               <${Camera} />
-              <${GamepadCtl} onCmd=${sendCmd} enabled=${bridge.running} />
+              <${GamepadCtl} onCmd=${sendCmd} onAnalyze=${analyze} enabled=${bridge.running} />
               <${Memory} chat=${activeChat} />
             </div>
           </div>
