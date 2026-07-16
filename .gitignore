@@ -11,6 +11,8 @@ server/.env.local
 server/.env*.local
 # Pre-generated onboarding TTS clips (regenerated on boot)
 server/public/audio/
+# Stills Sage saved with her findings — mission output, not source
+server/public/findings/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

@@ -145,6 +145,21 @@ void startServer() {
   httpd_config_t sc = HTTPD_DEFAULT_CONFIG();
   sc.server_port = 81;
   sc.ctrl_port   = 32769;  // must differ from mc's 32768 or the 2nd start fails
+  // Suspect for "feed never returns after an analysis until a page refresh".
+  // esp_http_server runs ONE task per instance and stream_handler never returns
+  // while a client looks connected, so this task can't accept a new /stream until
+  // that loop breaks — and a browser that drops an <img> mid-stream doesn't always
+  // FIN, leaving the socket open here. Defaults are max_open_sockets=7 and
+  // lru_purge_enable=FALSE: dead sockets accumulate across reconnect attempts and
+  // once the pool is full the server refuses new connections outright, which no
+  // amount of client-side retrying clears. A refresh clears it only because it
+  // tears down every socket at once. Purge lets the oldest get reclaimed instead.
+  // The send/recv timeouts (default 5s each) just shorten how long a wedged
+  // handler sits before its write fails and the loop breaks.
+  // IMPORTANT NOTE: unconfirmed on hardware — see serial output before trusting it.
+  sc.lru_purge_enable  = true; // reclaim the oldest socket rather than refuse a new one
+  sc.send_wait_timeout = 2;    // seconds; stalled write => handler exits sooner
+  sc.recv_wait_timeout = 2;
   httpd_uri_t stream_uri = { "/stream", HTTP_GET, stream_handler, NULL };
   if (httpd_start(&stream_srv, &sc) == ESP_OK)
     httpd_register_uri_handler(stream_srv, &stream_uri);

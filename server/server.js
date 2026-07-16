@@ -9,7 +9,7 @@ const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
-const { eyeParts, grabFrames } = require("./vision");
+const { eyeParts, grabFrames, setLed, getLed } = require("./vision");
 const { parseSage } = require("./sage");
 
 const openai = new OpenAI({
@@ -333,16 +333,74 @@ const loadPrompt = (name) => fs.readFileSync(path.join(__dirname, "prompts", nam
 const AI_SYSTEM = loadPrompt("analysis.md");
 const CHAT_SYSTEM = loadPrompt("chat.md");
 
-// Sage now answers in JSON: { text, status, action }. text is the only thing
-// voiced/shown; status tints the UI; action:"analyze" lets Sage ask for a fresh look.
-// parseSage lives in ./sage so it's testable without booting the server.
+// Sage's discoveries land in the dashboard's Analysis panel with the still she saw.
+// The image is written to disk and the finding carries only its URL: findings ride
+// inside `chats` in the browser, which is JSON.stringify'd to localStorage on every
+// change — base64 stills there would blow the ~5MB quota and throw on every later
+// chat edit. public/ is already static-served, so /findings/x.jpg just resolves, and
+// the file outliving a restart is why no findings list is kept server-side.
+// IMPORTANT NOTE: never pruned — ~40KB a find. Cap it if a session ever makes enough
+// to matter.
+const FINDINGS_DIR = path.join(__dirname, "public", "findings");
+fs.mkdirSync(FINDINGS_DIR, { recursive: true });
+
+// The still Sage actually saw is already in the messages we sent her — pull it back
+// out rather than re-grabbing (a second grab would be a different moment, and would
+// hit the flaky AI-Thinker board again). Covers every path, including /api/scan's
+// grabFrames(1), which bypasses vision's frameCache.
+function lastImage(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const c = messages[i]?.content;
+    if (!Array.isArray(c)) continue;
+    for (let j = c.length - 1; j >= 0; j--) {
+      if (c[j]?.type === "image_url") return c[j].image_url?.url || null;
+    }
+  }
+  return null;
+}
+
+// The prompt tells Sage to log a find once, but she's staring at the same drawing for
+// as long as it's in frame — so guard the repeat here rather than trusting her, same
+// as the lamp hook checks getLed() first. Re-logging the identical text is a dupe;
+// the same find seen again much later is worth its own row.
+let lastFinding = { text: "", at: 0 };
+const FINDING_DEDUPE_MS = 5 * 60 * 1000;
+
+function recordFinding(text, dataUrl) {
+  const at = Date.now();
+  if (text === lastFinding.text && at - lastFinding.at < FINDING_DEDUPE_MS) return;
+  lastFinding = { text, at };
+  let img = null;
+  const b64 = dataUrl?.startsWith("data:image/jpeg;base64,")
+    ? dataUrl.slice("data:image/jpeg;base64,".length) : null;
+  if (b64) {
+    const file = `${at}.jpg`;
+    try {
+      fs.writeFileSync(path.join(FINDINGS_DIR, file), Buffer.from(b64, "base64"));
+      img = `/findings/${file}`;
+    } catch (e) { console.error("finding still:", e.message); } // log it text-only
+  }
+  io.emit("sage-finding", { id: `${at}-${Math.random()}`, text, img, timestamp: at });
+}
+
+// Sage now answers in JSON: { text, status, action, led, finding }. text is the only
+// thing voiced/shown; status tints the UI; action:"analyze" lets Sage ask for a fresh
+// look; led (0-255) drives the cam lamp; finding logs a discovery to the Analysis
+// panel. parseSage lives in ./sage so it's testable without booting the server. Every
+// caller goes through here, so the lamp and finding hooks live here too — the lamp
+// fire-and-forget, since a cam that won't answer must not stall the reply.
 async function askSage(messages, { maxTokens = 400 } = {}) {
   const resp = await openai.chat.completions.create({
     model: process.env.CEREBRAS_MODEL || "gemma-4-31b",
     messages,
     max_tokens: maxTokens,
   });
-  return parseSage(resp.choices[0]?.message?.content);
+  const sage = parseSage(resp.choices[0]?.message?.content);
+  if (sage.led != null && sage.led !== getLed()) {
+    setLed(sage.led).catch((e) => console.error("cam led:", e.message));
+  }
+  if (sage.finding) recordFinding(sage.finding, lastImage(messages));
+  return sage;
 }
 
 // ponytail: status thresholds live here (server), single source of truth. The
@@ -485,15 +543,17 @@ function readingLines(data) {
   ].filter(Boolean).join("\n");
 }
 
+const lampLine = () => `\nYour headlamp is currently at ${getLed()} of 255.`;
+
 function buildChatContext(data) {
   return `${missionLine()}Current readings from the rover right now (each line is already judged — trust the [STATUS] tag, do NOT re-judge from the number, and do NOT recite the raw number):
-${readingLines(data)}${trendLine(data)}`;
+${readingLines(data)}${trendLine(data)}${lampLine()}`;
 }
 
 function buildAiPrompt(data) {
   return `${missionLine()}Latest telemetry from your sensors — read the room and report to the operator. Each line is already judged: trust the [STATUS] tag, do NOT re-judge from the raw number, and do NOT recite the raw number aloud.
 
-${readingLines(data)}${trendLine(data)}`;
+${readingLines(data)}${trendLine(data)}${lampLine()}`;
 }
 
 async function runAiAnalysis() {

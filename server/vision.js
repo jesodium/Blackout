@@ -121,6 +121,22 @@ async function grabFrameFrom(url, timeoutMs) {
   }
 }
 
+// Sage's lamp. Same host as the frame grabs, so reuse the sticky camIdx — whichever
+// URL last answered is the network the cam is actually on. Level is remembered so
+// Sage can be told what she's already running instead of guessing blind.
+let ledLevel = 15; // matches the cam firmware's boot default
+async function setLed(val) {
+  const v = Math.max(0, Math.min(255, Math.round(val)));
+  const u = new URL(await resolveCamUrl(CAM_URLS[camIdx]));
+  u.pathname = "/control";
+  u.search = `var=led&val=${v}`;
+  const resp = await fetch(u, { signal: AbortSignal.timeout(3000) });
+  if (!resp.ok) throw new Error(`cam HTTP ${resp.status}`);
+  ledLevel = v;
+  return v;
+}
+const getLed = () => ledLevel;
+
 // One camera frame as OpenAI image content parts, ready to append to a user
 // message. Grabs fresh with a SHORT freshness window so each turn sees what's in
 // front of the lens now — a 6s cache made Sage keep describing whatever it saw ~6s
@@ -175,4 +191,4 @@ async function grabFrames(count = 4, gapMs = 1000) {
   return parts;
 }
 
-module.exports = { carveJpeg, upright, grabFrame, eyeParts, grabFrames };
+module.exports = { carveJpeg, upright, grabFrame, eyeParts, grabFrames, setLed, getLed };

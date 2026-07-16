@@ -418,10 +418,20 @@ function Camera() {
   const [host, setHost] = useState(camHost());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sliders, setSliders] = useState({ brightness: -1, contrast: -1, ae_level: 0, led: 15 });
+  const imgRef = useRef(null);
 
   useEffect(() => {
-    const y = () => setYielded(true);
-    const r = () => { setYielded(false); setNonce(n => n + 1); };
+    // Hang up explicitly before unmounting. Dropping the <img> does not reliably
+    // abort an in-flight multipart/x-mixed-replace stream, and the cam's stream
+    // task stays wedged until its send actually fails (see main.ino's
+    // send_wait_timeout). removeAttribute aborts the fetch now — and unlike
+    // src="", it doesn't re-request the page URL and fire a bogus onError.
+    const y = () => { imgRef.current?.removeAttribute("src"); setYielded(true); };
+    // Back to "loading", not straight to the old state: a remounted <img> whose
+    // stream never starts fires neither onLoad nor onError, and the 12s watchdog
+    // below only arms while "loading". Resuming as "live" left a black frame with
+    // nothing watching it — refresh was the only way out.
+    const r = () => { setYielded(false); setState("loading"); setNonce(n => n + 1); };
     window.addEventListener("cam:yield", y);
     window.addEventListener("cam:resume", r);
     return () => { window.removeEventListener("cam:yield", y); window.removeEventListener("cam:resume", r); };
@@ -466,7 +476,7 @@ function Camera() {
           ${yielded
             ? html`<div class="viewport-fallback">${t("cam.scanning")}</div>`
             : state !== "offline"
-            ? html`<img src=${src} alt=${t("zone.camera")} class="cam-feed"
+            ? html`<img ref=${imgRef} src=${src} alt=${t("zone.camera")} class="cam-feed"
                 onLoad=${() => { setState("live"); localStorage.setItem("camHost", host); }}
                 onError=${fail} />`
             : html`<div class="viewport-fallback">${t("cam.offline")}<br/>
@@ -532,6 +542,7 @@ function Memory({ chat }) {
               <span class="memory-dot" aria-hidden="true"></span>
               <span class="memory-text">${f.text}</span>
               <span class="memory-time">${f.time}</span>
+              ${f.img && html`<img class="memory-shot" src=${f.img} alt=${f.text} loading="lazy" />`}
             </div>`)}
       </div>
     </section>`;
@@ -1158,6 +1169,17 @@ function App() {
         }
       }
       recordFindings(d);
+    });
+    // Sage spotted something herself (relic fragments, a drawing) and logged it with
+    // the still she saw. Same shape as a sensor finding, plus img.
+    socket.on("sage-finding", d => {
+      if (!d?.text) return;
+      const chat = activeRef.current;
+      if (!chat || !chat.mission) return;
+      const entry = { id: d.id || Date.now() + Math.random(), text: d.text, kind: "find", img: d.img || null,
+        time: new Date(d.timestamp || Date.now()).toLocaleTimeString() };
+      setChats(cs => cs.map(c => c.id === chat.id
+        ? { ...c, findings: [...(c.findings || []), entry].slice(-40) } : c));
     });
     socket.on("serial-line", d => {
       if (!d?.line) return;

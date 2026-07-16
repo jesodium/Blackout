@@ -46,22 +46,54 @@ console.log("ok — carveJpeg passes");
 // clean object parses through
 assert.deepStrictEqual(
   parseSage('{"text":"air is thick","status":"danger","action":null}'),
-  { text: "air is thick", status: "danger", action: null });
+  { text: "air is thick", status: "danger", action: null, led: null, finding: null });
 
 // ```json fences + surrounding prose still extract the {...}
 assert.deepStrictEqual(
   parseSage('Sure!\n```json\n{"text":"clear ahead","status":"clear","action":"analyze"}\n```'),
-  { text: "clear ahead", status: "clear", action: "analyze" });
+  { text: "clear ahead", status: "clear", action: "analyze", led: null, finding: null });
 
 // garbage / non-JSON falls back to voicing the raw string
 assert.deepStrictEqual(
   parseSage("just talking, no json here"),
-  { text: "just talking, no json here", status: null, action: null });
+  { text: "just talking, no json here", status: null, action: null, led: null, finding: null });
 
 // out-of-range status and action get clamped to null
 assert.deepStrictEqual(
   parseSage('{"text":"hmm","status":"spicy","action":"launch_missiles"}'),
-  { text: "hmm", status: null, action: null });
+  { text: "hmm", status: null, action: null, led: null, finding: null });
+
+// led: in-band number passes; a string number is coerced (models quote things)
+assert.strictEqual(parseSage('{"text":"lighting up","led":200}').led, 200);
+assert.strictEqual(parseSage('{"text":"lighting up","led":"200"}').led, 200);
+assert.strictEqual(parseSage('{"text":"off","led":0}').led, 0);
+
+// led: out of range clamps into 0-255 rather than reaching the cam raw
+assert.strictEqual(parseSage('{"text":"blast it","led":999}').led, 255);
+assert.strictEqual(parseSage('{"text":"neg","led":-40}').led, 0);
+
+// led: anything not a real number means "leave the lamp alone"
+assert.strictEqual(parseSage('{"text":"hmm","led":"bright"}').led, null);
+assert.strictEqual(parseSage('{"text":"hmm","led":null}').led, null);
+assert.strictEqual(parseSage('{"text":"hmm"}').led, null);
+
+// finding: a real discovery survives to the Analysis panel verbatim
+assert.strictEqual(
+  parseSage('{"text":"look at that!","finding":"DRAWING DETECTED: looks like a bison"}').finding,
+  "DRAWING DETECTED: looks like a bison");
+
+// finding: absent/null/empty/blank means nothing to log — the common case
+assert.strictEqual(parseSage('{"text":"all quiet"}').finding, null);
+assert.strictEqual(parseSage('{"text":"all quiet","finding":null}').finding, null);
+assert.strictEqual(parseSage('{"text":"all quiet","finding":""}').finding, null);
+assert.strictEqual(parseSage('{"text":"all quiet","finding":"   "}').finding, null);
+
+// finding: a non-string doesn't reach the panel as "[object Object]"/"true"
+assert.strictEqual(parseSage('{"text":"hmm","finding":{"tag":"DRAWING"}}').finding, null);
+assert.strictEqual(parseSage('{"text":"hmm","finding":true}').finding, null);
+
+// finding: a model that answers with a paragraph gets trimmed to a panel row
+assert.strictEqual(parseSage(`{"text":"hi","finding":"${"A".repeat(300)}"}`).finding.length, 140);
 
 // empty/missing text falls back to the raw payload so something always speaks
 assert.strictEqual(parseSage('{"status":"clear"}').text, '{"status":"clear"}');
