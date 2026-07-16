@@ -71,14 +71,35 @@ const Step PRESENTATION[] = {
   {END, 0, 0},
 };
 
-// Dictated on the field. Moves are 215ms bursts at 103 — nudges, not travel — with
+// Dictated on the field. Moves are 125ms bursts at 103 — nudges, not travel — with
 // 1.5s of settle between them and 10s parked on each ANALYZE so Sage gets a still
 // frame of a robot that isn't moving.
 //
-// IMPORTANT NOTE: pwm 103 is close to stiction on geared DC motors. The burst went
-// 50ms → 125ms → 215ms because the short ones may have only buzzed. Bench it — if a
-// burst still does nothing, raise pwm rather than ms, the pwm is what beats stiction.
+// IMPORTANT NOTE: 125ms at pwm 103 is short and close to stiction on geared DC motors.
+// It was 50ms and may have only buzzed; 125 gives the motors time to actually break
+// away. Bench it — if a burst still does nothing, raise pwm rather than ms, the pwm is
+// what beats stiction. TEST2 below is this same routine at 215ms, for A/B on the field.
 const Step MISSION[] = {
+  {FWD, 125, 103},   {WAIT, 1500, 0},
+  {FWD, 125, 103},   {WAIT, 1500, 0},
+  {ANALYZE, 10000, 0},
+  {BACK, 125, 103},  {WAIT, 1500, 0},
+  {BACK, 125, 103},  {WAIT, 1500, 0},
+  {RIGHT, 125, 103}, {WAIT, 1500, 0},
+  {ANALYZE, 10000, 0},
+  {BACK, 125, 103},  {WAIT, 1500, 0},
+  {BACK, 125, 103},
+  {END, 0, 0},
+};
+
+// MISSION with every burst at 215ms instead of 125ms — same ops, same pwm, same
+// waits. On-field A/B for whether the 125ms nudges are actually moving the robot or
+// just buzzing. Whichever wins, fold the number back into MISSION and delete this.
+//
+// Button-only, on purpose: no SEQUENCE_TRIGGERS phrase in app.js, so Sage can't
+// start it. It's a trial routine — it runs when someone at the field presses ▶test2,
+// not because a spoken phrase happened to match mid-demo.
+const Step TEST2[] = {
   {FWD, 215, 103},   {WAIT, 1500, 0},
   {FWD, 215, 103},   {WAIT, 1500, 0},
   {ANALYZE, 10000, 0},

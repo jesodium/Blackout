@@ -193,6 +193,7 @@ void startRoutine(const String& name) {
   else if (name == "run") routine = RUN;
   else if (name == "test") routine = TEST;
   else if (name == "mission") routine = MISSION;
+  else if (name == "test2") routine = TEST2;
   else return; // unknown name: stay idle rather than guess
   drvEnd = 0;  // kill any pending debug-drive auto-halt or it fires mid-step
   stepIdx = 0;

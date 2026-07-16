@@ -1006,6 +1006,8 @@ function Masthead({ connected, ports, currentPort, bridge, onBridge, onCmd, conn
                     disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,mission")}>▶mission</button>
                   <button type="button" class="bridge-repair" title=${t("mast.routineTestTitle")}
                     disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,test")}>▶test</button>
+                  <button type="button" class="bridge-repair" title=${t("mast.routineTest2Title")}
+                    disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,test2")}>▶test2</button>
                   <button type="button" class="bridge-repair" title=${t("mast.routineStopTitle")}
                     disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("stop")}>■</button>
                 </div>
