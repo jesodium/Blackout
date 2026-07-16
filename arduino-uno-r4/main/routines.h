@@ -71,24 +71,23 @@ const Step PRESENTATION[] = {
   {END, 0, 0},
 };
 
-// Dictated on the field. Moves are 125ms bursts at 103 — nudges, not travel — with
+// Dictated on the field. Moves are 215ms bursts at 103 — nudges, not travel — with
 // 1.5s of settle between them and 10s parked on each ANALYZE so Sage gets a still
 // frame of a robot that isn't moving.
 //
-// IMPORTANT NOTE: 125ms at pwm 103 is short and close to stiction on geared DC motors.
-// It was 50ms and may have only buzzed; 125 gives the motors time to actually break
-// away. Bench it — if a burst still does nothing, raise pwm rather than ms, the pwm is
-// what beats stiction.
+// IMPORTANT NOTE: pwm 103 is close to stiction on geared DC motors. The burst went
+// 50ms → 125ms → 215ms because the short ones may have only buzzed. Bench it — if a
+// burst still does nothing, raise pwm rather than ms, the pwm is what beats stiction.
 const Step MISSION[] = {
-  {FWD, 125, 103},   {WAIT, 1500, 0},
-  {FWD, 125, 103},   {WAIT, 1500, 0},
+  {FWD, 215, 103},   {WAIT, 1500, 0},
+  {FWD, 215, 103},   {WAIT, 1500, 0},
   {ANALYZE, 10000, 0},
-  {BACK, 125, 103},  {WAIT, 1500, 0},
-  {BACK, 125, 103},  {WAIT, 1500, 0},
-  {RIGHT, 125, 103}, {WAIT, 1500, 0},
+  {BACK, 215, 103},  {WAIT, 1500, 0},
+  {BACK, 215, 103},  {WAIT, 1500, 0},
+  {RIGHT, 215, 103}, {WAIT, 1500, 0},
   {ANALYZE, 10000, 0},
-  {BACK, 125, 103},  {WAIT, 1500, 0},
-  {BACK, 125, 103},
+  {BACK, 215, 103},  {WAIT, 1500, 0},
+  {BACK, 215, 103},
   {END, 0, 0},
 };
 
