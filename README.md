@@ -13,9 +13,7 @@ arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi
 arduino-cli upload --port /dev/cu.usbmodem1101 --fqbn arduino:renesas_uno:unor4wifi
 ```
 
-Sensors: MQ-9 (CO/gas) only so far — more land here as they're wired up. Data
-broadcast over BLE notify as "BLACKOUT-V1"; the dashboard connects via the
-browser's Web Bluetooth (no pairing dance, no extra module).
+Sensors: DHT11, HSRC04
 
 ### 2. Server (Node.js)
 
@@ -44,7 +42,3 @@ toggle to pair.
 ## Docs
 
 - `CLAUDE.md` — architecture overview
-
-## License
-
-MIT
