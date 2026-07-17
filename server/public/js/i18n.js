@@ -1,6 +1,6 @@
 /* ---------------- i18n (en/es) ----------------
-   Flat key dictionary. t(key, params) does {param} interpolation.
-   Language is module-scoped + persisted; App re-renders on change so every
+   flat key dict. t(key, params) does {param} interpolation.
+   language is module-scoped + persisted; app re-renders on change so every
    t() call (read at render time) picks up the new language. */
 
 export const LANGS = [
@@ -8,8 +8,8 @@ export const LANGS = [
   { code: "es", label: "Español", voice: "es-ES-ElviraNeural", speech: "es-ES" },
 ];
 
-// Fixed onboarding lines — pre-generated as static audio server-side (see
-// server pregenOnboarding) so playback is instant. Keys match audio filenames:
+// fixed onboarding lines — pre-generated as static audio server-side
+// so playback is instant. keys match audio filenames:
 // /audio/onboard-<lang>-<key>.mp3
 export const ONBOARDING = {
   en: {
@@ -248,6 +248,11 @@ const DICT = {
     "sage.presentAck": "Hello to all of you!",
     "sage.exploreAck": "Copy that — time to explore!",
     "sage.missionAck": "Mission's live — going quiet until I've got something.",
+    "sage.stopAck": "Stopping.",
+    "sage.fwdAck": "Forward, {s}s.",
+    "sage.backAck": "Backing up, {s}s.",
+    "sage.leftAck": "Pivoting left, {s}s.",
+    "sage.rightAck": "Pivoting right, {s}s.",
 
     /* serial */
     "zone.serial": "Serial Monitor",
@@ -484,6 +489,11 @@ const DICT = {
     "sage.presentAck": "¡Hola a todos ustedes!",
     "sage.exploreAck": "Entendido — ¡hora de explorar!",
     "sage.missionAck": "Misión en marcha — me callo hasta que tenga algo.",
+    "sage.stopAck": "Parando.",
+    "sage.fwdAck": "Adelante, {s}s.",
+    "sage.backAck": "Retrocediendo, {s}s.",
+    "sage.leftAck": "Girando a la izquierda, {s}s.",
+    "sage.rightAck": "Girando a la derecha, {s}s.",
 
     "zone.serial": "Monitor Serial",
     "serial.pause": "Pausar",

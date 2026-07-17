@@ -40,21 +40,21 @@ app.get("/api/ports", async (req, res) => {
   res.json({ ports, current: serialPort?.path || null });
 });
 
-// TTS proxy. Deepgram Aura-2 (low-latency streaming) when DEEPGRAM_API_KEY is
-// set, else / on failure falls back to Microsoft Edge neural voices (free, no key).
-// GET form lets an <audio> element play progressively (starts on first chunk).
+// tts proxy. deepgram aura-2 when deepgram_api_key is
+// set, else falls back to microsoft edge neural voices (free).
+// lets <audio> play progressively.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const DG_RETRIES = parseInt(process.env.DEEPGRAM_RETRIES || "3", 10);
 
 async function speakDeepgram(text, res, voice = "en") {
-  // Match the Aura-2 model language to the voice, else Spanish text gets spoken
-  // by an English model. Override per-language via env.
+  // match model language to voice, else spanish gets spoken
+  // by an english model. override per-language via env.
   const isEs = voice.toLowerCase().startsWith("es");
   const model = isEs
-    ? process.env.DEEPGRAM_VOICE_ES || "aura-2-selena-es"    // Selena — female, neutral Latin American (not regional)
-    : process.env.DEEPGRAM_VOICE || "aura-2-thalia-en";      // Thalia (Sage) — female. ponytail: one fixed female voice; override via DEEPGRAM_VOICE
+    ? process.env.DEEPGRAM_VOICE_ES || "aura-2-selena-es"    // selena — female, neutral latin american
+    : process.env.DEEPGRAM_VOICE || "aura-2-thalia-en";      // thalia (sage) — female. one fixed female voice; override via deepgram_voice
   const url = `https://api.deepgram.com/v1/speak?model=${model}&encoding=mp3`;
-  // Retry the fetch (transient 429/5xx/network blips) BEFORE we start streaming —
+  // retry the fetch (transient 429/5xx/network blips) before we start streaming —
   // once audio is piping we can't retry. 4xx other than 429 is permanent, bail fast.
   let r, lastErr;
   for (let i = 0; i <= DG_RETRIES; i++) {
@@ -69,7 +69,7 @@ async function speakDeepgram(text, res, voice = "en") {
       lastErr = new Error(`Deepgram ${r.status}: ${body}`);
       if (r.status < 500 && r.status !== 429) throw lastErr; // permanent (401/402/400) — don't retry, fall back now
     } catch (e) {
-      if (e === lastErr) throw e; // permanent error — stop, let caller fall back to Edge
+      if (e === lastErr) throw e; // permanent error — stop, let caller fall back to edge
       lastErr = e;               // network/transient error — keep retrying
     }
     if (i < DG_RETRIES) await sleep(250 * (i + 1)); // 250/500/750ms backoff
@@ -110,7 +110,7 @@ app.get("/api/tts/providers", (req, res) => {
   res.json({ edge: true, deepgram: !!process.env.DEEPGRAM_API_KEY });
 });
 
-// Ask-questions mode: operator chats with SAGE. Client sends the running
+// ask-questions mode: operator chats with sage. client sends the running
 // message array (no server-side history); we prepend persona + live telemetry.
 app.post("/api/chat", async (req, res) => {
   if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
@@ -121,7 +121,7 @@ app.post("/api/chat", async (req, res) => {
     const d = freshData();
     const ctx = d ? buildChatContext(d) : "No live readings right now — running dark.";
     const mapped = msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }));
-    // Attach the live cam frame to the operator's latest turn so gemma sees it.
+    // attach the live cam frame to the operator's latest turn so gemma sees it.
     const eyes = await eyeParts();
     if (eyes.length && mapped.length) {
       const last = mapped[mapped.length - 1];
@@ -139,15 +139,15 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-// Take a look: Sage asked for a fresh view (action:"analyze"). Grabs a still and
-// lets Sage narrate what it sees. Same JSON reply shape as /api/chat.
-// The camera is fixed forward — it used to ride a pin-9 servo and this grabbed
+// take a look: sage asked for a fresh view (action:"analyze"). grabs a still and
+// lets sage narrate what it sees. same json reply shape as /api/chat.
+// the camera is fixed forward — it used to ride a pin-9 servo and this grabbed
 // several stills across a slow pan, hence the frame-count arg below.
 app.post("/api/scan", async (req, res) => {
   if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
   try {
     // 1 frame: the view no longer moves, so extra stills would be the same picture
-    // at more base64 bytes — and 4 SVGA stills blow past Cerebras' request cap (413).
+    // at more base64 bytes — and 4 svga stills blow past cerebras' request cap (413).
     const frames = await grabFrames(1);
     const d = freshData();
     const ctx = d ? buildChatContext(d) : "No live readings right now — running dark.";
@@ -166,7 +166,7 @@ app.post("/api/scan", async (req, res) => {
   }
 });
 
-// Process a raw line: emit to serial monitor, parse "S:" telemetry for dashboard.
+// process a raw line: emit to serial monitor, parse "S:" telemetry for dashboard.
 function processLine(raw) {
   const line = raw.trim();
   if (!line) return;
@@ -186,8 +186,8 @@ function processLine(raw) {
     co: parts.length > 8 ? parseFloat(parts[8]) : 0,
     co_alert: parts.length > 9 ? parts[9].trim() === "1" : false,
     pressure: parts.length > 10 ? parseFloat(parts[10]) : 0,
-    // Board says whether a motion routine is running. Absent on older firmware →
-    // false, which just means auto-analysis behaves exactly as it always did.
+    // board says whether a motion routine is running. absent on older firmware —
+    // false keeps auto-analysis behaving as before.
     routine: parts.length > 11 ? parts[11].trim() === "1" : false,
     timestamp: Date.now(),
   };
@@ -198,15 +198,15 @@ function processLine(raw) {
   maybeAutoAnalyze(data);
 }
 
-// Pipe a readline parser onto a port.
+// pipe a readline parser onto a port.
 function attachParser(sp) {
   const parser = sp.pipe(new ReadlineParser({ delimiter: "\n" }));
   parser.on("data", (raw) => processLine(raw));
 }
 
-// Sensor data pushed over HTTP — the R4 WiFi's BLE notify data arrives via the
-// browser's own Web Bluetooth (no server-side native BT lib), which forwards
-// each line here. Also usable directly over WiFi if a board POSTs here itself.
+// sensor data pushed over http — the r4 wifi's ble notify data arrives via the
+// browser's own web bluetooth (no server-side native bt lib), which forwards
+// each line here. also usable directly over wifi if a board posts here itself.
 app.post("/api/mega/sensor", (req, res) => {
   let raw = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
   if (!raw || !raw.length) return res.status(400).json({ error: "empty" });
@@ -215,15 +215,15 @@ app.post("/api/mega/sensor", (req, res) => {
   res.json({ ok: true, lines: lines.length });
 });
 
-// --- Bluetooth "bridge" intent flag ---
-// The actual BLE connection lives in the browser (Web Bluetooth). These just
-// track intent server-side so USB serial and BT stay mutually exclusive.
+// --- bluetooth "bridge" intent flag ---
+// the actual ble connection lives in the browser (web bluetooth). these just
+// track intent server-side so usb serial and bt stay mutually exclusive.
 let bleActive = false;
 
 app.get("/api/bridge", (req, res) => res.json({ running: bleActive, last: "" }));
 
 app.post("/api/bridge/start", (req, res) => {
-  disconnectSerial(); // Close USB when BT takes over
+  disconnectSerial(); // close usb when bt takes over
   bleActive = true;
   res.json({ ok: true });
 });
@@ -233,7 +233,7 @@ app.post("/api/bridge/stop", (req, res) => {
   res.json({ ok: true });
 });
 
-// connMode: mutually exclusive BT/USB switch. Callers should only use this
+// connmode: mutually exclusive bt/usb switch. callers should only use this
 // instead of manually calling bridge/start + ports/switch.
 app.post("/api/connMode", async (req, res) => {
   const { mode } = req.body;
@@ -241,7 +241,7 @@ app.post("/api/connMode", async (req, res) => {
     return res.status(400).json({ error: "mode must be 'usb' or 'bt'" });
 
   if (mode === "bt") {
-    disconnectSerial(); // close USB, block reconnect — actual BLE connect happens client-side
+    disconnectSerial(); // close usb, block reconnect — actual ble connect happens client-side
     bleActive = true;
   } else {
     bleActive = false;
@@ -264,23 +264,23 @@ app.post("/api/ports/switch", (req, res) => {
 
 let latestData = null;
 let dataHistory = [];
-// latestData is only "current" while the link is alive — telemetry lands every
-// ~100ms, so anything older than 10s means the link died. Don't present a
-// minutes-old reading to Sage as "right now".
+// latestdata is only "current" while the link is alive — telemetry lands every
+// ~100ms, so anything older than 10s means the link died. don't present a
+// minutes-old reading to sage as "right now".
 const freshData = () => (latestData && Date.now() - latestData.timestamp < 10000 ? latestData : null);
 let currentMission = "";   // operator's briefing — colors all agent replies until changed
-let currentLanguage = "en"; // UI language — the agent must reply in this language
+let currentLanguage = "en"; // ui language — the agent must reply in this language
 
-// One extra system line forcing the reply language. English is the default
-// (prompts are written in English), so it needs no instruction.
+// one extra system line forcing the reply language. english is the default
+// (prompts are written in english), so it needs no instruction.
 const LANG_INSTRUCT = {
   es: "IMPORTANTE: Responde SIEMPRE en español natural y fluido, sin importar el idioma de las lecturas, etiquetas o del mensaje del operador. Mantén tu personaje y tono.",
 };
 const langMsg = (lang) => (LANG_INSTRUCT[lang] ? [{ role: "system", content: LANG_INSTRUCT[lang] }] : []);
 
-// Onboarding lines spoken during the briefing wizard. Pre-rendered to
+// onboarding lines spoken during the briefing wizard. pre-rendered to
 // public/audio on boot so the wizard plays them instantly (no 5-7s synth wait).
-// Text + voices MUST match public/js/i18n.js (ONBOARDING + LANGS).
+// text + voices must match public/js/i18n.js (onboarding + langs).
 const ONBOARDING = {
   en: {
     voice: "en-US-AvaNeural",
@@ -308,8 +308,8 @@ const ONBOARDING = {
   },
 };
 
-// Generate any missing onboarding clips by hitting our own /api/tts and saving
-// the audio to disk. Runs once on boot; skips files that already exist.
+// generate any missing onboarding clips by hitting our own /api/tts and saving
+// the audio to disk. runs once on boot; skips files that already exist.
 async function pregenOnboarding() {
   const dir = path.join(__dirname, "public", "audio");
   fs.mkdirSync(dir, { recursive: true });
@@ -328,29 +328,29 @@ async function pregenOnboarding() {
   }
 }
 
-// System prompts live in prompts/*.md so they're easy to tweak without touching code.
+// system prompts live in prompts/*.md so they're easy to tweak without touching code.
 const loadPrompt = (name) => fs.readFileSync(path.join(__dirname, "prompts", name), "utf8").trim();
 const AI_SYSTEM = loadPrompt("analysis.md");
 const CHAT_SYSTEM = loadPrompt("chat.md");
-// The presentation routine's closing look is a greeting to the judges, not a cave
+// the presentation routine's closing look is a greeting to the judges, not a cave
 // read — same camera grab, different system prompt.
 const PRESENT_SYSTEM = loadPrompt("present.md");
 
-// Sage's discoveries land in the dashboard's Analysis panel with the still she saw.
-// The image is written to disk and the finding carries only its URL: findings ride
-// inside `chats` in the browser, which is JSON.stringify'd to localStorage on every
-// change — base64 stills there would blow the ~5MB quota and throw on every later
+// sage's discoveries land in the dashboard's analysis panel with the still she saw.
+// the image is written to disk and the finding carries only its url: findings ride
+// inside `chats` in the browser, which is json.stringify'd to localstorage on every
+// change — base64 stills there would blow the ~5mb quota and throw on every later
 // chat edit. public/ is already static-served, so /findings/x.jpg just resolves, and
 // the file outliving a restart is why no findings list is kept server-side.
-// IMPORTANT NOTE: never pruned — ~40KB a find. Cap it if a session ever makes enough
+// important note: never pruned — ~40kb a find. cap it if a session ever makes enough
 // to matter.
 const FINDINGS_DIR = path.join(__dirname, "public", "findings");
 fs.mkdirSync(FINDINGS_DIR, { recursive: true });
 
-// The still Sage actually saw is already in the messages we sent her — pull it back
+// the still sage actually saw is already in the messages we sent her — pull it back
 // out rather than re-grabbing (a second grab would be a different moment, and would
-// hit the flaky AI-Thinker board again). Covers every path, including /api/scan's
-// grabFrames(1), which bypasses vision's frameCache.
+// hit the flaky ai-thinker board again). covers every path, including /api/scan's
+// grabframes(1), which bypasses vision's framecache.
 function lastImage(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     const c = messages[i]?.content;
@@ -362,9 +362,9 @@ function lastImage(messages) {
   return null;
 }
 
-// The prompt tells Sage to log a find once, but she's staring at the same drawing for
+// the prompt tells sage to log a find once, but she's staring at the same drawing for
 // as long as it's in frame — so guard the repeat here rather than trusting her, same
-// as the lamp hook checks getLed() first. Re-logging the identical text is a dupe;
+// as the lamp hook checks getled() first. re-logging the identical text is a dupe;
 // the same find seen again much later is worth its own row.
 let lastFinding = { text: "", at: 0 };
 const FINDING_DEDUPE_MS = 5 * 60 * 1000;
@@ -386,10 +386,10 @@ function recordFinding(text, dataUrl) {
   io.emit("sage-finding", { id: `${at}-${Math.random()}`, text, img, timestamp: at });
 }
 
-// Sage now answers in JSON: { text, status, action, led, finding }. text is the only
-// thing voiced/shown; status tints the UI; action:"analyze" lets Sage ask for a fresh
-// look; led (0-255) drives the cam lamp; finding logs a discovery to the Analysis
-// panel. parseSage lives in ./sage so it's testable without booting the server. Every
+// sage now answers in json: { text, status, action, led, finding }. text is the only
+// thing voiced/shown; status tints the ui; action:"analyze" lets sage ask for a fresh
+// look; led (0-255) drives the cam lamp; finding logs a discovery to the analysis
+// panel. parsesage lives in ./sage so it's testable without booting the server. every
 // caller goes through here, so the lamp and finding hooks live here too — the lamp
 // fire-and-forget, since a cam that won't answer must not stall the reply.
 async function askSage(messages, { maxTokens = 400 } = {}) {
@@ -406,8 +406,8 @@ async function askSage(messages, { maxTokens = 400 } = {}) {
   return sage;
 }
 
-// ponytail: status thresholds live here (server), single source of truth. The
-// model only verbalizes the tag — it must NOT re-judge from the raw number.
+// ponytail: status thresholds live here (server), single source of truth. the
+// model only verbalizes the tag — it must not re-judge from the raw number.
 function band(v, warn, danger) {
   if (v == null || isNaN(v)) return "UNKNOWN";
   return v >= danger ? "DANGER" : v >= warn ? "CAUTION" : "NORMAL";
@@ -418,17 +418,17 @@ function statuses(d) {
     dist: d.dist < 10 ? "NEAR" : "CLEAR",
     smoke: band(d.smoke, 300, 600),
     airq: band(d.airq, 450, 800),
-    // IMPORTANT NOTE: no gas sensor wired right now (MQ-9/MQ-2 retired with the
-    // Mega) — smoke/airq/co arrive as 0 from the R4 firmware. Thresholds kept
+    // important note: no gas sensor wired right now (mq-9/mq-2 retired with the
+    // mega) — smoke/airq/co arrive as 0 from the r4 firmware. thresholds kept
     // for mock data and for when a sensor lands. d.co_alert stays ignored.
     co: band(d.co, 300, 350),
   };
 }
 
-// Severity rank so we can tell when a reading got WORSE (not just changed).
+// severity rank so we can tell when a reading got worse (not just changed).
 const RANK = { CLEAR: 0, NORMAL: 0, UNKNOWN: 0, NEAR: 1, CAUTION: 1, DANGER: 2 };
 
-// Instant in-character one-liners fired the moment a reading worsens — no LLM
+// instant in-character one-liners fired the moment a reading worsens — no llm
 // round-trip, so the agent reacts immediately while the full analysis catches up.
 const BLURTS = {
   en: {
@@ -447,7 +447,7 @@ const BLURTS = {
   },
 };
 
-// Short memory line so replies reference the recent past, not just this instant.
+// short memory line so replies reference the recent past, not just this instant.
 function buildTrend(d) {
   const h = dataHistory;
   if (h.length < 8) return "";
@@ -462,8 +462,8 @@ function buildTrend(d) {
   return bits.length ? `Trend over the last little while: ${bits.join(", ")}.` : "";
 }
 
-// Edge-triggered analysis: fire only when a status actually changes, blurt the
-// instant the change is for the worse, and rate-limit the full LLM analysis.
+// edge-triggered analysis: fire only when a status actually changes, blurt the
+// instant the change is for the worse, and rate-limit the full llm analysis.
 let lastStatuses = null;
 let lastAutoAnalysis = 0;
 let lastBlurt = 0;
@@ -486,9 +486,9 @@ function emitBlurt(prev, cur) {
 function maybeAutoAnalyze(data) {
   const s = statuses(data);
   const changed = lastStatuses && Object.keys(s).some(k => lastStatuses[k] !== s[k]);
-  // A routine picks its own analysis moments with ANALYZE steps. Auto-analysis and
+  // a routine picks its own analysis moments with analyze steps. auto-analysis and
   // blurts fire on status changes at arbitrary times — a proximity trip mid-run
-  // would talk over those deliberate reads. Stay silent for the whole run. The flag
+  // would talk over those deliberate reads. stay silent for the whole run. the flag
   // rides every telemetry line, so this clears itself when the routine ends, even if
   // the board is reset mid-run.
   if (data.routine) { lastStatuses = s; return; }
@@ -496,13 +496,13 @@ function maybeAutoAnalyze(data) {
   lastStatuses = s;
   if (!changed || !currentMission) return; // no active mission → agent stays quiet
   const now = Date.now();
-  if (now - lastAutoAnalysis < AUTO_MIN_GAP) return; // don't spam the LLM on flapping
+  if (now - lastAutoAnalysis < AUTO_MIN_GAP) return; // don't spam the llm on flapping
   lastAutoAnalysis = now;
   clearTimeout(pendingAnalysis);
   pendingAnalysis = setTimeout(runAiAnalysis, 600); // debounce a burst of changes into one
 }
 
-// Agent acknowledges the operator's mission briefing in character.
+// agent acknowledges the operator's mission briefing in character.
 async function ackMission(text) {
   const fallback = currentLanguage === "es"
     ? "Recibido. Misión confirmada — entrando."
@@ -524,14 +524,14 @@ async function ackMission(text) {
   }
 }
 
-// Plain-language readings for chat — no sensor part names to parrot, keeps the
-// model inside the cave fiction. Each reading carries a pre-judged status tag.
+// plain-language readings for chat — no sensor part names to parrot, keeps the
+// model inside the cave fiction. each reading carries a pre-judged status tag.
 const missionLine = () => (currentMission ? `Your mission, briefed by the operator: ${currentMission}\n\n` : "");
 const trendLine = (data) => { const t = buildTrend(data); return t ? `\n${t}` : ""; };
 
-// One line per reading. Gas/pressure/IMU aren't wired yet (R4 firmware sends 0)
-// — skip their lines so Sage isn't told "Pressure: 0 hPa" as a real reading.
-// Mock data still populates them, so the demo keeps its flavor.
+// one line per reading. gas/pressure/imu aren't wired yet (r4 firmware sends 0)
+// — skip their lines so sage isn't told "pressure: 0 hpa" as a real reading.
+// mock data still populates them, so the demo keeps its flavor.
 function readingLines(data) {
   const s = statuses(data);
   return [
@@ -561,16 +561,16 @@ ${readingLines(data)}${trendLine(data)}${lampLine()}`;
 
 async function runAiAnalysis(mode) {
   const present = mode === "present";
-  // Always emit a result: the dashboard locks into "analyzing" on request and only
+  // always emit a result: the dashboard locks into "analyzing" on request and only
   // an ai-analysis event releases it, so a silent return here = infinite spinner.
   const data = freshData();
   if (!process.env.CEREBRAS_API_KEY || !data) {
     io.emit("ai-analysis", { error: data ? "AI key not set" : "No telemetry yet.", timestamp: Date.now() });
     return;
   }
-  // Grabbing eyeParts() hits the cam's /capture, which fights its /stream task for
-  // the same starved RAM — tell the dashboard to drop its live feed for the grab,
-  // same trade the single-shot scan (runScan in app.js) already makes. Auto-fired
+  // grabbing eyeparts() hits the cam's /capture, which fights its /stream task for
+  // the same starved ram — tell the dashboard to drop its live feed for the grab,
+  // same trade the single-shot scan (runscan in app.js) already makes. auto-fired
   // analysis has no client-side call site to yield from, so the signal has to come
   // from here instead.
   io.emit("cam-yield");
@@ -605,12 +605,12 @@ function disconnectSerial() {
   }
 }
 
-// Open `path` (or auto-pick the first usbserial port) as the active link.
-// cb(err) fires once with the open result. IMPORTANT NOTE: no auto-reconnect
+// open `path` (or auto-pick the first usbserial port) as the active link.
+// cb(err) fires once with the open result. important note: no auto-reconnect
 // anywhere, on purpose — an unplugged/closed port stays closed until the
 // dashboard explicitly picks one again.
 async function connectSerial(path, cb) {
-  if (bleActive) { cb?.(new Error("BT mode active")); return; } // BT owns the link
+  if (bleActive) { cb?.(new Error("BT mode active")); return; } // bt owns the link
   if (!path) {
     const ports = await listSerialPorts();
     const usbPorts = ports.filter(p => p.includes("usbserial"));
@@ -636,15 +636,15 @@ async function connectSerial(path, cb) {
   serialPort.on("close", () => console.log("Serial closed."));
 }
 
-// No auto-grab at boot: the server used to blindly open the first usbserial
-// port, which stole the ESP32-CAM's FTDI (and isn't even the Uno — that's
-// usbmodem). Sensors arrive over BLE anyway. Connect USB only when explicitly
-// asked: pick a port in the dashboard, or set SERIAL_AUTOCONNECT=true to
+// no auto-grab at boot: the server used to blindly open the first usbserial
+// port, which stole the esp32-cam's ftdi (and isn't even the uno — that's
+// usbmodem). sensors arrive over ble anyway. connect usb only when explicitly
+// asked: pick a port in the dashboard, or set serial_autoconnect=true to
 // restore the old behavior.
 if (process.env.SERIAL_AUTOCONNECT === "true") connectSerial();
 else console.log("USB serial auto-connect off — select a port in the dashboard (SERIAL_AUTOCONNECT=true to auto-open).");
 
-// Analysis is on-demand only (request-analysis below) — no auto interval.
+// analysis is on-demand only (request-analysis below) — no auto interval.
 
 io.on("connection", (socket) => {
   console.log("Client connected");
@@ -654,7 +654,7 @@ io.on("connection", (socket) => {
     console.log(`On-demand analysis requested${mode ? ` (${mode})` : ""}`);
     runAiAnalysis(mode);
   });
-  // Send the agent the current mission so a freshly-connected dashboard shows it.
+  // send the agent the current mission so a freshly-connected dashboard shows it.
   socket.emit("mission-set", { mission: currentMission });
   socket.on("set-mission", (text) => {
     currentMission = String(text || "").trim();
@@ -666,7 +666,7 @@ io.on("connection", (socket) => {
     currentLanguage = (code === "es") ? "es" : "en";
     console.log("Language set:", currentLanguage);
   });
-  // Debug: fake a sensor packet so the dashboard + AI work without the Arduino.
+  // debug: fake a sensor packet so the dashboard + ai work without the arduino.
   socket.on("mock-data", () => {
     const r = (lo, hi, d = 0) => +(lo + Math.random() * (hi - lo)).toFixed(d);
     latestData = {

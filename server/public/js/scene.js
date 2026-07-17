@@ -1,5 +1,5 @@
-// Imperative three.js rover scene, wrapped for React.
-// Uses global THREE / THREE.GLTFLoader loaded via <script> in index.html.
+// imperative three.js rover scene, wrapped for react.
+// uses global THREE / THREE.GLTFLoader loaded via <script> in index.html.
 // createRoverScene(canvas, { onLog }) -> { setData, setCamera, dispose }
 
 const ACCENT = 0x948979;       // bone-gray rim / dust
@@ -38,7 +38,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   rim.position.set(-5, 2, -4);
   scene.add(rim);
 
-  // Drifting dust motes
+  // drifting dust motes
   const N = 60;
   const dustGeo = new THREE.BufferGeometry();
   const dustPos = new Float32Array(N * 3);
@@ -71,7 +71,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
     scene.add(ring);
   }
 
-  // Obstacle marker
+  // obstacle marker
   const wallMat = new THREE.MeshStandardMaterial({
     color: RED, transparent: true, opacity: 0.25, roughness: 0.1, metalness: 0.9,
     emissive: RED, emissiveIntensity: 0.3,
@@ -96,7 +96,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   const SENSOR_Z = 0.55;
   let compassEl = null;
 
-  // Free-orbit drag state (spherical coords around origin)
+  // free-orbit drag state (spherical coords around origin)
   const orbit = {
     active: false,
     theta: Math.atan2(3.2, 4.8),   // azimuth, matches isometric preset
@@ -223,7 +223,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
     },
     setCamera(preset) {
       if (preset === "free") {
-        // Sync orbit angles from wherever the camera currently is
+        // sync orbit angles from wherever the camera currently is
         const cx = cam.x, cy = cam.y, cz = cam.z;
         orbit.radius = Math.sqrt(cx * cx + cy * cy + cz * cz);
         orbit.phi = Math.acos(Math.max(-1, Math.min(1, cy / orbit.radius)));

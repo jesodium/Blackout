@@ -6,45 +6,74 @@ import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./
 
 const html = htm.bind(React.createElement);
 
-// ESP32-CAM MJPEG stream. Known homes of the cam: TP-Link (192.168.1.111,
-// DHCP-reserved for the cam's MAC), iPhone hotspot (172.20.10.10, static in the
-// sketch), and school (DHCP, no fixed IP — use blackout-cam.local instead; that
-// router doesn't poison .local like TP-Link does, which answers every query
-// with 127.0.0.1 and would point the feed at the dev machine on that network).
-// The Camera component walks this list on failure until one loads, so the feed
-// self-heals when the cam moves networks. The offline panel's field still
-// overrides (localStorage, sticks across reloads) for anything not listed here.
-// Stream is always :81.
+// cam mjpeg stream. known homes: tp-link, iphone hotspot, school
+// camera walks this list on failure until one loads. offline panel field overrides (localStorage).
 const CAM_HOSTS = ["172.20.10.10", "192.168.1.111", "blackout-cam.local"];
 const CAM_HOST_DEFAULT = CAM_HOSTS[0];
 const camHost = () => localStorage.getItem("camHost") || CAM_HOST_DEFAULT;
 const camUrl = (host) => `http://${host}:81/stream`;
 
-/* ---------------- sensor model ---------------- */
+/* sensor model */
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
 
-// min/max define the meter's full travel. st() returns [labelKey, kind] — the
-// label is an i18n key resolved at render time so it follows the language.
+// min/max define the meter's travel. st() returns [labelkey, kind] — label is i18n key resolved at render.
 const SENSORS = [
   { key: "temp",  unit: "°C",  d: 1, min: 0, max: 60,   st: v => v > 45 ? ["st.critical", "abort"] : v > 35 ? ["st.high", "warn"] : ["st.normal", "go"] },
   { key: "humid", unit: "%",   d: 1, min: 0, max: 100,  st: v => v > 75 ? ["st.humid", "warn"] : v < 20 ? ["st.dry", "warn"] : ["st.good", "go"] },
-  // Distance is a navigation cue, never a hazard: only caution when right up on a
-  // wall (<10cm), clear otherwise — it's something to steer around, not a danger.
+  // distance is navigation cue, never hazard: caution when close to wall (<10cm), clear otherwise
   { key: "dist",  unit: "cm",  d: 0, min: 0, max: 200,  invert: true, st: v => v < 10 ? ["st.tooClose", "warn"] : ["st.clear", "go"] },
   { key: "smoke", unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 600 ? ["st.hazard", "abort"] : v > 300 ? ["st.warning", "warn"] : ["st.normal", "go"] },
   { key: "airq",  unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 800 ? ["st.poor", "abort"] : v > 450 ? ["st.moderate", "warn"] : ["st.good", "go"] },
 ];
 
-// Voice/chat sequence triggers: typing one of these phrases (EN or ES, accents
-// optional) fires a motion routine directly over BLE instead of going to the
-// LLM — a routine is a fixed on-board script (routines.h), not something Sage's
-// reply can start, so matching happens locally before the /api/chat round trip.
-const norm = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-const SEQUENCE_TRIGGERS = [
-  { re: /present yourself|presentate/, cmd: "go,presentation", ackKey: "sage.presentAck" },
-  { re: /time to explore|hora de explorar/, cmd: "go,run", ackKey: "sage.exploreAck" },
-  { re: /start the mission|inicia la mision/, cmd: "go,mission", ackKey: "sage.missionAck" },
+// voice/chat command triggers: saying one of these fires ble directly instead of going to llm
+// routines are fixed on-board scripts and drive is live joystick. accents stripped, dots/commas survive.
+const norm = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+  .replace(/[\u00a1\u00bf!?]/g, "").replace(/\s+/g, " ").trim();
+const DRIVE_PWM = 140, DRIVE_MS = 501;
+
+// two match paths:
+// 1. order — explicit "i order you" marker, whatever direction word appears wins
+// 2. lead — bare imperatives with no marker, anchored and verb-gated
+const ORDER = /^(?:sage[\s,]*)?(?:te (?:lo )?ordeno|te pido|orden|i order you|order)(?:\s+que)?\b\s*(.+)/;
+const LEAD = "^(?:sage[\\s,]*)?(?:please\\s+|por favor\\s+)?(?:(?:can|could) you\\s+)?" +
+  "(?:(?:go|move|drive|turn|head|ir|ve|vaya|vayas|gira|gires|anda|muevete|camina|sigue)\\s+)*" +
+  "(?:(?:a la|al|hacia|para|to the)\\s+)*";
+const drv = (words) => new RegExp(LEAD + `(?:${words})\\b`);
+
+// "for 2 seconds" -> 2000, "500ms" -> 500, unsaid -> 501. capped at 5s (no encoder feedback).
+function driveMs(txt) {
+  const m = txt.match(/(\d+(?:[.,]\d+)?)\s*(ms|milliseconds?|milisegundos?|s|secs?|seconds?|segundos?)\b/);
+  if (!m) return DRIVE_MS;
+  const n = parseFloat(m[1].replace(",", "."));
+  return Math.min(5000, Math.max(50, Math.round(m[2][0] === "m" ? n : n * 1000)));
+}
+
+// one direction-word list for both paths. stemmed covers conjugations. "stop" tested first so "para de avanzar" halts.
+const DIRS = [
+  { w: "stop|halt|freeze|alto|frena\\w*|deten\\w*|pare\\w*|parat\\w*|para(?!\\s+(?:atras|adelante|delante|la|el|de))",
+    cmd: () => "stop", ackKey: "sage.stopAck" },
+  { w: "back|backwards?|reverse|atras|reversa|retroced\\w*|retroces\\w*",
+    cmd: (ms) => `drv,back,${DRIVE_PWM},${ms}`,  ackKey: "sage.backAck" },
+  { w: "forward|ahead|straight|adelante|delante|avanz\\w*|avanc\\w*",
+    cmd: (ms) => `drv,fwd,${DRIVE_PWM},${ms}`,   ackKey: "sage.fwdAck" },
+  { w: "left|izquierda",  cmd: (ms) => `drv,left,${DRIVE_PWM},${ms}`,  ackKey: "sage.leftAck" },
+  { w: "right|derecha",   cmd: (ms) => `drv,right,${DRIVE_PWM},${ms}`, ackKey: "sage.rightAck" },
+].map(d => ({ ...d, bare: new RegExp(`\\b(?:${d.w})\\b`), re: drv(d.w) }));
+
+const CMD_TRIGGERS = [
+  { re: /present yourself|presentate/,        cmd: () => "go,presentation", ackKey: "sage.presentAck" },
+  { re: /time to explore|hora de explorar/,   cmd: () => "go,run",          ackKey: "sage.exploreAck" },
+  { re: /start the mission|inicia la mision/, cmd: () => "go,mission",      ackKey: "sage.missionAck" },
+  ...DIRS,
 ];
+
+// marked order -> direction word anywhere in rest; otherwise anchored imperative. returns null if no match, goes to sage.
+function matchCmd(txt) {
+  const ord = txt.match(ORDER);
+  if (ord) return DIRS.find(d => d.bare.test(ord[1])) || null;
+  return CMD_TRIGGERS.find(c => c.re.test(txt)) || null;
+}
 
 const TRENDS = [
   { key: "dist", tkey: "trend.dist", color: "#9a9384" },
@@ -52,7 +81,7 @@ const TRENDS = [
   { key: "temp", tkey: "trend.temp", color: "#ff3b2f" },
 ];
 
-/* ---------------- TTS ---------------- */
+/* tts */
 let voices = [];
 const loadVoices = () => { voices = window.speechSynthesis?.getVoices() || []; };
 loadVoices();
@@ -64,8 +93,7 @@ function browserSpeak(text, { onStart, onEnd } = {}) {
   const sl = speechLang();          // e.g. "en-US" / "es-ES"
   const pre = sl.slice(0, 2);       // "en" / "es"
   u.rate = 0.9; u.lang = sl;
-  // ponytail: null when no same-language voice → engine picks by u.lang. Never
-  // fall back to voices[0] (usually English) for Spanish text.
+  // null when no same-language voice -> engine picks by u.lang. never fall back to voices[0] for spanish.
   u.voice = voices.find(v => v.lang.startsWith(pre) && /samantha|alex|google|enhanced|jorge|alvaro|helena/i.test(v.name))
     || voices.find(v => v.lang.startsWith(pre)) || null;
   u.onstart = () => onStart?.();
@@ -74,8 +102,8 @@ function browserSpeak(text, { onStart, onEnd } = {}) {
   speechSynthesis.speak(u);
 }
 
-// Mission findings: when a metric newly worsens, the Analysis panel logs a discovery.
-// Bands match the server's status thresholds so the agent and the panel agree.
+// mission findings: when a metric newly worsens, the analysis panel logs a discovery.
+// bands match the server's status thresholds so agent and panel agree.
 const FINDINGS = [
   { k: "temp",  warn: 35,  danger: 45,  msg: { 1: "find.tempUp", 2: "find.tempHigh" } },
   { k: "smoke", warn: 300, danger: 600, msg: { 1: "find.smoke", 2: "find.smokeHeavy" } },
@@ -89,18 +117,16 @@ const bandOf = (f, v) => {
   return v >= f.danger ? 2 : v >= f.warn ? 1 : 0;
 };
 
-// Split into sentences so we can start speaking the FIRST one immediately instead
-// of waiting for the whole reply's audio — big cut to time-to-first-sound.
+// split into sentences so we speak first one immediately instead of waiting for whole reply
 const splitSpeech = (t) => (t.match(/[^.!?]+[.!?]+|\S[^.!?]*$/g) || [t]).map(s => s.trim()).filter(Boolean);
 
-// MS Edge / Deepgram neural TTS via server proxy; falls back to browser TTS on failure.
-// Plays sentence-by-sentence, prefetching the next clip while the current one plays
-// (max 2 concurrent requests, so we don't trip Deepgram's rate limit).
+// ms edge / deepgram neural tts via server proxy; falls back to browser tts on failure.
+// plays sentence-by-sentence, prefetching next clip while current one plays (max 2 concurrent requests).
 let ttsAudio = null;
 let ttsToken = 0;
-let ttsOnEnd = null; // active speak()'s onEnd, so stopSpeech() can settle the UI
-let ttsProviderRef = "edge"; // "edge" | "deepgram", updated by App toggle
-// Cut off whatever's playing: supersede the loop, stop audio, settle the UI.
+let ttsOnEnd = null; // active speak()'s onEnd, so stopSpeech() can settle ui
+let ttsProviderRef = "edge"; // "edge" | "deepgram", updated by app toggle
+// cut off whatever's playing: supersede loop, stop audio, settle ui.
 function stopSpeech() {
   ttsToken++;
   ttsAudio?.pause();
@@ -138,9 +164,8 @@ async function speak(text, { onStart, onEnd } = {}) {
   if (myToken === ttsToken) { ttsOnEnd = null; onEnd?.(); }
 }
 
-// Onboarding lines are pre-rendered to /audio/onboard-<lang>-<key>.mp3 on the
-// server (no 5-7s synth wait). Play the static clip; fall back to live TTS if
-// the file is missing (e.g. pregen hasn't run yet).
+// onboarding lines are pre-rendered to /audio/onboard-<lang>-<key>.mp3 (no 5-7s synth wait).
+// play the static clip; fall back to live tts if file is missing.
 function playOnboard(key, fallbackText, { onStart, onEnd } = {}) {
   ttsAudio?.pause();
   window.speechSynthesis?.cancel();
@@ -154,7 +179,7 @@ function playOnboard(key, fallbackText, { onStart, onEnd } = {}) {
   a.play().catch(fall);
 }
 
-/* ---------------- zone header (folio · title · tag) ---------------- */
+/* zone header (folio · title · tag) */
 function Head({ folio, title, tag, children }) {
   return html`
     <div class="zone-head">
@@ -166,7 +191,7 @@ function Head({ folio, title, tag, children }) {
     </div>`;
 }
 
-/* ---------------- canvas: trends ---------------- */
+/* canvas: trends */
 function Trends({ packet }) {
   const ref = useRef(null);
   const hist = useRef([]);
@@ -203,7 +228,7 @@ function Trends({ packet }) {
   return html`<canvas ref=${ref}></canvas>`;
 }
 
-/* ---------------- reading row (sensor index) ---------------- */
+/* reading row (sensor index) */
 function Reading({ s, value, index }) {
   const has = value != null && !isNaN(value);
   const [labelKey, kind] = has ? s.st(value) : [null, ""];
@@ -229,7 +254,7 @@ function Reading({ s, value, index }) {
     </div>`;
 }
 
-/* ---------------- orientation (stage) ---------------- */
+/* orientation (stage) */
 function Orientation({ packet, onLog }) {
   const canvasRef = useRef(null);
   const compassRef = useRef(null);
@@ -290,13 +315,10 @@ function Orientation({ packet, onLog }) {
     </section>`;
 }
 
-/* ---------------- motor debug: direct-drive bench panel ---------------- */
-// Bench tool — labels stay English on purpose, not worth 6-language i18n keys.
-// Every button sends a one-shot "drv,<verb>,<pwm>,<ms>": the firmware auto-halts
-// when <ms> runs out, so a dropped BLE link can never leave the wheels spinning.
-// 360s are TIMED spins (no IMU feedback) — the "360 ms" knob is the calibration:
-// nudge it until one press is one full turn at your usual speed. Knobs persist
-// in localStorage. BLE cmd char caps at 20 bytes, hence the input max limits.
+/* motor debug: direct-drive bench panel */
+// bench tool — labels stay english, not worth 6-language i18n keys.
+// every button sends "drv,<verb>,<pwm>,<ms>": firmware auto-halts when <ms> runs out, so dropped ble link never leaves wheels spinning.
+// 360s are timed spins (no IMU feedback) — "360 ms" knob is calibration. knobs persist in localStorage.
 function MotorDebug({ onCmd, enabled }) {
   const knob = (key, def) => {
     const [v, setV] = useState(+localStorage.getItem(key) || def);
@@ -337,17 +359,15 @@ function MotorDebug({ onCmd, enabled }) {
     </details>`;
 }
 
-/* ---------------- manual control: gamepad (Xbox / DualSense) ---------------- */
-// Browser Gamepad API — both pads use the "standard" mapping, so one code path.
-// Autopilot ON = pad ignored. Disabling autopilot arms the pad and Sage announces it.
-// Drive is sent as short timed bursts ("drv,<verb>,<pwm>,300") re-sent every 150ms
-// while the stick is held: firmware auto-halts 300ms after the last burst, so a
-// dropped BLE link or a yanked controller can never leave the wheels spinning.
-// Bench-style panel — labels stay English on purpose, same as MotorDebug.
+/* manual control: gamepad (xbox / dualsense) */
+// browser gamepad api — both pads use "standard" mapping, so one code path.
+// autopilot on = pad ignored. disabling autopilot arms the pad.
+// drive sent as short timed bursts re-sent every 150ms while stick held: firmware auto-halts 300ms after last burst.
+// labels stay english, same as motordebug.
 function GamepadCtl({ onCmd, onAnalyze, enabled }) {
   const [autopilot, setAutopilot] = useState(true);
   const [padName, setPadName] = useState(null);
-  const [verb, setVerb] = useState(null); // live verb for the UI readout
+  const [verb, setVerb] = useState(null); // live verb for ui readout
   const armed = !autopilot && enabled;
   const armedRef = useRef(armed);
   armedRef.current = armed;
@@ -364,8 +384,7 @@ function GamepadCtl({ onCmd, onAnalyze, enabled }) {
     return () => { window.removeEventListener("gamepadconnected", seen); window.removeEventListener("gamepaddisconnected", seen); };
   }, []);
 
-  // Dpad ↑/↓ drives, right stick X rotates. Fixed slow PWM — manual is for
-  // precision, not speed. Drive wins over rotate when both are held.
+  // dpad up/down drives, right stick x rotates. fixed slow pwm — manual is for precision, not speed. drive wins over rotate when both held.
   const MANUAL_PWM = 110;
   useEffect(() => {
     const id = setInterval(() => {
@@ -373,13 +392,12 @@ function GamepadCtl({ onCmd, onAnalyze, enabled }) {
       const pad = [...navigator.getGamepads()].find(Boolean);
       if (!pad) return;
 
-      // Square (X on Xbox) = button 2 in standard mapping. Fire on press edge only,
-      // so holding it doesn't queue a burst of analyses.
+      // square (x on xbox) = button 2. fire on press edge only, so holding it doesn't queue a burst of analyses.
       const sq = !!pad.buttons[2]?.pressed;
       if (sq && !sqWas.current) analyzeRef.current?.();
       sqWas.current = sq;
 
-      const rx = pad.axes[2] ?? 0;         // right stick X (standard mapping)
+      const rx = pad.axes[2] ?? 0;         // right stick x (standard mapping)
       const v = pad.buttons[12]?.pressed ? "fwd"
         : pad.buttons[13]?.pressed ? "back"
         : Math.abs(rx) > 0.35 ? (rx < 0 ? "left" : "right")
@@ -394,8 +412,7 @@ function GamepadCtl({ onCmd, onAnalyze, enabled }) {
     return () => clearInterval(id);
   }, [onCmd]);
 
-  // Announcements use the pre-rendered per-language clips (same pipeline as the
-  // briefing wizard) — instant playback, no 5-7s TTS synth wait, follows lang.
+  // announcements use pre-rendered per-language clips — instant playback, no 5-7s tts wait, follows lang.
   const toggle = () => {
     const ap = !autopilot;
     setAutopilot(ap);
@@ -421,7 +438,7 @@ function GamepadCtl({ onCmd, onAnalyze, enabled }) {
     </section>`;
 }
 
-/* ---------------- camera: ESP32-CAM live feed ---------------- */
+/* camera: esp32-cam live feed */
 function Camera() {
   const [state, setState] = useState("loading");
   const [nonce, setNonce] = useState(0);
@@ -432,16 +449,9 @@ function Camera() {
   const imgRef = useRef(null);
 
   useEffect(() => {
-    // Hang up explicitly before unmounting. Dropping the <img> does not reliably
-    // abort an in-flight multipart/x-mixed-replace stream, and the cam's stream
-    // task stays wedged until its send actually fails (see main.ino's
-    // send_wait_timeout). removeAttribute aborts the fetch now — and unlike
-    // src="", it doesn't re-request the page URL and fire a bogus onError.
+    // hang up before unmounting. removeattribute aborts the fetch now — unlike src="", it doesn't re-request page url.
     const y = () => { imgRef.current?.removeAttribute("src"); setYielded(true); };
-    // Back to "loading", not straight to the old state: a remounted <img> whose
-    // stream never starts fires neither onLoad nor onError, and the 12s watchdog
-    // below only arms while "loading". Resuming as "live" left a black frame with
-    // nothing watching it — refresh was the only way out.
+    // back to "loading", not old state. a remounted <img> whose stream never starts fires neither onLoad nor onError.
     const r = () => { setYielded(false); setState("loading"); setNonce(n => n + 1); };
     window.addEventListener("cam:yield", y);
     window.addEventListener("cam:resume", r);
@@ -456,8 +466,7 @@ function Camera() {
     return () => clearTimeout(id);
   }, [state, yielded, nonce, host, fail]);
 
-  // A dropped feed (cam-yield contention, wifi hiccup) shouldn't strand the
-  // operator behind the manual Retry button — keep trying on its own.
+  // dropped feed (cam-yield, wifi hiccup) shouldn't strand operator behind manual retry — keep trying.
   useEffect(() => {
     if (yielded || state !== "offline") return;
     const id = setTimeout(() => { setState("loading"); setNonce(n => n + 1); }, 5000);
@@ -525,7 +534,7 @@ function Camera() {
     </section>`;
 }
 
-/* ---------------- readings panel ---------------- */
+/* readings panel */
 function ReadingsPanel({ packet }) {
   return html`
     <section class="zone readings reveal" style=${{ animationDelay: "120ms" }} aria-labelledby="env-h">
@@ -537,7 +546,7 @@ function ReadingsPanel({ packet }) {
     </section>`;
 }
 
-/* ---------------- analysis / mission memory ---------------- */
+/* analysis / mission memory */
 function Memory({ chat }) {
   const findings = (chat?.findings || []).slice().reverse();
   const tag = !chat ? "—" : findings.length ? t("tag.found", { n: findings.length }) : t("tag.nominal");
@@ -559,7 +568,7 @@ function Memory({ chat }) {
     </section>`;
 }
 
-/* ---------------- trends panel ---------------- */
+/* trends panel */
 function TrendsPanel({ packet }) {
   return html`
     <section class="zone reveal" style=${{ animationDelay: "200ms" }} aria-labelledby="tr-h">
@@ -572,11 +581,10 @@ function TrendsPanel({ packet }) {
     </section>`;
 }
 
-/* ---------------- agent (AI) ----------------
-   The agent has a "mood" derived from what it's saying + live sensor state.
-   That mood drives an animated glyph so the analysis reads as intent, not just text. */
-// label is an i18n key, resolved at render via t().
-// Split face string into animated parts for Telegram-style blink.
+/* agent (ai)
+   mood derived from what it says + live sensor state. drives animated glyph so analysis reads as intent, not just text. */
+// label is i18n key, resolved at render via t().
+// split face string into animated parts for telegram-style blink.
 function animFace(face) {
   if (face === ":o") return html`<span class="a-eye">:</span><span class="a-mouth">o</span>`;
   const [l, m, r] = face;
@@ -592,7 +600,7 @@ const INTENTS = {
   alert:    { key: "alert",    label: "intent.alert",    color: "var(--accent)", face: "x_x" },
 };
 
-// Worst pill across all live readings: 0 go · 1 warn · 2 abort · null no data.
+// worst pill across all live readings: 0 go · 1 warn · 2 abort · null no data.
 function worstSensor(packet) {
   if (!packet) return null;
   let rank = -1;
@@ -605,8 +613,7 @@ function worstSensor(packet) {
   return rank < 0 ? null : rank;
 }
 
-// Go/no-go verdict for the operator: worst sensor decides, named so the reason
-// is visible. Mirrors the project pitch — "can a human safely enter?"
+// go/no-go verdict for operator: worst sensor decides, named so reason is visible.
 function assess(packet) {
   const rank = worstSensor(packet);
   if (rank == null) return { kind: "idle", label: t("verdict.awaiting"), cause: t("verdict.noTelemetry") };
@@ -624,7 +631,7 @@ function assess(packet) {
   return { kind: "go", label: t("verdict.safe"), cause };
 }
 
-// Intent: analysis-in-flight wins, then keywords in what the agent said, then sensors.
+// intent: analysis-in-flight wins, then keywords in agent text, then sensors.
 function deriveIntent(ai, packet, connected) {
   if (ai.analyzing) return INTENTS.thinking;
   const txt = (ai.text || "").toLowerCase();
@@ -638,7 +645,7 @@ function deriveIntent(ai, packet, connected) {
   return connected ? INTENTS.scanning : INTENTS.idle;
 }
 
-/* animated glyph — one SVG per intent, parts animated via CSS (see .ai-glyph) */
+/* animated glyph — one svg per intent, parts animated via css (see .ai-glyph) */
 function AgentIcon({ intent }) {
   const k = intent.key;
   if (k === "thinking") return html`<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true">
@@ -672,7 +679,7 @@ function AgentIcon({ intent }) {
   </svg>`;
 }
 
-// Live ticking elapsed counter (since a timestamp), ~10fps.
+// live ticking elapsed counter (since a timestamp), ~10fps.
 function Stopwatch({ since }) {
   const [, tick] = useState(0);
   useEffect(() => { const id = setInterval(() => tick(n => n + 1), 90); return () => clearInterval(id); }, [since]);
@@ -764,7 +771,7 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
     </section>`;
 }
 
-/* ---------------- chat sessions (in agent box) ---------------- */
+/* chat sessions (in agent box) */
 function ChatSelect({ chats, onNew, onSelect, onDelete }) {
   return html`
     <div class="chat-select">
@@ -787,14 +794,14 @@ function ChatSelect({ chats, onNew, onSelect, onDelete }) {
 
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-// Shared speech-to-text. onText gets the recognized transcript.
+// shared speech-to-text. onText gets the recognized transcript.
 function useMic(onText) {
   const [listening, setListening] = useState(false);
   const recRef = useRef(null);
   const toggle = useCallback(() => {
     if (!SpeechRec) return;
     if (listening) { recRef.current?.stop(); return; }
-    stopSpeech(); // operator is talking — cut the agent off so it doesn't talk over them
+    stopSpeech(); // operator is talking — cut agent off so it doesn't talk over them
     const rec = new SpeechRec();
     rec.lang = speechLang(); rec.interimResults = false; rec.maxAlternatives = 1;
     rec.onresult = (e) => onText(e.results[0][0].transcript);
@@ -805,8 +812,7 @@ function useMic(onText) {
   return { listening, toggle, supported: !!SpeechRec };
 }
 
-// Briefing step copy is resolved through i18n at render time. `clip` maps each
-// step to its pre-generated onboarding audio key (see playOnboard / ONBOARDING).
+// briefing step copy resolved through i18n at render. `clip` maps each step to its pre-generated onboarding audio key.
 const BRIEF_STEPS = [
   { key: "objective",   clip: "q0", label: "brief.objLabel",   q: "brief.objQ",   ph: "brief.objPh" },
   { key: "environment", clip: "q1", label: "brief.envLabel",   q: "brief.envQ",   ph: "brief.envPh" },
@@ -827,8 +833,8 @@ function Briefing({ onBrief, onBack, onSpeak, busy }) {
   const next = () => { if (curVal.trim()) setStep(s => s + 1); };
   const start = () => onBrief(BRIEF_STEPS.map(s => `${t(s.label)}: ${answers[s.key] || "—"}`).join("\n"));
 
-  // Speak each onboarding step out loud (pre-rendered clips, no synth wait).
-  // Step 0 plays the intro greeting first, then its question.
+  // speak each onboarding step out loud (pre-rendered clips, no synth wait).
+  // step 0 plays the intro greeting first, then its question.
   useEffect(() => {
     if (review) {
       onSpeak?.([{ clip: "rundown", text: ONBOARDING[getLang()].rundown }]);
@@ -892,8 +898,8 @@ function Briefing({ onBrief, onBack, onSpeak, busy }) {
     </div>`;
 }
 
-/* ---------------- ask Sage (voice, in agent box) ---------------- */
-// Predetermined prompts — give the operator ideas and keep questions on-telemetry.
+/* ask sage (voice, in agent box) */
+// predetermined prompts — give operator ideas and keep questions on-telemetry.
 const ASK_SUGGESTIONS = ["ask.s0", "ask.s1", "ask.s2", "ask.s3", "ask.s4"];
 function Ask({ onAsk, busy }) {
   const mic = useMic(onAsk);
@@ -908,7 +914,7 @@ function Ask({ onAsk, busy }) {
     </div>`;
 }
 
-/* ---------------- logs ---------------- */
+/* logs */
 function Logs({ logs }) {
   const [f, setF] = useState("all");
   const tabs = [["all", t("log.tabAll")], ["system", t("log.tabSystem")], ["alerts", t("log.tabAlerts")], ["ai", t("log.tabAi")]];
@@ -929,11 +935,11 @@ function Logs({ logs }) {
     </section>`;
 }
 
-/* ---------------- serial monitor ---------------- */
+/* serial monitor */
 function SerialMonitor({ lines, hidden, onToggle, onClear }) {
   const [paused, setPaused] = useState(false);
   const streamRef = useRef(null);
-  // Stick to the bottom on new lines unless the user paused to read.
+  // stick to bottom on new lines unless user paused to read.
   useEffect(() => {
     if (hidden || paused) return;
     const el = streamRef.current; if (el) el.scrollTop = el.scrollHeight;
@@ -960,7 +966,7 @@ function SerialMonitor({ lines, hidden, onToggle, onClear }) {
     </section>`;
 }
 
-/* ---------------- masthead ---------------- */
+/* masthead */
 function Masthead({ connected, ports, currentPort, bridge, onBridge, onCmd, connMode, onConnMode, ping, packets, uptime, onPort, lang, onLang }) {
   return html`
     <header class="masthead reveal">
@@ -1035,7 +1041,7 @@ function Masthead({ connected, ports, currentPort, bridge, onBridge, onCmd, conn
     </header>`;
 }
 
-/* ---------------- ticker ---------------- */
+/* ticker */
 function Ticker({ packet, connected }) {
   const items = [
     [t("tick.temp"), fmt(packet?.temp, 1) + "°C"],
@@ -1059,12 +1065,12 @@ function Ticker({ packet, connected }) {
     </div>`;
 }
 
-/* ---------------- toasts ---------------- */
+/* toasts */
 function Toasts({ items }) {
   return html`<div class="toasts">${items.map(t => html`<div key=${t.id} class=${"toast k-" + t.kind}>${t.msg}</div>`)}</div>`;
 }
 
-/* ---------------- root ---------------- */
+/* root */
 function App() {
   const [connected, setConnected] = useState(false);
   const [packet, setPacket] = useState(null);
@@ -1072,11 +1078,10 @@ function App() {
   const [packets, setPackets] = useState(0);
   const [logs, setLogs] = useState([]);
   const [ai, setAi] = useState({ text: t("ai.awaiting"), badge: "badge.standby", analyzing: false, history: [], phase: null, since: 0, llm: null, tts: null, status: null });
-  // Mirrors ai.analyzing for callers with no render to gate on (gamepad poll,
-  // routine E:analyze). Re-synced every render, so a server-side clear releases it.
+  // mirrors ai.analyzing for callers with no render to gate on (gamepad poll, routine e:analyze). re-synced every render.
   const analyzingRef = useRef(false);
   analyzingRef.current = ai.analyzing;
-  const presentingRef = useRef(false); // last routine started was PRESENTATION
+  const presentingRef = useRef(false); // last routine started was presentation
   const [tts, setTts] = useState(() => localStorage.getItem("tts") !== "false");
   const [ttsProv, setTtsProv] = useState(() => localStorage.getItem("ttsProvider") || "edge");
   const [hasDeepgram, setHasDeepgram] = useState(false);
@@ -1090,7 +1095,7 @@ function App() {
   const [serialLines, setSerialLines] = useState([]);
   const [serialHidden, setSerialHidden] = useState(() => localStorage.getItem("serialHidden") === "true");
   const [speaking, setSpeaking] = useState(false);
-  // Chats = briefed recon sessions. Each holds its own mission + conversation.
+  // chats = briefed recon sessions. each holds its own mission + conversation.
   const [chats, setChats] = useState(() => { try { return JSON.parse(localStorage.getItem("chats") || "[]"); } catch { return []; } });
   const [activeId, setActiveId] = useState(() => localStorage.getItem("activeChat") || "");
   const activeChat = chats.find(c => c.id === activeId) || null;
@@ -1113,8 +1118,7 @@ function App() {
   const lastBands = useRef({}); // per-metric severity, to detect when something newly worsens
   useEffect(() => { lastBands.current = {}; }, [activeId]); // fresh findings per session
 
-  // Smoke/air gas readings are noisy MQ sensors — sample them every 5s so the
-  // display doesn't flicker. Everything else stays live.
+  // smoke/air gas readings are noisy mq sensors — sample them every 5s so display doesn't flicker. everything else stays live.
   const packetRef = useRef(null);
   useEffect(() => { packetRef.current = packet; }, [packet]);
   const [slowGas, setSlowGas] = useState({});
@@ -1136,7 +1140,7 @@ function App() {
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 3600);
   }, []);
 
-  // Speak with timing: clock starts now, stops when first audio plays (tts ms).
+  // speak with timing: clock starts now, stops when first audio plays (tts ms).
   const speakTimed = useCallback((text) => {
     const t = Date.now();
     setAi(p => ({ ...p, phase: "speaking", since: t, tts: null }));
@@ -1152,7 +1156,7 @@ function App() {
     const socket = window.io(url);
     socketRef.current = socket;
 
-    // Log a discovery to the active session whenever a metric newly worsens.
+    // log a discovery to active session whenever a metric newly worsens.
     function recordFindings(d) {
       const chat = activeRef.current;
       if (!chat || !chat.mission) return;
@@ -1170,7 +1174,7 @@ function App() {
 
     socket.on("connect", () => {
       setConnected(true); addLog(t("log.linkEstablished"), "system");
-      socket.emit("set-language", getLang());                          // sync AI language
+      socket.emit("set-language", getLang());                          // sync ai language
       socket.emit("set-mission", activeRef.current?.mission || ""); // sync server to active session
     });
     socket.on("disconnect", () => { setConnected(false); setPing("—"); addLog(t("log.linkLost"), "danger"); });
@@ -1190,8 +1194,7 @@ function App() {
       }
       recordFindings(d);
     });
-    // Sage spotted something herself (relic fragments, a drawing) and logged it with
-    // the still she saw. Same shape as a sensor finding, plus img.
+    // sage spotted something herself (relic fragments, a drawing) and logged it with the still she saw. same shape as sensor finding, plus img.
     socket.on("sage-finding", d => {
       if (!d?.text) return;
       const chat = activeRef.current;
@@ -1209,7 +1212,7 @@ function App() {
         id: Date.now() + Math.random(),
       }].slice(-300));
     });
-    // The agent says something on its own (analysis, instant reaction, or mission ack).
+    // agent says something on its own (analysis, instant reaction, or mission ack).
     const sayAgent = (text, ts, logMsg, logKind, status = null) => {
       addLog(logMsg, logKind);
       setAi(p => ({
@@ -1219,13 +1222,10 @@ function App() {
       }));
       if (ttsRef.current) speakTimed(text);
     };
-    // Auto analysis + instant reactions only fire when a briefed session is open —
-    // otherwise the dashboard talks to itself on boot with no chat active.
+    // auto analysis + instant reactions only fire when a briefed session is open — otherwise dashboard talks to itself on boot with no chat active.
     socket.on("ai-analysis", d => {
       if (!d) return;
-      // No briefed session: don't display/voice the result, but ALWAYS release the
-      // spinner — a routine's E:analyze at the bench sets analyzing, and a swallowed
-      // reply here locked the whole briefing UI behind `busy` forever.
+      // no briefed session: don't display/voice result, but always release spinner — routine's e:analyze at bench sets analyzing, and a swallowed reply here locked briefing ui behind "busy" forever.
       if (!activeRef.current?.mission) {
         setAi(p => ({ ...p, analyzing: false, phase: null, badge: "badge.standby" }));
         return;
@@ -1234,9 +1234,7 @@ function App() {
       else if (d.error) sayAgent(d.error, d.timestamp, t("log.aiReceived"), "warn", null);
     });
     socket.on("agent-blurt", d => { if (d?.text && activeRef.current?.mission) sayAgent(d.text, d.timestamp, t("log.blurt", { text: d.text }), "warn"); });
-    // Server-driven camera yield: runAiAnalysis grabs a still from /capture, which
-    // fights the live /stream for the cam's starved RAM. Relayed to the same
-    // window events Camera already listens for (see runScan's client-side yield).
+    // server-driven camera yield: runaianalysis grabs a still from /capture, which fights the live /stream for cam's starved ram.
     socket.on("cam-yield", () => window.dispatchEvent(new Event("cam:yield")));
     socket.on("cam-resume", () => window.dispatchEvent(new Event("cam:resume")));
     socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, t("log.missionAck"), "ai", d.status); });
@@ -1244,7 +1242,7 @@ function App() {
     return () => socket.close();
   }, [addLog, speakTimed]);
 
-  // Keep the document language + skip-link (static HTML outside React) in sync.
+  // keep document language + skip-link (static html outside react) in sync.
   useEffect(() => {
     document.documentElement.lang = lang;
     const sk = document.querySelector(".skip-link");
@@ -1307,16 +1305,13 @@ function App() {
     } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); toast(t("toast.error", { msg: e.message }), "danger"); }
   }, [addLog, toast, loadPorts]);
 
-  // Bluetooth bridge: the R4 advertises BLE (no classic SPP), so the browser's
-  // own Web Bluetooth talks to it directly — no server-side native BT lib needed.
-  // /api/bridge/* just tracks the intent flag server-side (mutual excl. w/ USB).
+  // bluetooth bridge: r4 advertises ble (no classic spp), so browser's web bluetooth talks to it directly — no server-side native bt library needed.
   const BLE_SERVICE = "19b10000-e8f2-537e-4f6c-d104768a1214";
   const BLE_CHAR = "19b10001-e8f2-537e-4f6c-d104768a1214";
   const BLE_CMD = "19b10002-e8f2-537e-4f6c-d104768a1214"; // write = motion routine verbs
   const bleRef = useRef({ device: null, char: null, cmd: null });
 
-  // Defined above onBleNotify because that handler calls it — deps are evaluated
-  // during render, so a later `const` would be in the temporal dead zone.
+  // defined above onblenotify because that handler calls it — deps are evaluated during render, so later `const` would be in temporal dead zone.
   const analyze = useCallback((mode) => {
     if (analyzingRef.current) return;
     analyzingRef.current = true; // set now, not on re-render — two calls in one tick must not both emit
@@ -1324,15 +1319,13 @@ function App() {
     socketRef.current?.emit("request-analysis", { mode: mode || null });
   }, []);
 
-  // The board notifies two kinds of line: "S:" telemetry, and "E:" events a
-  // routine raises as it runs (an ANALYZE step asking for an AI read). Events are
-  // ours to act on and aren't telemetry, so they don't go to /api/mega/sensor.
+  // board notifies two kinds of line: "s:" telemetry, and "e:" events a routine raises as it runs (an analyze step asking for an ai read).
+  // events are ours to act on and aren't telemetry, so they don't go to /api/mega/sensor.
   const onBleNotify = useCallback((e) => {
     const line = new TextDecoder().decode(e.target.value);
     console.log("BLE notify:", line);
-    // PRESENTATION's single closing ANALYZE is a greeting to the judges, not a cave
-    // read. The board can't say which routine raised the event, so we go by the last
-    // "go," we sent; consume the flag so a later manual analyze is a normal one.
+    // presentation's single closing analyze is a greeting to judges, not a cave read.
+    // the board can't say which routine raised the event, so we go by the last "go," we sent.
     if (line.startsWith("E:analyze")) {
       addLog(t("log.routineAnalyze"), "ai");
       analyze(presentingRef.current ? "present" : null);
@@ -1351,9 +1344,8 @@ function App() {
     bleRef.current = { device: null, char: null, cmd: null };
   }, [onBleNotify]);
 
-  // One verb to the firmware over the BLE cmd char: "go,<name>" starts a motion
-  // routine, "stop" cuts the motors. Routines run standalone on the board — this
-  // only fires the starting gun, so a dropped link mid-run doesn't strand the robot.
+  // one verb to firmware over ble cmd char: "go,<name>" starts a motion routine, "stop" cuts motors.
+  // routines run standalone on board — this only fires starting gun, so dropped link mid-run doesn't strand robot.
   const sendCmd = useCallback(async (word) => {
     if (word.startsWith("go,")) presentingRef.current = word === "go,presentation";
     const { device, cmd } = bleRef.current;
@@ -1385,9 +1377,7 @@ function App() {
       } else {
         if (mode === "reconnect") disconnectBle();
         if (!navigator.bluetooth) throw new Error("Web Bluetooth unsupported — use Chrome/Edge");
-        // Filter by service UUID, not name — ArduinoBLE on the R4 WiFi always
-        // advertises the name as "Arduino" (known upstream bug), so a name
-        // filter never matches.
+        // filter by service uuid, not name — arduinoble on r4 wifi always advertises name as "arduino" (known upstream bug), so name filter never matches.
         const device = await navigator.bluetooth.requestDevice({
           filters: [{ services: [BLE_SERVICE] }],
           optionalServices: [BLE_SERVICE],
@@ -1417,10 +1407,8 @@ function App() {
     setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
     socketRef.current?.emit("mock-data");
   }, []);
-  // Ask Sage: reply lands in the agent's speech bubble + is spoken. Each chat
-  // keeps its own rolling message history so follow-ups have context.
-  // Render a Sage JSON reply {text,status,action}: bubble + status tint + history +
-  // TTS. Only the text field is ever shown or voiced — never the raw JSON.
+  // ask sage: reply lands in agent's speech bubble + spoken. each chat keeps its own rolling message history so follow-ups have context.
+  // render a sage json reply {text,status,action}: bubble + status tint + history + tts. only text field is shown or voiced — never raw json.
   const showSage = useCallback((sage, t0, speak = true) => {
     const textv = (sage && sage.text) || "No response.";
     setAi(p => ({
@@ -1432,17 +1420,14 @@ function App() {
     if (speak && ttsRef.current) speakTimed(textv);
   }, [speakTimed]);
 
-  // Sage asked for a fresh look (action:"analyze"): let the server grab a still and
-  // hand back Sage's description. No BLE write — the camera is fixed forward, so
-  // this is purely a camera read and works with the board unplugged.
+  // sage asked for a fresh look (action:"analyze"): let server grab a still and hand back sage's description. no ble write — camera is fixed forward, purely a camera read.
   const runScan = useCallback(async () => {
-    // Hand the camera to the server: drop our live feed so its single worker is free
-    // to grab the frame, then reconnect once we're done.
+    // hand the camera to server: drop our live feed so its single worker is free to grab the frame, then reconnect once done.
     window.dispatchEvent(new Event("cam:yield"));
     const t0 = Date.now();
     setAi(p => ({ ...p, analyzing: true, badge: "badge.thinking", phase: "thinking", since: t0, llm: null, tts: null }));
     try {
-      await new Promise(r => setTimeout(r, 400)); // let the ESP32 free its worker first
+      await new Promise(r => setTimeout(r, 400)); // let esp32 free its worker first
       const r = await fetch("/api/scan", { method: "POST" });
       const data = await r.json();
       const sage = data.reply, ok = !!(sage && sage.text);
@@ -1453,7 +1438,7 @@ function App() {
     } catch (e) {
       setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
     } finally {
-      window.dispatchEvent(new Event("cam:resume")); // give the live feed back
+      window.dispatchEvent(new Event("cam:resume")); // give live feed back
     }
   }, [showSage, addLog]);
 
@@ -1462,13 +1447,12 @@ function App() {
     const chat = activeRef.current;
     if (!text || !chat) return;
     addLog(t("log.operator", { text }), "system");
-    // Sequence phrase ("present yourself" / "time to explore", EN or ES) — fire the
-    // on-board routine straight over BLE, no LLM round trip; Sage can't steer a
-    // routine anyway (routines.h), so this is just the starting gun plus a canned ack.
-    const trigger = SEQUENCE_TRIGGERS.find(s => s.re.test(norm(text)));
+    // routine or drive phrase ("present yourself", "go forward for 2 seconds") — fire straight over ble, no llm round trip.
+    const trigger = matchCmd(norm(text));
     if (trigger) {
-      const sent = await sendCmd(trigger.cmd);
-      const ack = { text: t(sent ? trigger.ackKey : "toast.cmdNoLink"), status: null };
+      const ms = driveMs(norm(text));
+      const sent = await sendCmd(trigger.cmd(ms));
+      const ack = { text: t(sent ? trigger.ackKey : "toast.cmdNoLink", { s: (ms / 1000).toFixed(1) }), status: null };
       setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...(c.messages || []), { role: "user", content: text }, { role: "assistant", content: ack.text }].slice(-12) } : c));
       showSage(ack, null, sent);
       return;
@@ -1487,7 +1471,7 @@ function App() {
       if (ok) setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...next, { role: "assistant", content: sage.text }].slice(-12) } : c));
       addLog(t("log.replied"), "ai");
       showSage(ok ? sage : { text: data.error || "No response.", status: null }, t0, ok);
-      if (ok && sage.action === "analyze") runScan(); // Sage wants a fresh look
+      if (ok && sage.action === "analyze") runScan(); // sage wants a fresh look
     } catch (e) {
       setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
     }
@@ -1498,7 +1482,7 @@ function App() {
     return n;
   }), []);
   const toggleTtsProvider = useCallback(() => setTtsProv(p => p === "edge" ? "deepgram" : "edge"), []);
-  // Play a sequence of pre-rendered onboarding clips (intro + step questions).
+  // play a sequence of pre-rendered onboarding clips (intro + step questions).
   const speakBrief = useCallback((items) => {
     if (!ttsRef.current) return;
     const play = (i) => { if (i < items.length) playOnboard(items[i].clip, items[i].text, { onEnd: () => play(i + 1) }); };
@@ -1506,14 +1490,14 @@ function App() {
   }, []);
   const changeLang = useCallback((code) => {
     setLang(code); setLangState(code);
-    socketRef.current?.emit("set-language", code); // AI replies in the new language
+    socketRef.current?.emit("set-language", code); // ai replies in new language
   }, []);
   const newChat = useCallback(() => {
     const id = "c" + Date.now();
     setChats(cs => [...cs, { id, title: t("chat.newTitle"), mission: "", messages: [], created: Date.now() }]);
     setActiveId(id);
     socketRef.current?.emit("set-mission", ""); // no mission until briefed
-    // Briefing's step-0 effect speaks the intro + first question out loud.
+    // briefing's step-0 effect speaks the intro + first question out loud.
   }, []);
   const selectChat = useCallback((id) => {
     setActiveId(id);
@@ -1523,8 +1507,7 @@ function App() {
     setChats(cs => cs.filter(c => c.id !== id));
     setActiveId(a => {
       if (a !== id) return a;
-      // Deleting the ACTIVE session: clear the server's mission too, or it keeps
-      // firing auto-analysis LLM calls nobody will ever see.
+      // deleting the active session: clear server's mission too, or it keeps firing auto-analysis llm calls nobody will ever see.
       socketRef.current?.emit("set-mission", "");
       return "";
     });
@@ -1542,7 +1525,7 @@ function App() {
   const toggleSerial = useCallback(() => setSerialHidden(p => { const n = !p; localStorage.setItem("serialHidden", n); return n; }), []);
   const clearSerial = useCallback(() => setSerialLines([]), []);
 
-  // Backtick toggles the serial monitor (ignored while typing in a field).
+  // backtick toggles the serial monitor (ignored while typing in a field).
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== "`" || e.metaKey || e.ctrlKey || e.altKey) return;

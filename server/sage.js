@@ -1,22 +1,18 @@
-// Sage answers in JSON: { text, status, action, led, finding }. parseSage is tolerant — strips
-// ```json fences, grabs the outer {...}, and on any failure just voices the raw
-// string so a malformed turn still talks. Kept standalone so it's testable without
-// booting the server (see test-vision.js).
-// IMPORTANT NOTE: prompt-instructed JSON, not response_format:json_object — gemma-on-
-// Cerebras support is unconfirmed and a rejected param errors the whole call. Switch
-// to response_format once the model is known to honor it.
+// sage answers in json. parseSage is tolerant
+// strips json fences, grabs outer {...}, voices raw string on failure
+// kept standalone so it's testable without booting server
+// important: prompt-instructed json, not response_format:json_object
+// gemma-on-cerebras might not support it. switch to response_format once confirmed.
 const SAGE_STATUS = new Set(["clear", "caution", "danger"]);
 
-// Lamp level, 0-255. A model that answers "bright" or 999 shouldn't reach the cam,
-// so anything not a real in-band number reads as "leave it alone".
+// lamp level 0-255. non-number or out-of-range -> null ("leave it alone")
 function parseLed(v) {
   const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
   return Number.isFinite(n) ? Math.max(0, Math.min(255, Math.round(n))) : null;
 }
 
-// A discovery worth keeping: "DRAWING DETECTED: looks like a bison". Null on nearly
-// every turn. Capped because it's a panel row, not a second report — a model that
-// answers with a whole paragraph gets trimmed, not obeyed.
+// a discovery worth keeping, e.g. "drawing detected: looks like a bison". null most turns.
+// capped at 140 chars for one panel row.
 function parseFinding(v) {
   const s = typeof v === "string" ? v.trim() : "";
   return s ? s.slice(0, 140) : null;
