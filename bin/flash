@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+detect_boards() {
+  python3 -c "
+import json, subprocess
+
+r = subprocess.run(['arduino-cli', 'board', 'list', '--format', 'json'],
+                   capture_output=True, text=True)
+data = json.loads(r.stdout)
+
+profiles = [
+    ('arduino-uno-r4/main', 'arduino:renesas_uno:unor4wifi', 'usbmodem',  'Uno R4 WiFi'),
+    ('esp32-cam/main',      'esp32:esp32:esp32cam',          'usbserial',   'ESP32-CAM'),
+    ('esp32-cam/main',      'esp32:esp32:esp32cam',          'wchusbserial','ESP32-CAM'),
+]
+
+seen = set()
+for port_info in data.get('detected_ports', []):
+    addr = port_info['port']['address']
+    boards = port_info.get('matching_boards', []) or []
+    detected_fqbns = {b['fqbn'] for b in boards}
+    for d, fqbn, pattern, label in profiles:
+        if d in seen:
+            continue
+        if fqbn in detected_fqbns or (pattern and pattern in addr):
+            print(f'{d}|{fqbn}|{addr}|{label}')
+            seen.add(d)
+            break
+"
+}
+
+spin() {
+  local pid=$1 msg=$2
+  local s=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    printf "\r\033[36m%s\033[0m %s" "${s[i]}" "$msg"
+    i=$(( (i + 1) % ${#s[@]} ))
+    sleep 0.08
+  done
+  wait "$pid"
+  local rc=$?
+  if [[ $rc -eq 0 ]]; then
+    printf "\r\033[32m✔\033[0m %s\n" "$msg"
+  else
+    printf "\r\033[31m✘\033[0m %s\n" "$msg" >&2
+    exit $rc
+  fi
+}
+
+boards=$(detect_boards)
+if [[ -z "$boards" ]]; then
+  echo "No boards found. Connect Uno R4 or ESP32-CAM." >&2
+  exit 1
+fi
+
+log=$(mktemp)
+boards_ts=$(mktemp)
+trap 'rm -f "$log" "$boards_ts"' EXIT
+echo "$boards" > "$boards_ts"
+
+while IFS='|' read -r dir fqbn port label; do
+  printf "\033[36m▸\033[0m %s @ %s\n" "$label" "$port"
+
+  ( arduino-cli compile --fqbn "$fqbn" "$ROOT/$dir" >"$log" 2>&1 ) &
+  spin $! "  Compile $dir"
+
+  if [[ "$label" == "ESP32-CAM" ]]; then
+    echo "  ⚠  Hold GPIO0→GND, press RST, release GPIO0 for flash mode"
+    sleep 1
+  fi
+
+  # Uno R4 re-enumerates after compile — get fresh port
+  fresh=$(detect_boards | grep "^$dir|" | head -1 | cut -d'|' -f3)
+  port="${fresh:-$port}"
+
+  ( arduino-cli upload -p "$port" --fqbn "$fqbn" "$ROOT/$dir" >"$log" 2>&1 ) &
+  spin $! "  Upload → $port"
+done < "$boards_ts"
+
+printf "\n\033[32mDone — %s\033[0m\n" "$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo "?")"

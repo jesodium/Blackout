@@ -46,3 +46,6 @@ conventions:
 - Add/update the table, then wire it into `startRoutine()` in `main.ino` and
   (if it's a new named routine, not an edit to `RUN`) a dashboard button, per
   the file's own "Adding a routine" note.
+
+
+DO NOT PUSH COMMITS WITH SESSION LINKS.
