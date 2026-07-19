@@ -370,17 +370,23 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
   const [sel, setSel] = useState(() => localStorage.getItem("blkSel") || "");
   const [run, setRun] = useState(null); // {n, label} while executing
   const [err, setErr] = useState(null);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false); // false | "open" | "closing"
   const token = useRef(0);
   const runRef = useRef(false); // mirrors run for unmount cleanup
   runRef.current = !!run;
 
+  // play the exit animation, then unmount
+  const closeEditor = useCallback(() => {
+    setEditorOpen(o => o === "open" ? "closing" : o);
+    setTimeout(() => setEditorOpen(false), 240);
+  }, []);
+
   // editor iframe asks to close (esc key inside it)
   useEffect(() => {
-    const fn = (e) => { if (e.data === "blk:close") setEditorOpen(false); };
+    const fn = (e) => { if (e.data === "blk:close") closeEditor(); };
     window.addEventListener("message", fn);
     return () => window.removeEventListener("message", fn);
-  }, []);
+  }, [closeEditor]);
 
   const loadFiles = useCallback(() => {
     fetch("/api/blk").then(r => r.json()).then(d => setFiles(d.files || [])).catch(() => {});
@@ -445,7 +451,7 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
           ${files.map(f => html`<option key=${f} value=${f}>${f}</option>`)}
         </select>
         <button type="button" class="btn btn--ghost" title="reload list" onClick=${loadFiles}>⟳</button>
-        <button type="button" class="btn btn--ghost" onClick=${() => setEditorOpen(true)}>EDITOR</button>
+        <button type="button" class="btn btn--ghost" onClick=${() => setEditorOpen("open")}>EDITOR</button>
       </div>
       ${run
         ? html`<button type="button" class="btn blk-stop" onClick=${stop}>■ STOP — step ${run.n} · ${run.label.toUpperCase()}</button>`
@@ -457,11 +463,12 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
           : "Author programs in the EDITOR (blocks or text), save, run here."}
       </small>
       ${editorOpen && createPortal(html`
-        <div class="blk-modal" onClick=${(e) => { if (e.target === e.currentTarget) setEditorOpen(false); }}>
+        <div class=${"blk-modal" + (editorOpen === "closing" ? " is-closing" : "")}
+          onClick=${(e) => { if (e.target === e.currentTarget) closeEditor(); }}>
           <div class="blk-modal-frame">
             <div class="blk-modal-head">
               <span class="label">BLK · Workflow Editor</span>
-              <button type="button" class="blk-modal-x" onClick=${() => setEditorOpen(false)} aria-label="Close editor">✕</button>
+              <button type="button" class="blk-modal-x" onClick=${closeEditor} aria-label="Close editor">✕</button>
             </div>
             <iframe src="blk.html" title="BLK workflow editor"></iframe>
           </div>

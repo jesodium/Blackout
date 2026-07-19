@@ -203,6 +203,11 @@ body {
 .blk-modal-frame iframe { flex: 1; width: 100%; border: 0; background: var(--bg); }
 @keyframes blkFade { from { opacity: 0; } }
 @keyframes blkPop { from { opacity: 0; transform: translateY(26px) scale(0.97); } }
+/* exit: reverse of the entrance, then react unmounts */
+.blk-modal.is-closing { animation: blkFadeOut 0.22s ease both; pointer-events: none; }
+.blk-modal.is-closing .blk-modal-frame { animation: blkPopOut 0.22s cubic-bezier(0.5, 0, 0.75, 0.4) both; }
+@keyframes blkFadeOut { to { opacity: 0; } }
+@keyframes blkPopOut { to { opacity: 0; transform: translateY(22px) scale(0.97); } }
 
 .conn-panel {
   min-height: 26px; display: flex; align-items: center;

@@ -79,6 +79,11 @@
     @keyframes sageFade { from { opacity: 0; } }
     @keyframes sagePop { from { opacity: 0; transform: translateY(18px) scale(0.97); } }
     @keyframes sagePulse { 50% { opacity: 0.4; } }
+    /* exit: reverse of the entrance, then hidden lands */
+    .sage-modal.is-closing { animation: sageFadeOut 0.2s ease both; pointer-events: none; }
+    .sage-modal.is-closing .sage-panel { animation: sagePopOut 0.2s cubic-bezier(0.5, 0, 0.75, 0.4) both; }
+    @keyframes sageFadeOut { to { opacity: 0; } }
+    @keyframes sagePopOut { to { opacity: 0; transform: translateY(14px) scale(0.97); } }
 
     /* workspace: palette | canvas */
     .blk-work { flex: 1; display: flex; gap: 10px; min-height: 0; }
@@ -545,7 +550,7 @@ end`;
               if (errors.length) { setStatus("sage program has errors:\n" + errors.join("\n"), "is-err"); return; }
               program = p;
               render();
-              $("sage-modal").hidden = true;
+              closeSage();
               setStatus("workflow loaded from Sage — tweak blocks, then Save", "is-ok");
             };
             div.appendChild(btn);
@@ -583,14 +588,22 @@ end`;
       $("sage-input").focus();
     };
 
+    // animated close: play exit, then actually hide
+    function closeSage() {
+      const m = $("sage-modal");
+      if (m.hidden || m.classList.contains("is-closing")) return;
+      m.classList.add("is-closing");
+      setTimeout(() => { m.hidden = true; m.classList.remove("is-closing"); }, 220);
+    }
+
     $("ask-sage").onclick = () => { $("sage-modal").hidden = false; renderSage(); $("sage-input").focus(); };
-    $("sage-close").onclick = () => { $("sage-modal").hidden = true; };
-    $("sage-modal").addEventListener("click", (e) => { if (e.target === $("sage-modal")) $("sage-modal").hidden = true; });
+    $("sage-close").onclick = closeSage;
+    $("sage-modal").addEventListener("click", (e) => { if (e.target === $("sage-modal")) closeSage(); });
 
     // esc: close sage popup first if open, else close the console's editor overlay
     window.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
-      if (!$("sage-modal").hidden) return void ($("sage-modal").hidden = true);
+      if (!$("sage-modal").hidden) return closeSage();
       if (window.parent !== window) window.parent.postMessage("blk:close", "*");
     });
 
