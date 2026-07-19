@@ -15,7 +15,7 @@
       --c-motion: #4c97ff;
       --c-control: #ffab19;
       --c-looks: #9966ff;
-      --c-ai: #ff3b2f;
+      --c-ai: #3b82f6;
     }
     body { background-image: none; overflow: hidden; }
     .blk-ed { display: flex; flex-direction: column; height: 100vh; padding: 10px clamp(10px, 2vw, 22px) 12px; gap: 10px; }
@@ -23,9 +23,18 @@
     .blk-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
     .blk-bar .folio-sm { color: var(--accent); margin-right: 4px; }
     .blk-bar input[type="text"], .blk-bar select {
+      -webkit-appearance: none; appearance: none;
       font: 500 12px/1 var(--mono); min-height: 30px; padding: 0 8px;
-      color: var(--ink); background: var(--inset); border: 1px solid var(--line-2); border-radius: 0;
+      color: var(--ink); background: var(--inset); border: 1px solid var(--line-2); border-radius: var(--r-s);
     }
+    .blk-bar select {
+      padding-right: 24px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%239a9384' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 7px center;
+      background-size: 10px;
+    }
+    .blk-bar select::-ms-expand { display: none; }
     .blk-bar input[type="text"] { width: 160px; }
     .blk-btn {
       font: 600 10px/1 var(--grotesk); letter-spacing: 0.18em; text-transform: uppercase;
@@ -73,8 +82,9 @@
     }
     .sage-form { display: flex; gap: 6px; padding: 10px; border-top: 1px solid var(--line); flex-shrink: 0; }
     .sage-form input {
+      -webkit-appearance: none; appearance: none;
       flex: 1; font: 500 12px/1 var(--mono); min-height: 34px; padding: 0 10px;
-      color: var(--ink); background: var(--inset); border: 1px solid var(--line-2); border-radius: 0;
+      color: var(--ink); background: var(--inset); border: 1px solid var(--line-2); border-radius: var(--r-s);
     }
     @keyframes sageFade { from { opacity: 0; } }
     @keyframes sagePop { from { opacity: 0; transform: translateY(18px) scale(0.97); } }

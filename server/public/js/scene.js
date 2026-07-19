@@ -10,7 +10,7 @@ const RED = 0xff3b2f;          // signal red — obstacle
 export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   const THREE = window.THREE;
   let width = canvas.parentElement?.clientWidth || 600;
-  const height = 460;
+  let height = canvas.parentElement?.clientHeight || 460;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x060607);
@@ -206,7 +206,11 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
 
   function resize() {
     const w = canvas.parentElement?.clientWidth;
-    if (w) { width = w; renderer.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix(); }
+    const h = canvas.parentElement?.clientHeight;
+    if (w) {
+      width = w; if (h) height = h;
+      renderer.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix();
+    }
   }
   resize();
   setTimeout(resize, 120); setTimeout(resize, 420);

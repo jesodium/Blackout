@@ -80,7 +80,7 @@ function matchCmd(txt) {
 const TRENDS = [
   { key: "dist", tkey: "trend.dist", color: "#9a9384" },
   { key: "airq", tkey: "trend.air",  color: "#44cf86" },
-  { key: "temp", tkey: "trend.temp", color: "#ff3b2f" },
+  { key: "temp", tkey: "trend.temp", color: "#3b82f6" },
 ];
 
 /* tts */
@@ -181,14 +181,11 @@ function playOnboard(key, fallbackText, { onStart, onEnd } = {}) {
   a.play().catch(fall);
 }
 
-/* zone header (folio · title · tag) */
-function Head({ folio, title, tag, children }) {
+/* zone header (title · tag/tools) */
+function Head({ title, tag, children }) {
   return html`
     <div class="zone-head">
-      <div class="zone-head-l">
-        <span class="folio">${folio}</span>
-        <h2 class="zone-title">${title}</h2>
-      </div>
+      <h2 class="zone-title">${title}</h2>
       ${tag ? html`<span class="tag">${tag}</span>` : children}
     </div>`;
 }
@@ -230,8 +227,8 @@ function Trends({ packet }) {
   return html`<canvas ref=${ref}></canvas>`;
 }
 
-/* reading row (sensor index) */
-function Reading({ s, value, index }) {
+/* reading tile (sensor strip) */
+function Reading({ s, value }) {
   const has = value != null && !isNaN(value);
   const [labelKey, kind] = has ? s.st(value) : [null, ""];
   const label = has ? t(labelKey) : "—";
@@ -241,7 +238,6 @@ function Reading({ s, value, index }) {
   return html`
     <div class="reading">
       <div class="reading-head">
-        <span class="reading-folio">${index}</span>
         <span class="reading-name">${name}</span>
         <span class=${"pill " + (kind ? "is-" + kind : "")}>${label}</span>
       </div>
@@ -256,8 +252,27 @@ function Reading({ s, value, index }) {
     </div>`;
 }
 
-/* orientation (stage) */
-function Orientation({ packet, onLog }) {
+/* cam box — standalone camera feed */
+function CamBox({ packet }) {
+  return html`
+    <section class="zone stage-cam reveal" aria-labelledby="cam-h">
+      <div class="zone-head">
+        <h2 class="zone-title" id="cam-h">${t("zone.camera")}</h2>
+      </div>
+      <div class="stage-body">
+        <${CamView} />
+        <dl class="hud-tele">
+          <div><dt>${t("hud.dist")}</dt><dd>${fmt(packet?.dist, 0)} cm</dd></div>
+          <div><dt>${t("hud.roll")}</dt><dd>${fmt(packet?.roll, 1)}°</dd></div>
+          <div><dt>${t("hud.pitch")}</dt><dd>${fmt(packet?.pitch, 1)}°</dd></div>
+          <div><dt>${t("hud.yaw")}</dt><dd>${fmt(packet?.yaw, 1)}°</dd></div>
+        </dl>
+      </div>
+    </section>`;
+}
+
+/* 3d box — standalone 3d orientation viewport */
+function ThreeDeeBox({ packet, onLog }) {
   const canvasRef = useRef(null);
   const compassRef = useRef(null);
   const apiRef = useRef(null);
@@ -283,36 +298,36 @@ function Orientation({ packet, onLog }) {
   const cams = ["isometric", "front", "top", "side", "free"];
 
   return html`
-    <section class="zone stage reveal" style=${{ animationDelay: "60ms" }} aria-labelledby="vis-h">
-      <${Head} folio="01" title=${t("zone.orientation")} tag=${packet ? t("tag.gyroLocked") : t("tag.gyroStandby")} />
-      <div class="zone-body">
-        <div class="viewport">
-          <span class="stage-mark" aria-hidden="true">RVR</span>
+    <section class="zone stage-3d reveal" aria-labelledby="stage3d-h">
+      <div class="zone-head">
+        <h2 class="zone-title" id="stage3d-h">${t("stage.title")}</h2>
+      </div>
+      <div class="stage-body">
+        <div class="stage-view stage-view--3d">
           <canvas id="vis-canvas" ref=${canvasRef}></canvas>
           ${failed && html`<div class="viewport-fallback">${t("view.unavailable")}<br/><small>${failed} — ${t("view.liveBelow")}</small></div>`}
-          <div class="hud">
-            <div class="hud-cams" role="group" aria-label=${t("cam.group")}>
-              ${cams.map(c => html`<button key=${c} type="button"
-                class=${"btn btn--ghost" + (cam === c ? " is-active" : "")}
-                onClick=${() => pick(c)}>${t("cam." + c)}</button>`)}
-            </div>
-            <div class="compass" aria-hidden="true">
-              <svg ref=${compassRef} viewBox="0 0 100 100">
-                <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(236,229,214,0.28)" stroke-width="1.5"/>
-                <text x="50" y="25" fill="#ece5d6" font-size="13" font-weight="700" text-anchor="middle" font-family="Archivo, sans-serif">N</text>
-                <polygon points="50,15 45,50 55,50" fill="#ff3b2f"/>
-                <polygon points="50,85 45,50 55,50" fill="rgba(236,229,214,0.4)"/>
-              </svg>
-              <span>${t("hud.heading")}</span>
-            </div>
-            <dl class="hud-tele">
-              <div><dt>${t("hud.dist")}</dt><dd>${fmt(packet?.dist, 0)} cm</dd></div>
-              <div><dt>${t("hud.roll")}</dt><dd>${fmt(packet?.roll, 1)}°</dd></div>
-              <div><dt>${t("hud.pitch")}</dt><dd>${fmt(packet?.pitch, 1)}°</dd></div>
-              <div><dt>${t("hud.yaw")}</dt><dd>${fmt(packet?.yaw, 1)}°</dd></div>
-            </dl>
+          <span class="stage-chip">${t(packet ? "tag.gyroLocked" : "tag.gyroStandby")}</span>
+          <div class="hud-cams" role="group" aria-label=${t("cam.group")}>
+            ${cams.map(c => html`<button key=${c} type="button"
+              class=${"hud-btn" + (cam === c ? " is-active" : "")}
+              onClick=${() => pick(c)}>${t("cam." + c)}</button>`)}
+          </div>
+          <div class="compass" aria-hidden="true">
+            <svg ref=${compassRef} viewBox="0 0 100 100">
+              <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(236,229,214,0.28)" stroke-width="1.5"/>
+              <text x="50" y="25" fill="#ece5d6" font-size="13" font-weight="700" text-anchor="middle" font-family="Archivo, sans-serif">N</text>
+              <polygon points="50,15 45,50 55,50" fill="#3b82f6"/>
+              <polygon points="50,85 45,50 55,50" fill="rgba(236,229,214,0.4)"/>
+            </svg>
+            <span>${t("hud.heading")}</span>
           </div>
         </div>
+        <dl class="hud-tele">
+          <div><dt>${t("hud.dist")}</dt><dd>${fmt(packet?.dist, 0)} cm</dd></div>
+          <div><dt>${t("hud.roll")}</dt><dd>${fmt(packet?.roll, 1)}°</dd></div>
+          <div><dt>${t("hud.pitch")}</dt><dd>${fmt(packet?.pitch, 1)}°</dd></div>
+          <div><dt>${t("hud.yaw")}</dt><dd>${fmt(packet?.yaw, 1)}°</dd></div>
+        </dl>
       </div>
     </section>`;
 }
@@ -337,9 +352,9 @@ function MotorDebug({ onCmd, enabled }) {
       <input type="number" min=${min} max=${max} value=${v}
         onChange=${e => set(Math.min(max, Math.max(min, +e.target.value || min)))} /></label>`;
   return html`
-    <details class="zone dbg">
-      <summary>MOTOR DEBUG ${enabled ? "" : "— BT bridge off, buttons dead"}</summary>
-      <div class="zone-body dbg-body">
+    <div class="dbg">
+      ${!enabled && html`<small class="drive-hint">BT bridge off — buttons dead.</small>`}
+      <div class="dbg-body">
         <div class="dbg-grid">
           ${btn("▲ Forward",  () => drv("fwd", ms))}
           ${btn("▼ Backward", () => drv("back", ms))}
@@ -358,7 +373,7 @@ function MotorDebug({ onCmd, enabled }) {
           ${num("360 ms", spinMs, setSpinMs, 50, 9999)}
         </div>
       </div>
-    </details>`;
+    </div>`;
 }
 
 /* blk workflow control: pick a saved .blk program, run/stop it from here */
@@ -476,22 +491,25 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     </div>`;
 }
 
-/* manual control: gamepad (xbox / dualsense) */
-// browser gamepad api — both pads use "standard" mapping, so one code path.
-// autopilot on = pad ignored. disabling autopilot arms the pad.
-// drive sent as short timed bursts re-sent every 150ms while stick held: firmware auto-halts 300ms after last burst.
-// labels stay english, same as motordebug.
-// control mode: remote (gamepad) + blk (workflow programs) are live; autonomous is a placeholder.
-const MODES = [["remote", "REMOTE"], ["blk", "BLK LANG"], ["auto", "AUTONOMOUS"]];
+/* drive — manual control hub: on-screen pad (hold-to-drive), wasd/arrows, gamepad, routines, stop.
+   drive is sent as short timed bursts re-sent every 150ms while held: firmware auto-halts 300ms
+   after the last burst, so a dropped link or stuck ui never leaves wheels spinning.
+   autopilot on = all manual input ignored. control mode: remote + blk live; autonomous placeholder. */
+const MODES = [["remote", "REMOTE"], ["blk", "BLK"], ["auto", "AUTO"]];
+const KEYMAP = {
+  w: "fwd", arrowup: "fwd", s: "back", arrowdown: "back",
+  a: "left", arrowleft: "left", d: "right", arrowright: "right",
+};
 
-function GamepadCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
+function Drive({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
   const [mode, setMode] = useState("remote");
-  const [autopilot, setAutopilot] = useState(true);
   const [padName, setPadName] = useState(null);
-  const [verb, setVerb] = useState(null); // live verb for ui readout
-  const armed = mode === "remote" && !autopilot && enabled;
+  const [verb, setVerb] = useState(null); // live verb for ui readout + pad highlight
+  const armed = mode === "remote" && enabled;
   const armedRef = useRef(armed);
   armedRef.current = armed;
+  const heldRef = useRef(null);   // verb held via on-screen pad or keyboard
+  const keysRef = useRef(new Set());
   const moving = useRef(false);
   const sqWas = useRef(false);
   const analyzeRef = useRef(onAnalyze);
@@ -505,24 +523,52 @@ function GamepadCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     return () => { window.removeEventListener("gamepadconnected", seen); window.removeEventListener("gamepaddisconnected", seen); };
   }, []);
 
-  // dpad up/down drives, right stick x rotates. fixed slow pwm — manual is for precision, not speed. drive wins over rotate when both held.
+  // wasd / arrows — same held-verb path as the on-screen pad. space = stop.
+  useEffect(() => {
+    const typing = (e) => { const t = e.target; return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable); };
+    const down = (e) => {
+      if (!armedRef.current || typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === " ") { e.preventDefault(); keysRef.current.clear(); heldRef.current = null; onCmd("stop"); return; }
+      if (!KEYMAP[k]) return;
+      e.preventDefault();
+      keysRef.current.add(k);
+      heldRef.current = KEYMAP[k]; // last key pressed wins
+    };
+    const up = (e) => {
+      const k = e.key.toLowerCase();
+      if (!KEYMAP[k]) return;
+      keysRef.current.delete(k);
+      const left = [...keysRef.current].pop();
+      heldRef.current = left ? KEYMAP[left] : null;
+    };
+    const blur = () => { keysRef.current.clear(); heldRef.current = null; };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", blur);
+    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur); };
+  }, [onCmd]);
+
+  // one drive loop for every input source. gamepad wins over held pad/keys.
+  // dpad up/down drives, right stick x rotates, □/X analyzes. fixed slow pwm — manual is precision, not speed.
   const MANUAL_PWM = 110;
   useEffect(() => {
     const id = setInterval(() => {
-      if (!armedRef.current) return;
+      if (!armedRef.current) { if (moving.current) { moving.current = false; setVerb(null); onCmd("stop"); } return; }
       const pad = [...navigator.getGamepads()].find(Boolean);
-      if (!pad) return;
-
-      // square (x on xbox) = button 2. fire on press edge only, so holding it doesn't queue a burst of analyses.
-      const sq = !!pad.buttons[2]?.pressed;
-      if (sq && !sqWas.current) analyzeRef.current?.();
-      sqWas.current = sq;
-
-      const rx = pad.axes[2] ?? 0;         // right stick x (standard mapping)
-      const v = pad.buttons[12]?.pressed ? "fwd"
-        : pad.buttons[13]?.pressed ? "back"
-        : Math.abs(rx) > 0.35 ? (rx < 0 ? "left" : "right")
-        : null;
+      let v = null;
+      if (pad) {
+        // square (x on xbox) = button 2. press edge only, so holding doesn't queue analyses.
+        const sq = !!pad.buttons[2]?.pressed;
+        if (sq && !sqWas.current) analyzeRef.current?.();
+        sqWas.current = sq;
+        const rx = pad.axes[2] ?? 0;
+        v = pad.buttons[12]?.pressed ? "fwd"
+          : pad.buttons[13]?.pressed ? "back"
+          : Math.abs(rx) > 0.35 ? (rx < 0 ? "left" : "right")
+          : null;
+      }
+      v = v || heldRef.current;
       if (!v) {
         if (moving.current) { moving.current = false; setVerb(null); onCmd("stop"); }
         return;
@@ -533,22 +579,37 @@ function GamepadCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     return () => clearInterval(id);
   }, [onCmd]);
 
-  // announcements use pre-rendered per-language clips — instant playback, no 5-7s tts wait, follows lang.
-  const toggle = () => {
-    const ap = !autopilot;
-    setAutopilot(ap);
-    const key = ap ? "apOn" : "apOff";
-    if (ap) { moving.current = false; setVerb(null); onCmd("stop"); }
-    playOnboard(key, ONBOARDING[getLang()][key]);
+  // switching away from remote parks everything: stop any live drive, no burst leaks through.
+  const pick = (m) => {
+    if (m === mode) return;
+    if (mode === "remote") { heldRef.current = null; moving.current = false; setVerb(null); onCmd("stop"); }
+    setMode(m);
   };
 
-  // switching away from remote parks the pad: stop any live drive, no burst leaks through.
-  const pick = (m) => { if (m === mode) return; if (mode === "remote") { moving.current = false; setVerb(null); onCmd("stop"); } setMode(m); };
+  const stopAll = () => { heldRef.current = null; keysRef.current.clear(); moving.current = false; setVerb(null); onCmd("stop"); };
+
+  const hold = (v) => (e) => { e.preventDefault(); if (armedRef.current) heldRef.current = v; };
+  const release = () => { heldRef.current = null; };
+  const padBtn = (v, glyph, key) => html`
+    <button type="button" class=${"pad-btn" + (verb === v ? " is-live" : "")} disabled=${!armed}
+      aria-label=${v} onPointerDown=${hold(v)} onPointerUp=${release} onPointerLeave=${release}
+      onPointerCancel=${release} onContextMenu=${(e) => e.preventDefault()}>
+      <span class="pad-glyph" aria-hidden="true">${glyph}</span>
+      <kbd aria-hidden="true">${key}</kbd>
+    </button>`;
+
+  const hint = mode !== "remote" ? null
+    : !enabled ? t("toast.cmdNoLink")
+    : verb ? "▶ " + verb.toUpperCase()
+    : t("drive.hold");
 
   return html`
-    <section class="zone reveal" style=${{ animationDelay: "150ms" }}>
-      <${Head} folio="08" title="CONTROL MODE" tag=${padName ? "PAD OK" : "NO PAD"} />
-      <div class="zone-body" style=${{ display: "grid", gap: "10px" }}>
+    <section class="zone drive reveal" aria-labelledby="drive-h">
+      <div class="zone-head">
+        <h2 class="zone-title" id="drive-h">${t("zone.drive")}</h2>
+        <span class=${"pill " + (padName ? "is-go" : "")}>${padName ? "PAD OK" : "NO PAD"}</span>
+      </div>
+      <div class="drive-body">
         <div class="conn-seg mode-seg" data-mode=${mode} role="tablist">
           <span class="conn-seg-thumb"></span>
           ${MODES.map(([m, label]) => html`
@@ -556,25 +617,35 @@ function GamepadCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
               class=${mode === m ? "is-active" : ""} onClick=${() => pick(m)}>${label}</button>`)}
         </div>
         ${mode === "remote" ? html`
-          <button type="button" class=${"btn " + (autopilot ? "btn--ghost" : "btn--primary")} onClick=${toggle}>
-            ${autopilot ? "AUTOPILOT ON — press to take over" : "MANUAL — press for autopilot"}
-          </button>
-          <small style=${{ opacity: 0.7 }}>
-            ${!padName ? "Connect Xbox/DualSense (BT or USB), press any button."
-              : autopilot ? padName.slice(0, 40)
-              : !enabled ? "Pad armed — BT bridge off, no link to rover."
-              : verb ? `▶ ${verb.toUpperCase()}` : "Dpad ↑↓ drives · right stick rotates · □/X analyzes."}
-          </small>`
+          <div class=${"pad" + (armed ? "" : " is-off")}>
+            <span></span>${padBtn("fwd", "▲", "W")}<span></span>
+            ${padBtn("left", "◀", "A")}${padBtn("back", "▼", "S")}${padBtn("right", "▶", "D")}
+          </div>
+          <small class="drive-hint">${hint}</small>`
         : mode === "blk" ? html`
           <${BlkCtl} onCmd=${onCmd} onAnalyze=${onAnalyze} enabled=${enabled} busyRef=${busyRef} packetRef=${packetRef} />`
         : html`
-          <small style=${{ opacity: 0.7 }}>Autonomous — not wired up yet.</small>`}
+          <small class="drive-hint">${t("drive.auto")}</small>`}
+        <div class="routines">
+          <span class="label">${t("drive.routines")}</span>
+          <div class="routine-row">
+            ${[["presentation", "PRES", "mast.routinePresTitle"], ["run", "RUN", "mast.routineRunTitle"],
+               ["mission", "MISSION", "mast.routineMissionTitle"], ["test", "TEST", "mast.routineTestTitle"],
+               ["test2", "TEST2", "mast.routineTest2Title"]].map(([r, label, titleKey]) => html`
+              <button type="button" key=${r} class="chip" title=${t(titleKey)}
+                disabled=${!enabled} onClick=${() => onCmd("go," + r)}>${label}</button>`)}
+          </div>
+        </div>
+        ${mode !== "blk" && html`
+          <button type="button" class="stop-bar" onClick=${stopAll} title=${t("mast.routineStopTitle")}>
+            ■ ${t("drive.stop")}
+          </button>`}
       </div>
     </section>`;
 }
 
-/* camera: esp32-cam live feed */
-function Camera() {
+/* camera view (esp32-cam mjpeg) — lives inside the stage */
+function CamView() {
   const [state, setState] = useState("loading");
   const [nonce, setNonce] = useState(0);
   const [yielded, setYielded] = useState(false);
@@ -623,71 +694,63 @@ function Camera() {
   };
 
   return html`
-    <section class="zone stage reveal" style=${{ animationDelay: "60ms" }} aria-labelledby="cam-h">
-      <${Head} folio="02" title=${t("zone.camera")} tag=${t(yielded ? "cam.tag.scanning" : "cam.tag." + state)} />
-      <div class="zone-body">
-        <div class="viewport">
-          <span class="stage-mark" aria-hidden="true">CAM</span>
-          ${yielded
-            ? html`<div class="viewport-fallback">${t("cam.scanning")}</div>`
-            : state !== "offline"
-            ? html`<img ref=${imgRef} src=${src} alt=${t("zone.camera")} class="cam-feed"
-                onLoad=${() => { setState("live"); localStorage.setItem("camHost", host); }}
-                onError=${fail} />`
-            : html`<div class="viewport-fallback">${t("cam.offline")}<br/>
-                <small>${base}</small><br/>
-                <input type="text" defaultValue=${host} aria-label=${t("zone.camera")}
-                  placeholder=${CAM_HOST_DEFAULT}
-                  style=${{ marginTop: "12px", textAlign: "center", width: "80%", fontFamily: "monospace" }}
-                  onKeyDown=${(e) => { if (e.key === "Enter") applyHost(e.target.value); }}
-                  onBlur=${(e) => applyHost(e.target.value)} /><br/>
-                <button type="button" class="btn btn--ghost" style=${{ marginTop: "12px" }}
-                  onClick=${() => { setState("loading"); setNonce(n => n + 1); }}>${t("cam.retry")}</button>
-              </div>`}
-        </div>
-        ${state === "live" && !yielded ? html`
-          <div class="cam-settings">
-            <button class="btn btn--ghost" style=${{ width: "100%", textAlign: "center", fontSize: "12px", padding: "4px", marginTop: "4px" }}
-              onClick=${() => setSettingsOpen(o => !o)}>
-              ${settingsOpen ? "▲" : "▼"} ${t("cam.settings")}
-            </button>
-            ${settingsOpen ? html`
-              <div style=${{ padding: "8px", fontSize: "12px" }}>
-                ${[["brightness", -2, 2], ["contrast", -2, 2], ["ae_level", -2, 2], ["led", 0, 255]].map(([k, min, max]) => html`
-                  <div style=${{ marginBottom: "6px" }}>
-                    <div style=${{ display: "flex", justifyContent: "space-between" }}>
-                      <span>${k}</span>
-                      <span style=${{ color: "#888" }}>${sliders[k]}</span>
-                    </div>
-                    <input type="range" min=${min} max=${max} step="1" value=${sliders[k]}
-                      style=${{ width: "100%" }}
-                      onInput=${(e) => ctrl(k, parseInt(e.target.value))} />
-                  </div>`)}
-              </div>` : null}
-          </div>` : null}
-      </div>
-    </section>`;
+    <div class="stage-view stage-view--cam">
+      ${yielded
+        ? html`<div class="viewport-fallback">${t("cam.scanning")}</div>`
+        : state !== "offline"
+        ? html`<img ref=${imgRef} src=${src} alt=${t("zone.camera")} class="cam-feed"
+            onLoad=${() => { setState("live"); localStorage.setItem("camHost", host); }}
+            onError=${fail} />`
+        : html`<div class="viewport-fallback">${t("cam.offline")}<br/>
+            <small>${base}</small><br/>
+            <input type="text" class="cam-host" defaultValue=${host} aria-label=${t("zone.camera")}
+              placeholder=${CAM_HOST_DEFAULT}
+              onKeyDown=${(e) => { if (e.key === "Enter") applyHost(e.target.value); }}
+              onBlur=${(e) => applyHost(e.target.value)} /><br/>
+            <button type="button" class="btn" onClick=${() => { setState("loading"); setNonce(n => n + 1); }}>${t("cam.retry")}</button>
+          </div>`}
+      <span class="stage-chip">${t(yielded ? "cam.tag.scanning" : "cam.tag." + state)}</span>
+      ${state === "live" && !yielded ? html`
+        <div class="cam-tools">
+          <button type="button" class="hud-btn" aria-expanded=${settingsOpen}
+            onClick=${() => setSettingsOpen(o => !o)}>${t("cam.settings")}</button>
+          ${settingsOpen ? html`
+            <div class="cam-pop">
+              ${[["brightness", -2, 2], ["contrast", -2, 2], ["ae_level", -2, 2], ["led", 0, 255]].map(([k, min, max]) => html`
+                <label key=${k} class="cam-slider">
+                  <span class="cam-slider-row"><span>${k}</span><b>${sliders[k]}</b></span>
+                  <input type="range" min=${min} max=${max} step="1" value=${sliders[k]}
+                    onInput=${(e) => ctrl(k, parseInt(e.target.value))} />
+                </label>`)}
+            </div>` : null}
+        </div>` : null}
+    </div>`;
 }
 
-/* readings panel */
-function ReadingsPanel({ packet }) {
+/* sensor strip — 5 live tiles + trend sparkline, one row under the stage */
+function SensorStrip({ packet }) {
   return html`
-    <section class="zone readings reveal" style=${{ animationDelay: "120ms" }} aria-labelledby="env-h">
-      <${Head} folio="03" title=${t("zone.environment")} tag=${t("tag.channels")} />
-      <div class="zone-body">
-        ${SENSORS.map((s, i) => html`<${Reading} key=${s.key} s=${s}
-          value=${packet?.[s.key]} index=${String(i + 1).padStart(2, "0")} />`)}
+    <section class="strip reveal" aria-label=${t("zone.environment")}>
+      ${SENSORS.map(s => html`<${Reading} key=${s.key} s=${s} value=${packet?.[s.key]} />`)}
+      <div class="reading trend-cell" aria-label=${t("zone.trends")}>
+        <div class="reading-head">
+          <span class="reading-name">${t("zone.trends")}</span>
+          <span class="legend">
+            ${TRENDS.map(s => html`<span key=${s.key} class="legend-item"><i style=${{ background: s.color }}></i>${t(s.tkey)}</span>`)}
+          </span>
+        </div>
+        <div class="trend-body"><${Trends} packet=${packet} /></div>
       </div>
     </section>`;
 }
 
-/* analysis / mission memory */
+/* analysis / mission memory (drawer tab) */
 function Memory({ chat }) {
   const findings = (chat?.findings || []).slice().reverse();
   const tag = !chat ? "—" : findings.length ? t("tag.found", { n: findings.length }) : t("tag.nominal");
   return html`
-    <section class="zone memory reveal" style=${{ animationDelay: "180ms" }} aria-labelledby="mem-h">
-      <${Head} folio="07" title=${t("zone.analysis")} tag=${tag} />
+    <section class="zone memory" aria-labelledby="mem-h">
+      <${Head} title=${t("zone.analysis")} tag=${tag} />
       <div class="memory-body">
         ${!chat
           ? html`<p class="memory-empty">${t("mem.noSession")}</p>`
@@ -700,19 +763,6 @@ function Memory({ chat }) {
               ${f.img && html`<img class="memory-shot" src=${f.img} alt=${f.text} loading="lazy" />`}
             </div>`)}
       </div>
-    </section>`;
-}
-
-/* trends panel */
-function TrendsPanel({ packet }) {
-  return html`
-    <section class="zone reveal" style=${{ animationDelay: "200ms" }} aria-labelledby="tr-h">
-      <${Head} folio="04" title=${t("zone.trends")}>
-        <div class="legend" aria-label="Series">
-          ${TRENDS.map(s => html`<span key=${s.key}><i style=${{ background: s.color }}></i>${t(s.tkey)}</span>`)}
-        </div>
-      <//>
-      <div class="trend-body"><${Trends} packet=${packet} /></div>
     </section>`;
 }
 
@@ -834,8 +884,8 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
   const briefed = activeChat && activeChat.mission;
   return html`
     <section class=${"zone agent reveal is-" + intent.key + (ai.analyzing ? " is-analyzing" : "") + (speaking ? " is-speaking" : "")}
-      style=${{ animationDelay: "120ms", "--agent-c": intent.color }} aria-labelledby="agent-h">
-      <${Head} folio="02" title=${t("zone.agent")} tag=${t(ai.badge)} />
+      style=${{ "--agent-c": intent.color }} aria-labelledby="agent-h">
+      <${Head} title=${t("zone.agent")} tag=${t(ai.badge)} />
       <div class="agent-body">
         <div class="agent-topbar">
           ${briefed
@@ -867,7 +917,6 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
           : html`<${React.Fragment}>
         <div class="agent-stage">
           <span class="agent-grid" aria-hidden="true"></span>
-          <span class="agent-mark" aria-hidden="true">AGT</span>
           <div class="agent-orb"><${AgentIcon} intent=${intent} /></div>
           ${speaking
             ? html`<div class="agent-eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>`
@@ -1055,8 +1104,8 @@ function Logs({ logs }) {
   const tabs = [["all", t("log.tabAll")], ["system", t("log.tabSystem")], ["alerts", t("log.tabAlerts")], ["ai", t("log.tabAi")]];
   const view = logs.filter(l => f === "all" ? true : f === "alerts" ? (l.type === "warn" || l.type === "danger") : l.type === f);
   return html`
-    <section class="zone logs reveal" style=${{ animationDelay: "320ms" }} aria-labelledby="log-h">
-      <${Head} folio="05" title=${t("zone.logs")} tag=${t("log.ev", { n: logs.length })} />
+    <section class="zone logs" aria-labelledby="log-h">
+      <${Head} title=${t("zone.logs")} tag=${t("log.ev", { n: logs.length })} />
       <div class="zone-body">
         <div class="log-tabs" role="tablist">
           ${tabs.map(([k, lbl]) => html`<button key=${k} type="button" role="tab" aria-selected=${f === k}
@@ -1070,132 +1119,107 @@ function Logs({ logs }) {
     </section>`;
 }
 
-/* serial monitor */
-function SerialMonitor({ lines, hidden, onToggle, onClear }) {
+/* serial monitor (drawer tab) */
+function SerialMonitor({ lines, onClear }) {
   const [paused, setPaused] = useState(false);
   const streamRef = useRef(null);
   // stick to bottom on new lines unless user paused to read.
   useEffect(() => {
-    if (hidden || paused) return;
+    if (paused) return;
     const el = streamRef.current; if (el) el.scrollTop = el.scrollHeight;
-  }, [lines, hidden, paused]);
+  }, [lines, paused]);
   return html`
-    <section class=${"zone serial reveal" + (hidden ? " is-collapsed" : "")} style=${{ animationDelay: "380ms" }} aria-labelledby="ser-h">
-      <${Head} folio="06" title=${t("zone.serial")}>
+    <section class="zone serial" aria-labelledby="ser-h">
+      <${Head} title=${t("zone.serial")}>
         <div class="serial-tools">
           <span class="tag">${lines.length}</span>
-          ${!hidden && html`<button type="button" class="serial-btn" onClick=${() => setPaused(p => !p)}
-            aria-pressed=${paused}>${paused ? t("serial.resume") : t("serial.pause")}</button>`}
-          ${!hidden && html`<button type="button" class="serial-btn" onClick=${onClear}>${t("serial.clear")}</button>`}
-          <button type="button" class="serial-btn" onClick=${onToggle} aria-expanded=${!hidden}
-            title=${t("serial.toggleTitle")}>${hidden ? t("serial.show") : t("serial.hide")}</button>
+          <button type="button" class="serial-btn" onClick=${() => setPaused(p => !p)}
+            aria-pressed=${paused}>${paused ? t("serial.resume") : t("serial.pause")}</button>
+          <button type="button" class="serial-btn" onClick=${onClear}>${t("serial.clear")}</button>
         </div>
       <//>
-      ${!hidden && html`
-        <div class="serial-stream" role="log" aria-live="off" ref=${streamRef}>
-          ${lines.length === 0
-            ? html`<div class="serial-empty">${t("serial.empty")}</div>`
-            : lines.map(l => html`<div key=${l.id} class=${"serial-line" + (l.s ? " is-data" : "")}>
-                <span class="t">${l.time}</span><span class="m">${l.text}</span></div>`)}
-        </div>`}
+      <div class="serial-stream" role="log" aria-live="off" ref=${streamRef}>
+        ${lines.length === 0
+          ? html`<div class="serial-empty">${t("serial.empty")}</div>`
+          : lines.map(l => html`<div key=${l.id} class=${"serial-line" + (l.s ? " is-data" : "")}>
+              <span class="t">${l.time}</span><span class="m">${l.text}</span></div>`)}
+      </div>
     </section>`;
 }
 
-/* masthead */
-function Masthead({ connected, ports, currentPort, bridge, onBridge, onCmd, connMode, onConnMode, ping, packets, uptime, onPort, lang, onLang }) {
+/* topbar — slim command strip: identity, link, connection, vitals, lang, console */
+function Topbar({ connected, ports, currentPort, bridge, onBridge, connMode, onConnMode, ping, packets, uptime, onPort, lang, onLang, onConsole, consoleOpen }) {
   return html`
-    <header class="masthead reveal">
-      <div class="mast-top">
-        <div class="mast-id">
-          <span class="folio-sm">BLK-02</span>
-          <span class="label">${t("mast.console")}</span>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-tick" aria-hidden="true"></span>
+        <span class="brand-name">Blackout</span>
+        <span class="brand-ver">V3</span>
+      </div>
+      <p class="lamp" role="status" aria-live="polite">
+        <span class=${"lamp-dot " + (connected ? "is-go" : "is-abort")}></span>
+        <span class="lamp-label">${connected ? t("mast.linkLive") : t("mast.noSignal")}</span>
+      </p>
+      <div class="top-conn">
+        <div class="conn-seg" data-mode=${connMode} role="tablist" aria-label=${t("mast.link")}>
+          <button type="button" role="tab" aria-selected=${connMode === "usb"}
+            class=${connMode === "usb" ? "is-active" : ""} onClick=${() => onConnMode("usb")}>${t("mast.usb")}</button>
+          <button type="button" role="tab" aria-selected=${connMode === "bt"}
+            class=${connMode === "bt" ? "is-active" : ""} onClick=${() => onConnMode("bt")}>${t("mast.bt")}</button>
+          <span class="conn-seg-thumb" aria-hidden="true"></span>
         </div>
-        <div class="mast-strip">
-          <p class="lamp" role="status" aria-live="polite">
-            <span class=${"lamp-dot " + (connected ? "is-go" : "is-abort")}></span>
-            <span class="lamp-label">${connected ? t("mast.linkLive") : t("mast.noSignal")}</span>
-          </p>
-          <div class="conn-field">
-            <span class="label">${t("mast.link")}</span>
-            <div class="conn-seg" data-mode=${connMode} role="tablist" aria-label=${t("mast.link")}>
-              <button type="button" role="tab" aria-selected=${connMode === "usb"}
-                class=${connMode === "usb" ? "is-active" : ""} onClick=${() => onConnMode("usb")}>${t("mast.usb")}</button>
-              <button type="button" role="tab" aria-selected=${connMode === "bt"}
-                class=${connMode === "bt" ? "is-active" : ""} onClick=${() => onConnMode("bt")}>${t("mast.bt")}</button>
-              <span class="conn-seg-thumb" aria-hidden="true"></span>
-            </div>
-            <div class="conn-panel" key=${connMode}>
-              ${connMode === "usb" ? html`
-                <select class="port-select" value=${currentPort || ""} onChange=${e => onPort(e.target.value)}>
-                  ${ports.length === 0 && html`<option value="">${t("mast.noPorts")}</option>`}
-                  ${ports.map(p => html`<option key=${p} value=${p}>${p}</option>`)}
-                </select>
-              ` : html`
-                <div class="bridge-ctl">
-                  <button type="button" class=${"bridge-btn " + (bridge.running ? "is-on" : "")}
-                    disabled=${bridge.busy} onClick=${() => onBridge("toggle")}>
-                    <span class=${"lamp-dot " + (bridge.running ? "is-go" : "is-abort")}></span>
-                    ${bridge.busy ? t("mast.bridgeBusy") : bridge.running ? t("mast.bridgeOn") : t("mast.bridgeOff")}
-                  </button>
-                  <button type="button" class="bridge-repair" title=${t("mast.bridgeRepairTitle")}
-                    disabled=${bridge.busy} onClick=${() => onBridge("reconnect")}>⟳</button>
-                  <button type="button" class="bridge-repair" title=${t("mast.routinePresTitle")}
-                    disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,presentation")}>▶pres</button>
-                  <button type="button" class="bridge-repair" title=${t("mast.routineRunTitle")}
-                    disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,run")}>▶run</button>
-                  <button type="button" class="bridge-repair" title=${t("mast.routineMissionTitle")}
-                    disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,mission")}>▶mission</button>
-                  <button type="button" class="bridge-repair" title=${t("mast.routineTestTitle")}
-                    disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,test")}>▶test</button>
-                  <button type="button" class="bridge-repair" title=${t("mast.routineTest2Title")}
-                    disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("go,test2")}>▶test2</button>
-                  <button type="button" class="bridge-repair" title=${t("mast.routineStopTitle")}
-                    disabled=${bridge.busy || !bridge.running} onClick=${() => onCmd("stop")}>■</button>
-                </div>
-              `}
-            </div>
-          </div>
-          <label class="port-field">
-            <span class="label">${t("mast.lang")}</span>
-            <select class="port-select" value=${lang} onChange=${e => onLang(e.target.value)}>
-              ${LANGS.map(l => html`<option key=${l.code} value=${l.code}>${l.label}</option>`)}
+        <div class="conn-panel" key=${connMode}>
+          ${connMode === "usb" ? html`
+            <select class="port-select" value=${currentPort || ""} onChange=${e => onPort(e.target.value)}>
+              ${ports.length === 0 && html`<option value="">${t("mast.noPorts")}</option>`}
+              ${ports.map(p => html`<option key=${p} value=${p}>${p}</option>`)}
             </select>
-          </label>
-          <dl class="stat"><dt>${t("mast.ping")}</dt><dd>${ping}</dd></dl>
-          <dl class="stat"><dt>${t("mast.packets")}</dt><dd>${packets}</dd></dl>
-          <dl class="stat"><dt>${t("mast.uptime")}</dt><dd>${uptime}</dd></dl>
+          ` : html`
+            <div class="bridge-ctl">
+              <button type="button" class=${"bridge-btn " + (bridge.running ? "is-on" : "")}
+                disabled=${bridge.busy} onClick=${() => onBridge("toggle")}>
+                <span class=${"lamp-dot " + (bridge.running ? "is-go" : "is-abort")}></span>
+                ${bridge.busy ? t("mast.bridgeBusy") : bridge.running ? t("mast.linked") : t("mast.connect")}
+              </button>
+              <button type="button" class="bridge-repair" title=${t("mast.bridgeRepairTitle")}
+                disabled=${bridge.busy} onClick=${() => onBridge("reconnect")}>⟳</button>
+            </div>
+          `}
         </div>
       </div>
-      <div class="mast-title">
-        <h1>Blackout<span class="ver">V2</span></h1>
-        <div class="mast-sub">
-          <span>${t("mast.subTele")}</span>
-          <span class="dim">ESP32-CAM // ARDUINO UNO R4 WIFI</span>
-        </div>
+      <div class="top-stats">
+        <dl class="stat"><dt>${t("mast.ping")}</dt><dd>${ping}</dd></dl>
+        <dl class="stat"><dt>${t("mast.packets")}</dt><dd>${packets}</dd></dl>
+        <dl class="stat"><dt>${t("mast.uptime")}</dt><dd>${uptime}</dd></dl>
       </div>
+      <select class="port-select top-lang" value=${lang} onChange=${e => onLang(e.target.value)} aria-label=${t("mast.lang")}>
+        ${LANGS.map(l => html`<option key=${l.code} value=${l.code}>${l.label}</option>`)}
+      </select>
+      <button type="button" class=${"console-btn" + (consoleOpen ? " is-active" : "")}
+        onClick=${onConsole} aria-pressed=${consoleOpen} title=${t("serial.toggleTitle")}>
+        ▤ ${t("drawer.console")}
+      </button>
     </header>`;
 }
 
-/* ticker */
-function Ticker({ packet, connected }) {
-  const items = [
-    [t("tick.temp"), fmt(packet?.temp, 1) + "°C"],
-    [t("tick.humid"), fmt(packet?.humid, 0) + "%"],
-    [t("tick.pressure"), fmt(packet?.pressure, 0) + "hPa"],
-    [t("tick.dist"), fmt(packet?.dist, 0) + "cm"],
-    [t("tick.smoke"), fmt(packet?.smoke, 0) + "ppm"],
-    [t("tick.air"), fmt(packet?.airq, 0) + "ppm"],
-    [t("tick.roll"), fmt(packet?.roll, 0) + "°"],
-    [t("tick.pitch"), fmt(packet?.pitch, 0) + "°"],
-    [t("tick.yaw"), fmt(packet?.yaw, 0) + "°"],
-    [t("tick.link"), connected ? t("link.live") : t("link.down")],
-  ];
-  const seq = [...items, ...items];
+/* console drawer — logs, findings, serial, motor bench. slides over the cockpit */
+function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, enabled }) {
+  if (!open) return null;
+  const tabs = [["logs", t("zone.logs")], ["findings", t("zone.analysis")], ["serial", t("zone.serial")], ["motor", t("colo.motor")]];
   return html`
-    <div class="ticker" aria-hidden="true">
-      <div class="ticker-track">
-        ${seq.map((it, i) => html`<span key=${i} class="ticker-item">
-          <i class="ticker-sep">/</i><span class="ticker-k">${it[0]}</span> <b>${it[1]}</b></span>`)}
+    <div class="drawer" role="region" aria-label=${t("drawer.console")}>
+      <div class="drawer-bar">
+        <div class="drawer-tabs" role="tablist">
+          ${tabs.map(([k, lbl]) => html`<button key=${k} type="button" role="tab" aria-selected=${tab === k}
+            class=${"drawer-tab" + (tab === k ? " is-active" : "")} onClick=${() => onTab(k)}>${lbl}</button>`)}
+        </div>
+        <button type="button" class="drawer-x" onClick=${onClose} aria-label="Close">✕</button>
+      </div>
+      <div class="drawer-body">
+        ${tab === "logs" ? html`<${Logs} logs=${logs} />`
+        : tab === "findings" ? html`<${Memory} chat=${chat} />`
+        : tab === "serial" ? html`<${SerialMonitor} lines=${serialLines} onClear=${onClearSerial} />`
+        : html`<${MotorDebug} onCmd=${onCmd} enabled=${enabled} />`}
       </div>
     </div>`;
 }
@@ -1228,7 +1252,8 @@ function App() {
   const [toasts, setToasts] = useState([]);
   const [uptime, setUptime] = useState("00:00:00");
   const [serialLines, setSerialLines] = useState([]);
-  const [serialHidden, setSerialHidden] = useState(() => localStorage.getItem("serialHidden") === "true");
+  const [drawer, setDrawer] = useState(false);
+  const [drawerTab, setDrawerTab] = useState("logs");
   const [speaking, setSpeaking] = useState(false);
   // chats = briefed recon sessions. each holds its own mission + conversation.
   const [chats, setChats] = useState(() => { try { return JSON.parse(localStorage.getItem("chats") || "[]"); } catch { return []; } });
@@ -1657,71 +1682,55 @@ function App() {
     socketRef.current?.emit("set-mission", text);
   }, [addLog]);
   const pickHistory = useCallback((text) => setAi(p => ({ ...p, text })), []);
-  const toggleSerial = useCallback(() => setSerialHidden(p => { const n = !p; localStorage.setItem("serialHidden", n); return n; }), []);
   const clearSerial = useCallback(() => setSerialLines([]), []);
+  const toggleDrawer = useCallback(() => setDrawer(o => !o), []);
 
-  // backtick toggles the serial monitor (ignored while typing in a field).
+  // backtick jumps to the serial tab of the console drawer (ignored while typing in a field).
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== "`" || e.metaKey || e.ctrlKey || e.altKey) return;
       const t = e.target;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
-      e.preventDefault(); toggleSerial();
+      e.preventDefault();
+      setDrawer(o => {
+        if (o && drawerTabRef.current === "serial") return false;
+        setDrawerTab("serial"); return true;
+      });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggleSerial]);
+  }, []);
+  const drawerTabRef = useRef(drawerTab);
+  drawerTabRef.current = drawerTab;
 
   return html`
     <${React.Fragment}>
-      <div class="console">
-        <${Masthead} connected=${connected} ports=${ports} currentPort=${currentPort}
-          bridge=${bridge} onBridge=${toggleBridge} onCmd=${sendCmd} connMode=${connMode} onConnMode=${setConnMode}
+      <div class="shell">
+        <${Topbar} connected=${connected} ports=${ports} currentPort=${currentPort}
+          bridge=${bridge} onBridge=${toggleBridge} connMode=${connMode} onConnMode=${setConnMode}
           ping=${ping} packets=${packets} uptime=${uptime} onPort=${switchPort}
-          lang=${lang} onLang=${changeLang} />
-        <${Ticker} packet=${view} connected=${connected} />
+          lang=${lang} onLang=${changeLang} onConsole=${toggleDrawer} consoleOpen=${drawer} />
 
-        <main class="deck" id="sensors">
-          <div class="row row--stage">
-            <div class="stage-col">
-              <${Orientation} packet=${packet} onLog=${addLog} />
-              <${ReadingsPanel} packet=${view} />
+        <main class="cockpit" id="sensors">
+          <div class="col-main">
+            <div class="stage-row">
+              <${ThreeDeeBox} packet=${packet} onLog=${addLog} />
+              <${CamBox} packet=${packet} />
             </div>
+            <${SensorStrip} packet=${view} />
+          </div>
+          <aside class="col-rail">
             <${Agent} ai=${ai} tts=${tts} ttsProv=${ttsProv} hasDeepgram=${hasDeepgram} packet=${packet} connected=${connected} speaking=${speaking}
               chats=${chats} activeChat=${activeChat} onNewChat=${newChat} onSelectChat=${selectChat}
               onDeleteChat=${deleteChat} onBrief=${briefMission} onSpeak=${speakBrief}
               onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onPick=${pickHistory} onMock=${mockData} onAsk=${ask} />
-            <div class="side-col">
-              <${Camera} />
-              <${GamepadCtl} onCmd=${sendCmd} onAnalyze=${analyze} enabled=${bridge.running} busyRef=${analyzingRef} packetRef=${packetRef} />
-              <${Memory} chat=${activeChat} />
-            </div>
-          </div>
-
-          <div class="row">
-            <${TrendsPanel} packet=${packet} />
-          </div>
-
-          <div class="row">
-            <${MotorDebug} onCmd=${sendCmd} enabled=${bridge.running} />
-          </div>
-
-          <div class="row">
-            <${Logs} logs=${logs} />
-          </div>
-
-          <div class="row">
-            <${SerialMonitor} lines=${serialLines} hidden=${serialHidden} onToggle=${toggleSerial} onClear=${clearSerial} />
-          </div>
+            <${Drive} onCmd=${sendCmd} onAnalyze=${analyze} enabled=${bridge.running} busyRef=${analyzingRef} packetRef=${packetRef} />
+          </aside>
         </main>
 
-        <footer class="colophon">
-          <span><b>Blackout V2</b></span><span class="dot">/</span>
-          <span>WRO 2026</span><span class="dot">/</span>
-          <span>${t("colo.sensorHub")} <b>Uno R4 WiFi</b></span><span class="dot">/</span>
-          <span>Cam <b>ESP32-CAM</b></span><span class="dot">/</span>
-          <span>${t("colo.field")}</span>
-        </footer>
+        <${Drawer} open=${drawer} tab=${drawerTab} onTab=${setDrawerTab} onClose=${toggleDrawer}
+          logs=${logs} serialLines=${serialLines} onClearSerial=${clearSerial}
+          chat=${activeChat} onCmd=${sendCmd} enabled=${bridge.running} />
       </div>
 
       <${Toasts} items=${toasts} />

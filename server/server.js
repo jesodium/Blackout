@@ -347,8 +347,6 @@ const ONBOARDING = {
       q1: "What kind of place am I dropping into?",
       q2: "What should I be watching for down there?",
       rundown: "Got it — here's the rundown. Good to go?",
-      apOff: "Autopilot disabled. You're on your own now!",
-      apOn: "Autopilot engaged.",
     },
   },
   es: {
@@ -359,8 +357,6 @@ const ONBOARDING = {
       q1: "¿A qué tipo de lugar voy a entrar?",
       q2: "¿Qué debo vigilar allí abajo?",
       rundown: "Entendido — aquí está el resumen. ¿Todo listo?",
-      apOff: "Piloto automático desactivado. ¡Ahora estás solo!",
-      apOn: "Piloto automático activado.",
     },
   },
 };

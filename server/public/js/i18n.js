@@ -18,8 +18,6 @@ export const ONBOARDING = {
     q1: "What kind of place am I dropping into?",
     q2: "What should I be watching for down there?",
     rundown: "Got it — here's the rundown. Good to go?",
-    apOff: "Autopilot disabled. You're on your own now!",
-    apOn: "Autopilot engaged.",
   },
   es: {
     intro: "Hola — soy Sage, la IA que controla la unidad de reconocimiento que envías a la oscuridad. Cuéntame el trabajo, paso a paso.",
@@ -27,8 +25,6 @@ export const ONBOARDING = {
     q1: "¿A qué tipo de lugar voy a entrar?",
     q2: "¿Qué debo vigilar allí abajo?",
     rundown: "Entendido — aquí está el resumen. ¿Todo listo?",
-    apOff: "Piloto automático desactivado. ¡Ahora estás solo!",
-    apOn: "Piloto automático activado.",
   },
 };
 
@@ -282,6 +278,18 @@ const DICT = {
     "colo.field": "Field Console",
     "colo.sensorHub": "Sensor Hub",
     "colo.motor": "Motor",
+
+    /* cockpit rework */
+    "stage.title": "Live View",
+    "zone.drive": "Drive",
+    "drive.routines": "Routines",
+    "drive.hold": "Hold to drive — or WASD / arrow keys",
+    "drive.noPad": "No gamepad? On-screen pad and WASD work too.",
+    "drive.auto": "Autonomous — not wired up yet.",
+    "drive.stop": "STOP",
+    "drawer.console": "Console",
+    "mast.connect": "Connect",
+    "mast.linked": "Linked",
   },
 
   es: {
@@ -520,6 +528,17 @@ const DICT = {
     "colo.field": "Consola de Campo",
     "colo.sensorHub": "Concentrador",
     "colo.motor": "Motor",
+
+    "stage.title": "Vista en Vivo",
+    "zone.drive": "Control",
+    "drive.routines": "Rutinas",
+    "drive.hold": "Mantén pulsado — o teclas WASD / flechas",
+    "drive.noPad": "¿Sin gamepad? El pad en pantalla y WASD también funcionan.",
+    "drive.auto": "Autónomo — aún no conectado.",
+    "drive.stop": "STOP",
+    "drawer.console": "Consola",
+    "mast.connect": "Conectar",
+    "mast.linked": "Enlazado",
   },
 };
 
