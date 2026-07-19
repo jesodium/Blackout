@@ -1,0 +1,12 @@
+speed 140
+forever
+  if dist < 20
+    say Obstacle found
+    analyze
+    repeat until dist >= 20
+      right 400
+    end
+  else
+    forward 600
+  end
+end

@@ -262,6 +262,63 @@ app.post("/api/ports/switch", (req, res) => {
   });
 });
 
+// --- blk workflows: plain .blk text files in ./workflows, name comes from url ---
+const BLK_DIR = path.join(__dirname, "workflows");
+fs.mkdirSync(BLK_DIR, { recursive: true });
+// sanitized name -> path, null if nothing safe remains (also kills traversal)
+function blkPath(name) {
+  const safe = String(name).replace(/[^a-z0-9 _-]/gi, "").trim().slice(0, 60);
+  return safe ? path.join(BLK_DIR, safe + ".blk") : null;
+}
+
+app.get("/api/blk", (req, res) => {
+  res.json({ files: fs.readdirSync(BLK_DIR).filter(f => f.endsWith(".blk")).map(f => f.slice(0, -4)).sort() });
+});
+
+app.get("/api/blk/:name", (req, res) => {
+  const p = blkPath(req.params.name);
+  if (!p || !fs.existsSync(p)) return res.status(404).json({ error: "not found" });
+  res.type("text/plain").send(fs.readFileSync(p, "utf8"));
+});
+
+app.post("/api/blk/:name", (req, res) => {
+  const p = blkPath(req.params.name);
+  if (!p) return res.status(400).json({ error: "bad name" });
+  if (typeof req.body !== "string" || req.body.length > 20000)
+    return res.status(400).json({ error: "body must be blk text (content-type: text/plain)" });
+  fs.writeFileSync(p, req.body);
+  res.json({ ok: true });
+});
+
+app.delete("/api/blk/:name", (req, res) => {
+  const p = blkPath(req.params.name);
+  if (!p || !fs.existsSync(p)) return res.status(404).json({ error: "not found" });
+  fs.unlinkSync(p);
+  res.json({ ok: true });
+});
+
+// sage as workflow author: editor chats here, sage replies with prose + one
+// fenced blk program. plain text reply — not the json persona used elsewhere.
+// own path (not /api/blk/:name) so it can't collide with a workflow's name.
+app.post("/api/blk-sage", async (req, res) => {
+  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-10) : [];
+  if (!msgs.length) return res.status(400).json({ error: "messages required" });
+  try {
+    const resp = await openai.chat.completions.create({
+      model: process.env.CEREBRAS_MODEL || "gemma-4-31b",
+      messages: [
+        { role: "system", content: BLK_SYSTEM },
+        ...msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") })),
+      ],
+      max_tokens: 700,
+    });
+    res.json({ reply: resp.choices[0]?.message?.content || "" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 let latestData = null;
 let dataHistory = [];
 // latestdata is only "current" while the link is alive — telemetry lands every
@@ -332,6 +389,7 @@ async function pregenOnboarding() {
 const loadPrompt = (name) => fs.readFileSync(path.join(__dirname, "prompts", name), "utf8").trim();
 const AI_SYSTEM = loadPrompt("analysis.md");
 const CHAT_SYSTEM = loadPrompt("chat.md");
+const BLK_SYSTEM = loadPrompt("blk.md");
 // the presentation routine's closing look is a greeting to the judges, not a cave
 // read — same camera grab, different system prompt.
 const PRESENT_SYSTEM = loadPrompt("present.md");

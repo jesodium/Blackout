@@ -162,6 +162,48 @@ body {
 }
 .conn-seg[data-mode="bt"] .conn-seg-thumb { transform: translateX(100%); }
 
+/* 3-way control-mode pill: reuses conn-seg look, one thumb-width per slot */
+.mode-seg { display: grid; grid-template-columns: 1fr 1fr 1fr; width: 100%; }
+.mode-seg button { padding: 7px 6px; text-align: center; }
+.mode-seg .conn-seg-thumb { width: calc(33.333% - 2px); }
+.mode-seg[data-mode="blk"]  .conn-seg-thumb { transform: translateX(100%); }
+.mode-seg[data-mode="auto"] .conn-seg-thumb { transform: translateX(200%); }
+
+/* blk workflow panel (control mode zone) */
+.blk-ctl { display: grid; gap: 8px; }
+.blk-ctl-row { display: flex; gap: 6px; }
+.blk-ctl-sel { flex: 1; max-width: none; }
+.blk-stop { background: var(--abort-bg); border: 1px solid var(--abort); color: var(--abort); font-weight: 700; }
+
+/* blk editor overlay: centered frame, blurred console visible around it */
+.blk-modal {
+  position: fixed; inset: 0; z-index: 300;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(6, 6, 7, 0.45);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  animation: blkFade 0.22s ease both;
+}
+.blk-modal-frame {
+  display: flex; flex-direction: column;
+  width: min(1200px, 86vw); height: 86dvh;
+  background: var(--bg); border: 1px solid var(--line-2);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+  animation: blkPop 0.32s cubic-bezier(0.2, 0.9, 0.25, 1.1) both;
+}
+.blk-modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-bottom: 1.5px solid var(--ink); flex-shrink: 0;
+}
+.blk-modal-head .label { color: var(--ink-2); }
+.blk-modal-x {
+  background: none; border: 1px solid var(--line-2); color: var(--ink-2);
+  font: 600 12px/1 var(--grotesk); padding: 5px 9px; cursor: pointer;
+}
+.blk-modal-x:hover { color: var(--accent); border-color: var(--accent); }
+.blk-modal-frame iframe { flex: 1; width: 100%; border: 0; background: var(--bg); }
+@keyframes blkFade { from { opacity: 0; } }
+@keyframes blkPop { from { opacity: 0; transform: translateY(26px) scale(0.97); } }
+
 .conn-panel {
   min-height: 26px; display: flex; align-items: center;
   animation: connSwap 0.34s cubic-bezier(0.2, 0.75, 0.2, 1) both;

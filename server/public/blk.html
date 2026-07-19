@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>BLACKOUT · BLK Editor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    /* editor chrome on console tokens; blocks get scratch category colors */
+    :root {
+      --c-motion: #4c97ff;
+      --c-control: #ffab19;
+      --c-looks: #9966ff;
+      --c-ai: #ff3b2f;
+    }
+    body { background-image: none; overflow: hidden; }
+    .blk-ed { display: flex; flex-direction: column; height: 100vh; padding: 10px clamp(10px, 2vw, 22px) 12px; gap: 10px; }
+
+    .blk-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+    .blk-bar .folio-sm { color: var(--accent); margin-right: 4px; }
+    .blk-bar input[type="text"], .blk-bar select {
+      font: 500 12px/1 var(--mono); min-height: 30px; padding: 0 8px;
+      color: var(--ink); background: var(--inset); border: 1px solid var(--line-2); border-radius: 0;
+    }
+    .blk-bar input[type="text"] { width: 160px; }
+    .blk-btn {
+      font: 600 10px/1 var(--grotesk); letter-spacing: 0.18em; text-transform: uppercase;
+      padding: 9px 11px; color: var(--ink); background: var(--panel-2);
+      border: 1px solid var(--line-2); cursor: pointer;
+    }
+    .blk-btn:hover { border-color: var(--ink-2); }
+    .blk-btn.is-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .blk-btn.is-danger { color: var(--accent); }
+    .blk-btn.is-sage { background: var(--c-looks); border-color: var(--c-looks); color: #fff; }
+
+    /* ask-sage popup: sage writes workflows from a description */
+    .sage-modal[hidden] { display: none; } /* display:flex below would defeat the hidden attribute */
+    .sage-modal {
+      position: fixed; inset: 0; z-index: 50;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(6, 6, 7, 0.5);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      animation: sageFade 0.2s ease both;
+    }
+    .sage-panel {
+      display: flex; flex-direction: column;
+      width: min(660px, 92vw); height: min(620px, 86vh);
+      background: var(--bg); border: 1px solid var(--line-2);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65);
+      animation: sagePop 0.28s cubic-bezier(0.2, 0.9, 0.25, 1.1) both;
+    }
+    .sage-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 12px; border-bottom: 1.5px solid var(--c-looks); flex-shrink: 0;
+    }
+    .sage-head .label { color: var(--c-looks); }
+    .sage-msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+    .sage-empty { color: var(--ink-3); font: 500 12px/1.7 var(--mono); margin: auto; text-align: center; max-width: 380px; }
+    .sage-msg {
+      max-width: 88%; padding: 9px 12px; border: 1px solid var(--line-2);
+      font: 500 12px/1.6 var(--grotesk); color: var(--ink); white-space: pre-wrap;
+    }
+    .sage-msg.is-user { align-self: flex-end; background: var(--panel-2); }
+    .sage-msg.is-sage { align-self: flex-start; background: var(--panel); border-left: 3px solid var(--c-looks); }
+    .sage-msg.is-think { align-self: flex-start; color: var(--ink-3); border-style: dashed; animation: sagePulse 1.2s ease-in-out infinite; }
+    .sage-msg pre {
+      font: 500 11px/1.6 var(--mono); background: var(--inset); border: 1px solid var(--line);
+      padding: 9px; margin: 8px 0; overflow-x: auto; white-space: pre;
+    }
+    .sage-form { display: flex; gap: 6px; padding: 10px; border-top: 1px solid var(--line); flex-shrink: 0; }
+    .sage-form input {
+      flex: 1; font: 500 12px/1 var(--mono); min-height: 34px; padding: 0 10px;
+      color: var(--ink); background: var(--inset); border: 1px solid var(--line-2); border-radius: 0;
+    }
+    @keyframes sageFade { from { opacity: 0; } }
+    @keyframes sagePop { from { opacity: 0; transform: translateY(18px) scale(0.97); } }
+    @keyframes sagePulse { 50% { opacity: 0.4; } }
+
+    /* workspace: palette | canvas */
+    .blk-work { flex: 1; display: flex; gap: 10px; min-height: 0; }
+    .blk-palette {
+      width: 210px; flex-shrink: 0; overflow-y: auto; padding: 10px;
+      background: var(--panel); border: 1px solid var(--line);
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .blk-palette h3 {
+      font: 600 9px/1 var(--grotesk); letter-spacing: 0.26em; text-transform: uppercase;
+      color: var(--ink-3); margin: 10px 0 2px;
+    }
+    .blk-palette h3:first-child { margin-top: 0; }
+    .blk-canvas {
+      flex: 1; overflow: auto; padding: 14px;
+      background: var(--inset); border: 1px solid var(--line);
+      /* faint dot grid like a scratch workspace */
+      background-image: radial-gradient(rgba(236,229,214,0.07) 1px, transparent 1px);
+      background-size: 22px 22px;
+    }
+
+    /* blocks */
+    .blk-node { margin: 3px 0; font: 600 12px/1 var(--grotesk); user-select: none; }
+    .blk-head {
+      display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+      padding: 7px 10px; border-radius: 5px; cursor: grab; width: max-content; max-width: 100%;
+      color: #fff; box-shadow: 0 1px 0 rgba(0,0,0,0.45);
+    }
+    .blk-node.is-drag > .blk-head { opacity: 0.35; }
+    .cat-motion  > .blk-head { background: var(--c-motion); }
+    .cat-control > .blk-head { background: var(--c-control); color: #3a2600; }
+    .cat-looks   > .blk-head { background: var(--c-looks); }
+    .cat-ai      > .blk-head { background: var(--c-ai); }
+
+    .blk-head input, .blk-head select {
+      font: 700 11px/1 var(--mono); border: none; border-radius: 10px; padding: 3px 7px;
+      background: rgba(255,255,255,0.9); color: #111; min-height: 20px;
+    }
+    .blk-head input[type="number"] { width: 62px; text-align: center; }
+    .blk-head input[type="text"] { width: 130px; }
+    .blk-head .unit { font-size: 10px; opacity: 0.75; }
+    .blk-head .del {
+      background: none; border: none; color: inherit; opacity: 0.55; cursor: pointer;
+      font-size: 14px; line-height: 1; padding: 0 0 0 3px;
+    }
+    .blk-head .del:hover { opacity: 1; }
+
+    /* c-shape: colored spine + end cap */
+    .blk-body { margin-left: 9px; padding-left: 12px; border-left: 5px solid; border-radius: 0 0 0 4px; min-height: 14px; }
+    .blk-else, .blk-cap {
+      width: max-content; margin-left: 0; padding: 4px 12px; border-radius: 4px;
+      font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #3a2600;
+    }
+    .cat-motion  .blk-body { border-color: var(--c-motion); }
+    .cat-control > .blk-body { border-color: var(--c-control); }
+    .cat-control > .blk-else, .cat-control > .blk-cap { background: var(--c-control); }
+    .blk-cap { box-shadow: 0 1px 0 rgba(0,0,0,0.45); }
+
+    /* drop targets */
+    .blk-list { min-height: 10px; }
+    .blk-list.is-over { outline: 2px dashed var(--accent); outline-offset: 3px; }
+    .blk-node.is-before > .blk-head { box-shadow: 0 -3px 0 var(--accent), 0 1px 0 rgba(0,0,0,0.45); }
+    .blk-node.is-after  > .blk-head { box-shadow: 0 3px 0 var(--accent), 0 1px 0 rgba(0,0,0,0.45); }
+    .blk-list-root { min-height: 100%; padding-bottom: 60px; }
+    .blk-hint { color: var(--ink-3); font: 500 12px/1.7 var(--mono); padding: 8px; pointer-events: none; }
+
+    /* palette blocks reuse node look, click or drag */
+    .blk-palette .blk-node { margin: 0; }
+    .blk-palette .blk-head { width: 100%; padding: 6px 9px; font-size: 11px; }
+
+    .blk-status { font: 500 11px/1.5 var(--mono); min-height: 34px; color: var(--ink-2); white-space: pre-line; }
+    .blk-status.is-err { color: var(--accent); }
+    .blk-status.is-ok { color: var(--go); }
+    .blk-ref { border-top: 1px solid var(--line); padding-top: 8px; color: var(--ink-3); font: 500 10px/1.7 var(--mono); }
+    .blk-ref b { color: var(--ink-2); }
+  </style>
+</head>
+<body>
+  <div class="blk-ed">
+    <div class="blk-bar">
+      <span class="folio-sm">BLK-03</span>
+      <span class="label">BLK Workflow Editor</span>
+      <span style="flex:1"></span>
+      <button class="blk-btn is-sage" id="ask-sage">✦ Ask Sage</button>
+      <input type="text" id="name" placeholder="workflow name" aria-label="Workflow name" maxlength="60">
+      <select id="saved" aria-label="Saved workflows"><option value="">— saved —</option></select>
+      <button class="blk-btn is-primary" id="save">Save</button>
+      <button class="blk-btn" id="new">New</button>
+      <button class="blk-btn" id="import">Import</button>
+      <button class="blk-btn" id="export">Export</button>
+      <button class="blk-btn is-danger" id="delete">Del</button>
+      <input type="file" id="file" accept=".blk,.txt" hidden>
+    </div>
+
+    <div class="blk-work" id="pane-blocks">
+      <div class="blk-palette" id="palette"></div>
+      <div class="blk-canvas" id="canvas"></div>
+    </div>
+
+    <p class="blk-status" id="status">Drag blocks from the palette — drop onto a block's top/bottom edge to insert, into a loop's body to nest.</p>
+    <div class="blk-ref">
+      <b>.blk files are plain text</b> (hand-editable, import/export friendly) ·
+      forward/back/left/right &lt;ms&gt; · speed &lt;pwm&gt; · wait &lt;ms&gt; · say &lt;text&gt; · analyze · stop ·
+      repeat &lt;n&gt;…end · forever…end · if/repeat until/wait until &lt;sensor&gt; &lt;cmp&gt; &lt;n&gt; ·
+      sensors: dist temp humid smoke airq roll pitch yaw · run it from CONTROL MODE → BLK LANG
+    </div>
+  </div>
+
+  <div class="sage-modal" id="sage-modal" hidden>
+    <div class="sage-panel" role="dialog" aria-label="Ask Sage">
+      <div class="sage-head">
+        <span class="label">✦ Sage · Workflow Author</span>
+        <button type="button" class="blk-btn" id="sage-close" aria-label="Close">✕</button>
+      </div>
+      <div class="sage-msgs" id="sage-msgs"></div>
+      <form class="sage-form" id="sage-form">
+        <input type="text" id="sage-input" placeholder="describe the behavior — e.g. patrol and avoid walls" autocomplete="off">
+        <button type="submit" class="blk-btn is-sage" id="sage-send">Send</button>
+      </form>
+    </div>
+  </div>
+
+  <script type="module">
+    import { NODE_META, SENSORS, CMPS, LIMITS, parse, serialize, clampArg } from "./js/blk.js";
+
+    const $ = (id) => document.getElementById(id);
+    const bc = new BroadcastChannel("blk"); // nudges the console to refresh its workflow list
+
+    const DEMO = `# blk workflow — edit me
+speed 140
+say Starting patrol
+forever
+  forward 500
+  if dist < 20
+    say Obstacle!
+    back 400
+    right 400
+  end
+end`;
+
+    // program tree is the single working copy; .blk text only exists at save/load/import/export
+    let program = parse(DEMO).program;
+    let dragged = null;      // node being moved (lives in program)
+    let dragFactory = null;  // palette drag: () => fresh node
+
+    const setStatus = (msg, cls = "") => { const s = $("status"); s.textContent = msg; s.className = "blk-status " + cls; };
+    const argUnit = { ms: "ms", pwm: "pwm", count: "times" };
+
+    /* tree helpers */
+    const subLists = (n) => [n.body, n.elseBody].filter(Boolean);
+    function findList(list, node) { // list that directly contains node
+      for (const n of list) {
+        if (n === node) return list;
+        for (const sub of subLists(n)) { const r = findList(sub, node); if (r) return r; }
+      }
+      return null;
+    }
+    function ownsList(node, list) { // is `list` inside node's own subtree (no self-nesting)
+      for (const sub of subLists(node)) {
+        if (sub === list) return true;
+        for (const ch of sub) if (ownsList(ch, list)) return true;
+      }
+      return false;
+    }
+    function dropInto(list, index) {
+      let node;
+      if (dragFactory) node = dragFactory();
+      else if (dragged) {
+        if (dragged !== null && ownsList(dragged, list)) return; // can't drop a loop into itself
+        const src = findList(program, dragged);
+        if (!src) return;
+        const si = src.indexOf(dragged);
+        src.splice(si, 1);
+        if (src === list && si < index) index--;
+        node = dragged;
+      } else return;
+      list.splice(index, 0, node);
+      render();
+    }
+
+    /* condition editor: sensor + cmp + number */
+    function condInputs(cond) {
+      const frag = document.createDocumentFragment();
+      const sel = (opts, cur, set) => {
+        const s = document.createElement("select");
+        s.innerHTML = opts.map(o => `<option${o === cur ? " selected" : ""}>${o}</option>`).join("");
+        s.onchange = () => set(s.value);
+        s.onpointerdown = (e) => e.stopPropagation();
+        frag.appendChild(s);
+      };
+      sel(SENSORS, cond.s, (v) => { cond.s = v; });
+      sel(CMPS, cond.c, (v) => { cond.c = v; });
+      const num = document.createElement("input");
+      num.type = "number"; num.value = cond.v;
+      num.onchange = () => { cond.v = +num.value || 0; num.value = cond.v; };
+      frag.appendChild(num);
+      return frag;
+    }
+
+    /* one block (recursive for containers) */
+    function renderNode(node, list) {
+      const meta = NODE_META[node.op];
+      const el = document.createElement("div");
+      el.className = `blk-node cat-${meta.cat}`;
+
+      const head = document.createElement("div");
+      head.className = "blk-head";
+      head.draggable = true;
+      const label = document.createElement("span");
+      label.textContent = meta.label;
+      head.appendChild(label);
+
+      if (meta.arg) {
+        const num = document.createElement("input");
+        num.type = "number";
+        num.min = LIMITS[meta.arg][0]; num.max = LIMITS[meta.arg][1];
+        num.value = node.arg;
+        num.onchange = () => { node.arg = clampArg(meta.arg, num.value); num.value = node.arg; };
+        head.appendChild(num);
+        const u = document.createElement("span"); u.className = "unit"; u.textContent = argUnit[meta.arg];
+        head.appendChild(u);
+      }
+      if (meta.cond) head.appendChild(condInputs(node.cond));
+      if (meta.text) {
+        const txt = document.createElement("input");
+        txt.type = "text"; txt.value = node.text; txt.placeholder = "text to speak";
+        txt.onchange = () => { node.text = txt.value.trim() || "..."; };
+        head.appendChild(txt);
+      }
+      // inputs shouldn't start a block drag
+      head.querySelectorAll("input,select").forEach(inp => { inp.draggable = false; inp.ondragstart = (e) => { e.preventDefault(); e.stopPropagation(); }; });
+
+      const del = document.createElement("button");
+      del.className = "del"; del.textContent = "×"; del.title = "delete block";
+      del.setAttribute("aria-label", "delete " + meta.label);
+      del.onclick = () => { const l = findList(program, node); l && l.splice(l.indexOf(node), 1); render(); };
+      head.appendChild(del);
+      el.appendChild(head);
+
+      /* drag source */
+      head.addEventListener("dragstart", (e) => {
+        e.stopPropagation();
+        dragged = node; dragFactory = null;
+        e.dataTransfer.effectAllowed = "move";
+        setTimeout(() => el.classList.add("is-drag"));
+      });
+      head.addEventListener("dragend", () => { dragged = dragFactory = null; el.classList.remove("is-drag"); render(); });
+
+      /* drop before/after this block, split at pointer midline */
+      head.addEventListener("dragover", (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const after = e.offsetY > head.offsetHeight / 2;
+        el.classList.toggle("is-before", !after);
+        el.classList.toggle("is-after", after);
+      });
+      head.addEventListener("dragleave", () => el.classList.remove("is-before", "is-after"));
+      head.addEventListener("drop", (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const after = e.offsetY > head.offsetHeight / 2;
+        el.classList.remove("is-before", "is-after");
+        dropInto(list, list.indexOf(node) + (after ? 1 : 0));
+      });
+
+      /* container: body (+ else) + end cap */
+      if (meta.container) {
+        el.appendChild(renderList(node.body));
+        if (node.op === "if") {
+          if (node.elseBody) {
+            const elseBar = document.createElement("div");
+            elseBar.className = "blk-else";
+            elseBar.textContent = "else";
+            el.appendChild(elseBar);
+            el.appendChild(renderList(node.elseBody));
+          } else {
+            // little affordance to grow an else arm
+            const addElse = document.createElement("button");
+            addElse.className = "blk-else"; addElse.style.cursor = "pointer";
+            addElse.style.border = "none"; addElse.style.opacity = "0.55";
+            addElse.textContent = "+ else";
+            addElse.onclick = () => { node.elseBody = []; render(); };
+            el.appendChild(addElse);
+          }
+        }
+        const cap = document.createElement("div");
+        cap.className = "blk-cap";
+        cap.textContent = "end";
+        el.appendChild(cap);
+      }
+      return el;
+    }
+
+    function renderList(list, isRoot = false) {
+      const wrap = document.createElement("div");
+      wrap.className = "blk-body";
+      const inner = document.createElement("div");
+      inner.className = "blk-list" + (isRoot ? " blk-list-root" : "");
+      if (isRoot) wrap.style.cssText = "margin:0;padding:0;border:none;height:100%";
+      for (const n of list) inner.appendChild(renderNode(n, list));
+      if (!list.length && !isRoot) inner.style.minHeight = "16px";
+      if (!list.length && isRoot) inner.innerHTML = '<div class="blk-hint">empty program — click or drag blocks from the palette</div>';
+      // drop at end of this list (or into empty body)
+      inner.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); inner.classList.add("is-over"); });
+      inner.addEventListener("dragleave", () => inner.classList.remove("is-over"));
+      inner.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); inner.classList.remove("is-over"); dropInto(list, list.length); });
+      wrap.appendChild(inner);
+      return wrap;
+    }
+
+    function render() {
+      const c = $("canvas");
+      c.innerHTML = "";
+      c.appendChild(renderList(program, true));
+    }
+
+    /* palette — every block type, scratch-grouped. click appends, drag drops anywhere */
+    const cond = () => ({ s: "dist", c: "<", v: 20 });
+    const PALETTE = [
+      ["Motion", [
+        () => ({ op: "forward", arg: 500 }),
+        () => ({ op: "back", arg: 500 }),
+        () => ({ op: "left", arg: 400 }),
+        () => ({ op: "right", arg: 400 }),
+        () => ({ op: "speed", arg: 140 }),
+      ]],
+      ["Control", [
+        () => ({ op: "wait", arg: 500 }),
+        () => ({ op: "wait_until", cond: cond() }),
+        () => ({ op: "repeat", arg: 3, body: [] }),
+        () => ({ op: "repeat_until", cond: cond(), body: [] }),
+        () => ({ op: "forever", body: [] }),
+        () => ({ op: "if", cond: cond(), body: [], elseBody: null }),
+        () => ({ op: "if", cond: cond(), body: [], elseBody: [] }),
+        () => ({ op: "stop" }),
+      ]],
+      ["Voice + AI", [
+        () => ({ op: "say", text: "hello" }),
+        () => ({ op: "analyze" }),
+      ]],
+    ];
+    for (const [title, items] of PALETTE) {
+      const h = document.createElement("h3");
+      h.textContent = title;
+      $("palette").appendChild(h);
+      for (const make of items) {
+        const sample = make();
+        const meta = NODE_META[sample.op];
+        const el = document.createElement("div");
+        el.className = `blk-node cat-${meta.cat}`;
+        const head = document.createElement("div");
+        head.className = "blk-head";
+        head.draggable = true;
+        head.textContent = meta.label
+          + (meta.arg ? ` ${sample.arg} ${argUnit[meta.arg]}` : "")
+          + (meta.cond ? " …" : "")
+          + (sample.op === "if" && sample.elseBody ? " / else" : "")
+          + (meta.text ? " …" : "");
+        head.title = "click to add, or drag into the program";
+        head.onclick = () => { program.push(make()); render(); };
+        head.addEventListener("dragstart", (e) => {
+          dragFactory = make; dragged = null;
+          e.dataTransfer.effectAllowed = "copy";
+        });
+        head.addEventListener("dragend", () => { dragFactory = null; });
+        el.appendChild(head);
+        $("palette").appendChild(el);
+      }
+    }
+
+    /* save / load / delete */
+    async function refreshSaved(keep) {
+      try {
+        const { files } = await (await fetch("/api/blk")).json();
+        $("saved").innerHTML = '<option value="">— saved —</option>' +
+          files.map(f => `<option${f === keep ? " selected" : ""}>${f}</option>`).join("");
+      } catch { /* server offline — editor still works */ }
+    }
+
+    $("save").onclick = async () => {
+      const name = $("name").value.trim();
+      if (!name) { setStatus("give the workflow a name first", "is-err"); $("name").focus(); return; }
+      const text = serialize(program);
+      const r = await fetch("/api/blk/" + encodeURIComponent(name), {
+        method: "POST", headers: { "Content-Type": "text/plain" }, body: text,
+      }).catch(() => null);
+      if (r?.ok) { setStatus(`saved "${name}"`, "is-ok"); refreshSaved(name); bc.postMessage("saved"); }
+      else setStatus("save failed — is the server running?", "is-err");
+    };
+
+    function loadText(text, name, sourceLabel) {
+      const { program: p, errors } = parse(text);
+      $("name").value = name;
+      program = p;
+      render();
+      // parser recovers per line, so a hand-edited odd file still loads — bad lines get reported and dropped
+      setStatus(errors.length ? "skipped bad lines:\n" + errors.join("\n") : sourceLabel, errors.length ? "is-err" : "is-ok");
+    }
+
+    $("saved").onchange = async () => {
+      const name = $("saved").value;
+      if (!name) return;
+      const r = await fetch("/api/blk/" + encodeURIComponent(name)).catch(() => null);
+      if (!r?.ok) { setStatus("load failed", "is-err"); return; }
+      loadText(await r.text(), name, `loaded "${name}"`);
+    };
+
+    $("delete").onclick = async () => {
+      const name = $("saved").value || $("name").value.trim();
+      if (!name || !confirm(`delete workflow "${name}"?`)) return;
+      await fetch("/api/blk/" + encodeURIComponent(name), { method: "DELETE" }).catch(() => {});
+      setStatus(`deleted "${name}"`, "is-ok");
+      refreshSaved(); bc.postMessage("saved");
+    };
+
+    $("new").onclick = () => {
+      program = parse(DEMO).program;
+      $("name").value = ""; $("saved").value = "";
+      render();
+      setStatus("new workflow");
+    };
+
+    /* import / export — plain .blk text files */
+    $("export").onclick = () => {
+      const text = serialize(program);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+      a.download = ($("name").value.trim() || "workflow") + ".blk";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    };
+    $("import").onclick = () => $("file").click();
+    $("file").onchange = async () => {
+      const f = $("file").files[0];
+      if (!f) return;
+      loadText(await f.text(), f.name.replace(/\.(blk|txt)$/i, ""), `imported "${f.name}" — hit save to keep it`);
+      $("file").value = "";
+    };
+
+    /* ask sage: describe a behavior, sage answers with prose + a blk program to load */
+    const sageHist = [];
+    let sagePending = false;
+    const CODE_RE = /```(?:blk)?\s*\n([\s\S]*?)```/;
+
+    function renderSage() {
+      const box = $("sage-msgs");
+      box.innerHTML = "";
+      if (!sageHist.length && !sagePending) {
+        box.innerHTML = '<div class="sage-empty">Tell me what the rover should do and I\'ll build the workflow.<br><br>' +
+          '"patrol forward and dodge obstacles"<br>"spin slowly until it gets hot, then report"<br>"drive a square, then analyze"</div>';
+        return;
+      }
+      for (const m of sageHist) {
+        const div = document.createElement("div");
+        div.className = "sage-msg " + (m.role === "user" ? "is-user" : "is-sage");
+        if (m.role === "assistant") {
+          const match = m.content.match(CODE_RE);
+          const prose = m.content.replace(CODE_RE, "").trim();
+          if (prose) div.appendChild(Object.assign(document.createElement("div"), { textContent: prose }));
+          if (match) {
+            const code = match[1].trim();
+            div.appendChild(Object.assign(document.createElement("pre"), { textContent: code }));
+            const btn = Object.assign(document.createElement("button"), { className: "blk-btn is-primary", textContent: "Load into editor" });
+            btn.onclick = () => {
+              const { program: p, errors } = parse(code);
+              if (errors.length) { setStatus("sage program has errors:\n" + errors.join("\n"), "is-err"); return; }
+              program = p;
+              render();
+              $("sage-modal").hidden = true;
+              setStatus("workflow loaded from Sage — tweak blocks, then Save", "is-ok");
+            };
+            div.appendChild(btn);
+          }
+        } else div.textContent = m.content;
+        box.appendChild(div);
+      }
+      if (sagePending) {
+        box.appendChild(Object.assign(document.createElement("div"),
+          { className: "sage-msg is-sage is-think", textContent: "Sage is writing…" }));
+      }
+      box.scrollTop = box.scrollHeight;
+    }
+
+    $("sage-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const q = $("sage-input").value.trim();
+      if (!q || sagePending) return;
+      $("sage-input").value = "";
+      sageHist.push({ role: "user", content: q });
+      sagePending = true; $("sage-send").disabled = true;
+      renderSage();
+      try {
+        const r = await fetch("/api/blk-sage", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: sageHist.slice(-10) }),
+        });
+        const d = await r.json();
+        sageHist.push({ role: "assistant", content: d.reply || d.error || "No reply." });
+      } catch (err) {
+        sageHist.push({ role: "assistant", content: "Connection failed: " + err.message });
+      }
+      sagePending = false; $("sage-send").disabled = false;
+      renderSage();
+      $("sage-input").focus();
+    };
+
+    $("ask-sage").onclick = () => { $("sage-modal").hidden = false; renderSage(); $("sage-input").focus(); };
+    $("sage-close").onclick = () => { $("sage-modal").hidden = true; };
+    $("sage-modal").addEventListener("click", (e) => { if (e.target === $("sage-modal")) $("sage-modal").hidden = true; });
+
+    // esc: close sage popup first if open, else close the console's editor overlay
+    window.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      if (!$("sage-modal").hidden) return void ($("sage-modal").hidden = true);
+      if (window.parent !== window) window.parent.postMessage("blk:close", "*");
+    });
+
+    render();
+    refreshSaved();
+  </script>
+</body>
+</html>

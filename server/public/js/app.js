@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
 import htm from "htm";
 import { createRoverScene } from "./scene.js";
 import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./i18n.js";
+import { parse as blkParse, run as blkRun } from "./blk.js";
 
 const html = htm.bind(React.createElement);
 
@@ -359,16 +361,128 @@ function MotorDebug({ onCmd, enabled }) {
     </details>`;
 }
 
+/* blk workflow control: pick a saved .blk program, run/stop it from here */
+// programs are authored in the popup editor (blk.html) and saved server-side;
+// the runner lives here because the browser holds the ble link. each drive step
+// is one timed "drv," burst, so a mid-run stop or ble drop auto-halts on firmware.
+function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
+  const [files, setFiles] = useState([]);
+  const [sel, setSel] = useState(() => localStorage.getItem("blkSel") || "");
+  const [run, setRun] = useState(null); // {n, label} while executing
+  const [err, setErr] = useState(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const token = useRef(0);
+  const runRef = useRef(false); // mirrors run for unmount cleanup
+  runRef.current = !!run;
+
+  // editor iframe asks to close (esc key inside it)
+  useEffect(() => {
+    const fn = (e) => { if (e.data === "blk:close") setEditorOpen(false); };
+    window.addEventListener("message", fn);
+    return () => window.removeEventListener("message", fn);
+  }, []);
+
+  const loadFiles = useCallback(() => {
+    fetch("/api/blk").then(r => r.json()).then(d => setFiles(d.files || [])).catch(() => {});
+  }, []);
+  // refresh on mount, on editor saves (broadcastchannel), and on tab refocus
+  useEffect(() => {
+    loadFiles();
+    const bc = new BroadcastChannel("blk");
+    bc.onmessage = loadFiles;
+    window.addEventListener("focus", loadFiles);
+    return () => { bc.close(); window.removeEventListener("focus", loadFiles); };
+  }, [loadFiles]);
+  // leaving blk mode unmounts this panel — kill a live run and the motors with it
+  useEffect(() => () => { token.current++; if (runRef.current) onCmd("stop"); }, [onCmd]);
+
+  const start = async () => {
+    if (!sel || run) return;
+    setErr(null);
+    let text;
+    try {
+      const r = await fetch("/api/blk/" + encodeURIComponent(sel));
+      if (!r.ok) throw new Error("not found");
+      text = await r.text();
+    } catch { setErr("couldn't load workflow"); return; }
+    const { program, errors } = blkParse(text);
+    if (errors.length) { setErr(errors[0]); return; }
+    if (!program.length) { setErr("workflow is empty"); return; }
+    const my = ++token.current;
+    const stopped = () => token.current !== my;
+    const sleep = async (ms) => {
+      const t0 = Date.now();
+      while (!stopped() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 50));
+    };
+    setRun({ n: 0, label: "start" });
+    // interpreter walks the tree live: conditions read the latest telemetry packet,
+    // forever/until loops run until STOP (or their condition trips)
+    await blkRun(program, {
+      stopped, sleep,
+      drive: async (verb, pwm, ms) => { onCmd(`drv,${verb},${pwm},${ms}`); await sleep(ms + 150); },
+      analyze: async () => { // fire the agent, wait until it's done (30s cap)
+        onAnalyze();
+        await sleep(500);
+        const t0 = Date.now();
+        while (!stopped() && busyRef.current && Date.now() - t0 < 30000) await sleep(300);
+      },
+      say: (txt) => speak(txt),
+      sensors: () => packetRef?.current,
+      halt: () => onCmd("stop"),
+      onStep: (node, n) => setRun({ n, label: node.op.replace("_", " ") }),
+    });
+    if (!stopped()) setRun(null);
+  };
+
+  const stop = () => { token.current++; setRun(null); onCmd("stop"); };
+  const pick = (v) => { setSel(v); localStorage.setItem("blkSel", v); };
+
+  return html`
+    <div class="blk-ctl">
+      <div class="blk-ctl-row">
+        <select class="port-select blk-ctl-sel" value=${sel} onChange=${e => pick(e.target.value)} disabled=${!!run}>
+          <option value="">${files.length ? "— pick workflow —" : "no workflows yet"}</option>
+          ${files.map(f => html`<option key=${f} value=${f}>${f}</option>`)}
+        </select>
+        <button type="button" class="btn btn--ghost" title="reload list" onClick=${loadFiles}>⟳</button>
+        <button type="button" class="btn btn--ghost" onClick=${() => setEditorOpen(true)}>EDITOR</button>
+      </div>
+      ${run
+        ? html`<button type="button" class="btn blk-stop" onClick=${stop}>■ STOP — step ${run.n} · ${run.label.toUpperCase()}</button>`
+        : html`<button type="button" class="btn btn--primary" disabled=${!enabled || !sel} onClick=${start}>▶ RUN WORKFLOW</button>`}
+      <small style=${{ opacity: 0.7 }}>
+        ${err ? html`<span style=${{ color: "var(--accent)" }}>${err}</span>`
+          : !enabled ? "BT bridge off — connect to run."
+          : run ? "Running — STOP or switching mode halts the rover. Forever loops run until stopped."
+          : "Author programs in the EDITOR (blocks or text), save, run here."}
+      </small>
+      ${editorOpen && createPortal(html`
+        <div class="blk-modal" onClick=${(e) => { if (e.target === e.currentTarget) setEditorOpen(false); }}>
+          <div class="blk-modal-frame">
+            <div class="blk-modal-head">
+              <span class="label">BLK · Workflow Editor</span>
+              <button type="button" class="blk-modal-x" onClick=${() => setEditorOpen(false)} aria-label="Close editor">✕</button>
+            </div>
+            <iframe src="blk.html" title="BLK workflow editor"></iframe>
+          </div>
+        </div>`, document.body)}
+    </div>`;
+}
+
 /* manual control: gamepad (xbox / dualsense) */
 // browser gamepad api — both pads use "standard" mapping, so one code path.
 // autopilot on = pad ignored. disabling autopilot arms the pad.
 // drive sent as short timed bursts re-sent every 150ms while stick held: firmware auto-halts 300ms after last burst.
 // labels stay english, same as motordebug.
-function GamepadCtl({ onCmd, onAnalyze, enabled }) {
+// control mode: remote (gamepad) + blk (workflow programs) are live; autonomous is a placeholder.
+const MODES = [["remote", "REMOTE"], ["blk", "BLK LANG"], ["auto", "AUTONOMOUS"]];
+
+function GamepadCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
+  const [mode, setMode] = useState("remote");
   const [autopilot, setAutopilot] = useState(true);
   const [padName, setPadName] = useState(null);
   const [verb, setVerb] = useState(null); // live verb for ui readout
-  const armed = !autopilot && enabled;
+  const armed = mode === "remote" && !autopilot && enabled;
   const armedRef = useRef(armed);
   armedRef.current = armed;
   const moving = useRef(false);
@@ -421,19 +535,33 @@ function GamepadCtl({ onCmd, onAnalyze, enabled }) {
     playOnboard(key, ONBOARDING[getLang()][key]);
   };
 
+  // switching away from remote parks the pad: stop any live drive, no burst leaks through.
+  const pick = (m) => { if (m === mode) return; if (mode === "remote") { moving.current = false; setVerb(null); onCmd("stop"); } setMode(m); };
+
   return html`
     <section class="zone reveal" style=${{ animationDelay: "150ms" }}>
-      <${Head} folio="08" title="MANUAL CONTROL" tag=${padName ? "PAD OK" : "NO PAD"} />
+      <${Head} folio="08" title="CONTROL MODE" tag=${padName ? "PAD OK" : "NO PAD"} />
       <div class="zone-body" style=${{ display: "grid", gap: "10px" }}>
-        <button type="button" class=${"btn " + (autopilot ? "btn--ghost" : "btn--primary")} onClick=${toggle}>
-          ${autopilot ? "AUTOPILOT ON — press to take over" : "MANUAL — press for autopilot"}
-        </button>
-        <small style=${{ opacity: 0.7 }}>
-          ${!padName ? "Connect Xbox/DualSense (BT or USB), press any button."
-            : autopilot ? padName.slice(0, 40)
-            : !enabled ? "Pad armed — BT bridge off, no link to rover."
-            : verb ? `▶ ${verb.toUpperCase()}` : "Dpad ↑↓ drives · right stick rotates · □/X analyzes."}
-        </small>
+        <div class="conn-seg mode-seg" data-mode=${mode} role="tablist">
+          <span class="conn-seg-thumb"></span>
+          ${MODES.map(([m, label]) => html`
+            <button type="button" key=${m} role="tab" aria-selected=${mode === m}
+              class=${mode === m ? "is-active" : ""} onClick=${() => pick(m)}>${label}</button>`)}
+        </div>
+        ${mode === "remote" ? html`
+          <button type="button" class=${"btn " + (autopilot ? "btn--ghost" : "btn--primary")} onClick=${toggle}>
+            ${autopilot ? "AUTOPILOT ON — press to take over" : "MANUAL — press for autopilot"}
+          </button>
+          <small style=${{ opacity: 0.7 }}>
+            ${!padName ? "Connect Xbox/DualSense (BT or USB), press any button."
+              : autopilot ? padName.slice(0, 40)
+              : !enabled ? "Pad armed — BT bridge off, no link to rover."
+              : verb ? `▶ ${verb.toUpperCase()}` : "Dpad ↑↓ drives · right stick rotates · □/X analyzes."}
+          </small>`
+        : mode === "blk" ? html`
+          <${BlkCtl} onCmd=${onCmd} onAnalyze=${onAnalyze} enabled=${enabled} busyRef=${busyRef} packetRef=${packetRef} />`
+        : html`
+          <small style=${{ opacity: 0.7 }}>Autonomous — not wired up yet.</small>`}
       </div>
     </section>`;
 }
@@ -1558,7 +1686,7 @@ function App() {
               onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onPick=${pickHistory} onMock=${mockData} onAsk=${ask} />
             <div class="side-col">
               <${Camera} />
-              <${GamepadCtl} onCmd=${sendCmd} onAnalyze=${analyze} enabled=${bridge.running} />
+              <${GamepadCtl} onCmd=${sendCmd} onAnalyze=${analyze} enabled=${bridge.running} busyRef=${analyzingRef} packetRef=${packetRef} />
               <${Memory} chat=${activeChat} />
             </div>
           </div>
