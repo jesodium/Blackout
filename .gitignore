@@ -56,3 +56,4 @@ step/
 /advanced-project-context
 *.log
 scratchpad/
+server/workflows/
