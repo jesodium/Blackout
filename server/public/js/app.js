@@ -1207,7 +1207,7 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
   if (!open) return null;
   const tabs = [["logs", t("zone.logs")], ["findings", t("zone.analysis")], ["serial", t("zone.serial")], ["motor", t("colo.motor")]];
   return html`
-    <div class="drawer" role="region" aria-label=${t("drawer.console")}>
+    <div class=${"drawer" + (open === "closing" ? " is-closing" : "")} role="region" aria-label=${t("drawer.console")}>
       <div class="drawer-bar">
         <div class="drawer-tabs" role="tablist">
           ${tabs.map(([k, lbl]) => html`<button key=${k} type="button" role="tab" aria-selected=${tab === k}
@@ -1252,8 +1252,10 @@ function App() {
   const [toasts, setToasts] = useState([]);
   const [uptime, setUptime] = useState("00:00:00");
   const [serialLines, setSerialLines] = useState([]);
-  const [drawer, setDrawer] = useState(false);
+  const [drawer, setDrawer] = useState(false); // false | "open" | "closing"
   const [drawerTab, setDrawerTab] = useState("logs");
+  const [warn, setWarn] = useState(false);     // first-open debug warning gate
+  const [warnCount, setWarnCount] = useState(3);
   const [speaking, setSpeaking] = useState(false);
   // chats = briefed recon sessions. each holds its own mission + conversation.
   const [chats, setChats] = useState(() => { try { return JSON.parse(localStorage.getItem("chats") || "[]"); } catch { return []; } });
@@ -1683,7 +1685,27 @@ function App() {
   }, [addLog]);
   const pickHistory = useCallback((text) => setAi(p => ({ ...p, text })), []);
   const clearSerial = useCallback(() => setSerialLines([]), []);
-  const toggleDrawer = useCallback(() => setDrawer(o => !o), []);
+  // play the exit animation, then unmount
+  const closeDrawer = useCallback(() => {
+    setDrawer(o => o === "open" ? "closing" : o);
+    setTimeout(() => setDrawer(false), 240);
+  }, []);
+  // first open ever shows the debug warning instead; ack is remembered
+  const openDrawer = useCallback(() => {
+    if (localStorage.getItem("debugAck")) setDrawer("open");
+    else setWarn(true);
+  }, []);
+  const toggleDrawer = useCallback(() => {
+    if (drawerRef.current === "open") closeDrawer(); else openDrawer();
+  }, [closeDrawer, openDrawer]);
+
+  // warning's 3s cooldown before PROCEED unlocks
+  useEffect(() => {
+    if (!warn) return;
+    setWarnCount(3);
+    const id = setInterval(() => setWarnCount(c => Math.max(0, c - 1)), 1000);
+    return () => clearInterval(id);
+  }, [warn]);
 
   // backtick jumps to the serial tab of the console drawer (ignored while typing in a field).
   useEffect(() => {
@@ -1692,16 +1714,17 @@ function App() {
       const t = e.target;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
       e.preventDefault();
-      setDrawer(o => {
-        if (o && drawerTabRef.current === "serial") return false;
-        setDrawerTab("serial"); return true;
-      });
+      if (drawerRef.current === "open" && drawerTabRef.current === "serial") { closeDrawer(); return; }
+      setDrawerTab("serial");
+      openDrawer();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [closeDrawer, openDrawer]);
   const drawerTabRef = useRef(drawerTab);
   drawerTabRef.current = drawerTab;
+  const drawerRef = useRef(drawer);
+  drawerRef.current = drawer;
 
   return html`
     <${React.Fragment}>
@@ -1709,7 +1732,7 @@ function App() {
         <${Topbar} connected=${connected} ports=${ports} currentPort=${currentPort}
           bridge=${bridge} onBridge=${toggleBridge} connMode=${connMode} onConnMode=${setConnMode}
           ping=${ping} packets=${packets} uptime=${uptime} onPort=${switchPort}
-          lang=${lang} onLang=${changeLang} onConsole=${toggleDrawer} consoleOpen=${drawer} />
+          lang=${lang} onLang=${changeLang} onConsole=${toggleDrawer} consoleOpen=${drawer === "open"} />
 
         <main class="cockpit" id="sensors">
           <div class="col-main">
@@ -1728,12 +1751,27 @@ function App() {
           </aside>
         </main>
 
-        <${Drawer} open=${drawer} tab=${drawerTab} onTab=${setDrawerTab} onClose=${toggleDrawer}
+        <${Drawer} open=${drawer} tab=${drawerTab} onTab=${setDrawerTab} onClose=${closeDrawer}
           logs=${logs} serialLines=${serialLines} onClearSerial=${clearSerial}
           chat=${activeChat} onCmd=${sendCmd} enabled=${bridge.running} />
       </div>
 
       <${Toasts} items=${toasts} />
+
+      ${warn && createPortal(html`
+        <div class="blk-modal" onClick=${(e) => { if (e.target === e.currentTarget) setWarn(false); }}>
+          <div class="blk-modal-frame warn-frame">
+            <span class="warn-title">⚠ DEBUG MENU</span>
+            <p>This is a debug menu. If you don't know what you are doing, turn back!</p>
+            <div class="warn-actions">
+              <button type="button" class="serial-btn" onClick=${() => setWarn(false)}>Turn back</button>
+              <button type="button" class="serial-btn warn-go" disabled=${warnCount > 0}
+                onClick=${() => { localStorage.setItem("debugAck", "1"); setWarn(false); setDrawer("open"); }}>
+                ${warnCount > 0 ? `Proceed (${warnCount})` : "Proceed"}
+              </button>
+            </div>
+          </div>
+        </div>`, document.body)}
     <//>`;
 }
 

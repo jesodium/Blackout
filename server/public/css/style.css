@@ -835,6 +835,8 @@ input[type="range"]:focus { box-shadow: none; }
   overflow: hidden;
 }
 @keyframes drawer-up { from { opacity: 0; transform: translateY(18px); } }
+.drawer.is-closing { animation: drawer-down 0.22s cubic-bezier(0.5, 0, 0.75, 0.4) both; pointer-events: none; }
+@keyframes drawer-down { to { opacity: 0; transform: translateY(18px); } }
 
 .drawer-bar {
   flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
@@ -964,6 +966,17 @@ input[type="range"]:focus { box-shadow: none; }
 .blk-modal.is-closing .blk-modal-frame { animation: blkPopOut 0.22s cubic-bezier(0.5, 0, 0.75, 0.4) both; }
 @keyframes blkFadeOut { to { opacity: 0; } }
 @keyframes blkPopOut { to { opacity: 0; transform: translateY(22px) scale(0.97); } }
+
+/* debug-menu warning (first console open) */
+.warn-frame {
+  width: min(440px, 88vw); height: auto; gap: 14px; padding: 24px; align-items: flex-start;
+  border-color: var(--warn);
+}
+.warn-title { font: 800 12px/1 var(--grotesk); letter-spacing: 0.16em; color: var(--warn); }
+.warn-frame p { font: 500 13px/1.6 var(--grotesk); color: var(--ink-2); margin: 0; }
+.warn-actions { display: flex; gap: 8px; align-self: flex-end; }
+.warn-go { color: var(--warn); border-color: var(--warn); }
+.warn-go:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ============================================================
    toasts

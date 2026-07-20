@@ -51,7 +51,7 @@ async function speakDeepgram(text, res, voice = "en") {
   // by an english model. override per-language via env.
   const isEs = voice.toLowerCase().startsWith("es");
   const model = isEs
-    ? process.env.DEEPGRAM_VOICE_ES || "aura-2-selena-es"    // selena — female, neutral latin american
+    ? process.env.DEEPGRAM_VOICE_ES || "aura-2-celeste-es"   // celeste — female, colombian; clearest aura-2 spanish. alts: estrella-es (mx), carina-es (es-ES)
     : process.env.DEEPGRAM_VOICE || "aura-2-thalia-en";      // thalia (sage) — female. one fixed female voice; override via deepgram_voice
   const url = `https://api.deepgram.com/v1/speak?model=${model}&encoding=mp3`;
   // retry the fetch (transient 429/5xx/network blips) before we start streaming —
