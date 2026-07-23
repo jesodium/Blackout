@@ -1,7 +1,6 @@
-# WRO 2026 — Blackout
+WRO 2026 Project. Future Innovators.
 
-Exploration robot for WRO 2026 Future Innovators. Single Arduino Uno R4 WiFi
-(sensors, BLE) + Node.js dashboard.
+Single Arduino Uno R4 WiFi (sensors, BLE) + Node.js dashboard.
 
 ## Quick start
 
@@ -32,6 +31,7 @@ toggle to pair.
 
 ```
 ├── arduino-uno-r4/   Uno R4 WiFi — sensors + BLE
+├── esp32-cam/        ESP32-CAM — standalone MJPEG streamer (LED debug: boot=slow blink, error=rapid, ok=steady)
 ├── server/           Node.js dashboard + AI
 ├── OUTDATED/         Retired Mega 2560 + Uno R3 two-board setup (porting reference only)
 ├── cad/              3D models (source)
