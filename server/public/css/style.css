@@ -1,6 +1,6 @@
 /* ============================================================
    blackout cockpit
-   single-viewport ops console — black · bone · signal red
+   single-viewport ops console — black · bone · signal amber
    everything the operator needs on one screen, no scrolling.
    ============================================================ */
 
@@ -21,8 +21,9 @@
   --ink-2: #a09888;   /* muted warm gray */
   --ink-3: #6a6455;   /* dim */
 
-  /* the one accent: signal blue */
-  --accent: #3b82f6;
+  /* the one accent: logo amber */
+  --accent: #e1a95f;
+  --accent-2: #613f12; /* logo shadow brown, for outlines/depth */
 
   /* status: meaning only */
   --go:   #3fcf8e;  --go-bg:    rgba(63, 207, 142, 0.14);
@@ -53,7 +54,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-::selection { background: var(--accent); color: #fff; }
+::selection { background: var(--accent); color: var(--bg); }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -68,7 +69,7 @@ body {
 }
 .skip-link {
   position: absolute; left: 50%; top: -4rem; transform: translateX(-50%);
-  background: var(--accent); color: #fff; padding: 0.55rem 1.1rem; z-index: 400;
+  background: var(--accent); color: var(--bg); padding: 0.55rem 1.1rem; z-index: 400;
   font: 600 11px/1 var(--grotesk); letter-spacing: 0.14em; text-transform: uppercase;
   border-radius: 0 0 var(--r-s) var(--r-s); transition: top 0.15s;
 }
@@ -101,7 +102,7 @@ body {
 .brand { display: flex; align-items: baseline; gap: 8px; }
 .brand-tick { width: 9px; height: 9px; background: var(--accent); align-self: center; border-radius: 2px; }
 .brand-name {
-  font-family: var(--display); font-weight: 400; font-size: 19px; line-height: 1;
+  font-family: 'Caesar Dressing', var(--display); font-weight: 400; font-size: 19px; line-height: 1;
   letter-spacing: 0.02em; text-transform: uppercase; color: var(--ink);
 }
 .brand-ver { font: 700 10px/1 var(--mono); color: var(--accent); letter-spacing: 0.08em; }
@@ -199,13 +200,13 @@ body {
 .btn:hover { color: var(--ink); border-color: var(--ink-2); background: var(--panel-2); }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn:not(:disabled):active { transform: translateY(1px) scale(0.99); }
-.btn--primary { color: #fff; background: var(--accent); border-color: var(--accent); }
-.btn--primary:hover { color: #fff; background: #2563eb; border-color: #2563eb; transform: translateY(-1px); box-shadow: 0 6px 18px -8px var(--accent); }
+.btn--primary { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.btn--primary:hover { color: var(--bg); background: #f0bd7c; border-color: #f0bd7c; transform: translateY(-1px); box-shadow: 0 6px 18px -8px var(--accent); }
 .btn--ghost.is-active { color: var(--bg); background: var(--ink); border-color: var(--ink); }
 .btn--go { animation: go-glow 1.8s ease-in-out infinite; }
 @keyframes go-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
-  50% { box-shadow: 0 4px 22px -4px rgba(59, 130, 246, 0.65); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(225, 169, 95, 0); }
+  50% { box-shadow: 0 4px 22px -4px rgba(225, 169, 95, 0.65); }
 }
 
 /* segmented pill (usb/bt · cam/3d · control mode) */
@@ -561,8 +562,16 @@ input[type="range"]:focus { box-shadow: none; }
 
 .agent.is-idle .g-core, .agent.is-idle .g-ring { animation: breathe 2.6s ease-in-out infinite; }
 .agent.is-idle .g-ring { animation-duration: 3.4s; }
-.agent.is-thinking .g-orbit { animation: spin 1.5s linear infinite; }
-.agent.is-thinking .g-core  { animation: breathe 1s ease-in-out infinite; }
+
+.agent-analyzing-label {
+  position: relative; z-index: 1; color: var(--agent-c, var(--ink));
+  font: 700 12px/1 var(--grotesk); letter-spacing: 0.26em; text-transform: uppercase;
+  display: inline-flex; align-items: center; gap: 3px;
+}
+.agent-analyzing-label::after {
+  content: "\2026"; /* … */ display: inline-block;
+  animation: blink 1.1s ease-in-out infinite;
+}
 .agent.is-scanning .g-sweep { animation: spin 2.6s linear infinite; }
 .agent.is-scanning .g-wedge { opacity: 0.5; }
 .agent.is-scanning .g-blip  { animation: blink 1.1s ease-in-out infinite; }
@@ -667,7 +676,7 @@ input[type="range"]:focus { box-shadow: none; }
 }
 .ask-mic:hover:not(:disabled) { border-color: var(--ink-2); transform: translateY(-1px); }
 .ask-mic:disabled { opacity: 0.4; cursor: not-allowed; }
-.ask-mic.is-live { color: #fff; background: var(--accent); border-color: var(--accent); animation: chat-rec 1s steps(2) infinite; }
+.ask-mic.is-live { color: var(--bg); background: var(--accent); border-color: var(--accent); animation: chat-rec 1s steps(2) infinite; }
 @keyframes chat-rec { 50% { opacity: 0.55; } }
 .ask-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .ask-chip {
@@ -703,7 +712,7 @@ input[type="range"]:focus { box-shadow: none; }
   background: transparent; border: 1px solid var(--line); color: var(--ink-3); font-size: 17px; line-height: 1;
   transition: color 0.14s, background 0.14s, border-color 0.14s;
 }
-.chat-del:hover { color: #fff; background: var(--accent); border-color: var(--accent); }
+.chat-del:hover { color: var(--bg); background: var(--accent); border-color: var(--accent); }
 .chat-new { margin-top: auto; }
 
 /* briefing wizard */
@@ -810,7 +819,7 @@ input[type="range"]:focus { box-shadow: none; }
   color: var(--abort); background: var(--abort-bg); border: 1px solid rgba(255, 59, 47, 0.55);
   transition: color 0.12s, background 0.12s, transform 0.1s ease, box-shadow 0.15s ease;
 }
-.stop-bar:hover { color: #fff; background: var(--accent); box-shadow: 0 6px 22px -8px var(--accent); }
+.stop-bar:hover { color: var(--bg); background: var(--accent); box-shadow: 0 6px 22px -8px var(--accent); }
 .stop-bar:active { transform: scale(0.985); }
 
 /* blk workflow panel (inside drive) */

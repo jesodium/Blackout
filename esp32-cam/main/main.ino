@@ -8,6 +8,32 @@
 #include "esp_http_server.h"
 #include "arduino_secrets.h"  // secret_*_home / secret_*_hotspot — gitignored, copy from .example
 
+// --- LED indicator ---
+// flash LED (GPIO 4) for visual debug: boot = slow blink, error = rapid blink, connected = steady dim
+#define LED_PIN 4
+#define LED_BRIGHT 32   // steady brightness when connected (0-255)
+#define LED_OFF 0
+
+enum LedMode { LED_BOOT, LED_CONNECTED, LED_ERROR };
+LedMode ledMode = LED_BOOT;
+unsigned long ledPrevMs = 0;
+bool ledToggle = false;
+
+static void ledUpdate() {
+  unsigned long now = millis();
+  unsigned long interval;
+  switch (ledMode) {
+    case LED_BOOT:      interval = 500; break;
+    case LED_ERROR:     interval = 100; break;
+    case LED_CONNECTED: ledcWrite(LED_PIN, LED_BRIGHT); return; // steady
+  }
+  if (now - ledPrevMs >= interval) {
+    ledPrevMs = now;
+    ledToggle = !ledToggle;
+    ledcWrite(LED_PIN, ledToggle ? LED_BRIGHT : LED_OFF);
+  }
+}
+
 // -> http://blackout-cam.local/stream
 // important note: don't rely on this name — use the cam's ip instead
 // the tp-link router hijacks .local and answers with 127.0.0.1
@@ -114,7 +140,7 @@ static esp_err_t control_handler(httpd_req_t* req) {
   else if (!strcmp(var, "hmirror"))      ok = s->set_hmirror(s, v);
   else if (!strcmp(var, "vflip"))        ok = s->set_vflip(s, v);
   else if (!strcmp(var, "colorbar"))     ok = s->set_colorbar(s, v);
-  else if (!strcmp(var, "led"))          { ledcWrite(4, v); ok = 0; }
+  else if (!strcmp(var, "led"))          { ledcWrite(LED_PIN, v); ok = 0; }
   int n = snprintf(buf, sizeof(buf), "OK:%s=%d", var, ok == -1 ? -1 : v);
   httpd_resp_set_type(req, "text/plain");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -155,7 +181,7 @@ void startServer() {
 
 void setup() {
   Serial.begin(115200);
-  ledcAttach(4, 5000, 8); ledcWrite(4, 15);  // flash led dim (pwm 15/255)
+  ledcAttach(LED_PIN, 5000, 8); ledcWrite(LED_PIN, 0);  // flash LED off, controlled by ledUpdate()
 
   camera_config_t c = {};
   c.ledc_channel = LEDC_CHANNEL_0; c.ledc_timer = LEDC_TIMER_0;
@@ -177,7 +203,7 @@ void setup() {
   // don't bail on camera failure — bring wifi up first so the board is
   // always reachable and can report why it's broken
   bool camOk = esp_camera_init(&c) == ESP_OK;
-  if (!camOk) Serial.println("camera init failed — check ribbon cable seating / power");
+  if (!camOk) { Serial.println("camera init failed — check ribbon cable seating / power"); ledMode = LED_ERROR; }
 
   // defective module mounted upside-down: vflip+hmirror = 180° in the sensor
   // this fixes only the 180° component — the 90° mount rotation is still
@@ -204,16 +230,24 @@ void setup() {
     Serial.println("WiFi.config failed — falling back to DHCP");
   WiFi.begin(ssid, pass);
   for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
-    delay(500); Serial.printf("st=%d\n", WiFi.status()); // 1=no_ssid 4=fail 6=disconnect
+    for (int j = 0; j < 10; j++) { delay(50); ledUpdate(); } // 500ms with LED animation
+    Serial.printf("st=%d\n", WiFi.status()); // 1=no_ssid 4=fail 6=disconnect
   }
   if (WiFi.status() != WL_CONNECTED) {
     Serial.printf("WiFi FAILED, status=%d — 1=SSID-not-found 4=bad-password\n", WiFi.status());
+    ledMode = LED_ERROR;
     // reboot and retry (~20s/cycle) instead of sitting dead until a power cycle
     // covers "hotspot turned on after cam booted"
     Serial.println("rebooting in 5s to retry...");
-    delay(5000);
+    for (int i = 0; i < 100; i++) { delay(50); ledUpdate(); }
     ESP.restart();
   }
+  // show connected briefly, then release LED for camera flash control
+  if (camOk) {
+    ledMode = LED_CONNECTED;
+    for (int i = 0; i < 40; i++) { delay(50); ledUpdate(); } // 2s steady dim
+  }
+  ledcWrite(LED_PIN, 0); // LED off — camera software controls flash via control?var=led
   MDNS.begin(MDNS_NAME);
   Serial.printf("\nnet up: http://%s  cam=%s\n",
                 WiFi.localIP().toString().c_str(), camOk ? "OK" : "FAIL");
@@ -221,4 +255,4 @@ void setup() {
   startServer();
 }
 
-void loop() { delay(1000); }  // all work is in the http handler
+void loop() { delay(1000); }  // all work is in http handlers; LED is off after boot

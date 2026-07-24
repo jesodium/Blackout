@@ -17,6 +17,9 @@ Node.js PC server/dashboard.
 - `esp32-cam/` — ESP32-CAM (AI-Thinker) (`main/`): standalone MJPEG streamer
   on its own WiFi + power. Never touches the Uno/BLE path; the dashboard
   `<img>` pulls `http://blackout-cam.local/stream` directly.
+  - **Flash LED (GPIO 4) debug:** boot = slow blink (500ms), error (camera/WiFi
+    fail) = rapid blink (100ms), connected = steady dim (PWM 32). Handled by
+    `ledUpdate()` in `main.ino`, called from `loop()` every 50ms.
 - `server/` — Node.js dashboard + "Sage" AI agent (Cerebras). BLE is read
   directly by the browser (Web Bluetooth) and forwarded to
   `/api/mega/sensor`; gamepad input goes out the same way as dashboard

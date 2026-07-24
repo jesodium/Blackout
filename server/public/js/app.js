@@ -835,10 +835,11 @@ function AgentIcon({ intent }) {
   const k = intent.key;
   if (k === "thinking") return html`<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true">
     <circle class="g-faint" cx="60" cy="60" r="40"/>
+    <circle class="g-track" cx="60" cy="60" r="40"/>
     <g class="g-spin g-orbit">
-      <circle class="g-fill" cx="60" cy="20" r="6"/>
-      <circle class="g-fill" cx="60" cy="20" r="4.5" transform="rotate(120 60 60)"/>
-      <circle class="g-fill" cx="60" cy="20" r="4.5" transform="rotate(240 60 60)"/>
+      <circle class="g-fill g-dot g-dot1" cx="60" cy="20" r="6"/>
+      <circle class="g-fill g-dot g-dot2" cx="60" cy="20" r="6" transform="rotate(120 60 60)"/>
+      <circle class="g-fill g-dot g-dot3" cx="60" cy="20" r="6" transform="rotate(240 60 60)"/>
     </g>
     <circle class="g-fill g-core" cx="60" cy="60" r="8"/>
   </svg>`;
@@ -917,10 +918,12 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
           : html`<${React.Fragment}>
         <div class="agent-stage">
           <span class="agent-grid" aria-hidden="true"></span>
-          <div class="agent-orb"><${AgentIcon} intent=${intent} /></div>
+          ${ai.analyzing
+            ? html`<span class="agent-analyzing-label">${t("intent.thinking")}</span>`
+            : html`<div class="agent-orb"><${AgentIcon} intent=${intent} /></div>
           ${speaking
             ? html`<div class="agent-eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>`
-            : html`<span class="agent-state-label"><span class="agent-face">${animFace(intent.face)}</span> ${t(intent.label)}</span>`}
+            : html`<span class="agent-state-label"><span class="agent-face">${animFace(intent.face)}</span> ${t(intent.label)}</span>`}`}
         </div>
         <div class="agent-speech">
           <p class=${"agent-text" + (ai.status ? " sage-" + ai.status : "")} key=${ai.text} role="status" aria-live="polite">${ai.text}</p>
@@ -1156,9 +1159,8 @@ function Topbar({ connected, ports, currentPort, bridge, onBridge, connMode, onC
         <span class="brand-name">Blackout</span>
         <span class="brand-ver">V3</span>
       </div>
-      <p class="lamp" role="status" aria-live="polite">
-        <span class=${"lamp-dot " + (connected ? "is-go" : "is-abort")}></span>
-        <span class="lamp-label">${connected ? t("mast.linkLive") : t("mast.noSignal")}</span>
+      <p class="lamp visually-hidden" role="status" aria-live="polite">
+        ${connected ? t("mast.linkLive") : t("mast.noSignal")}
       </p>
       <div class="top-conn">
         <div class="conn-seg" data-mode=${connMode} role="tablist" aria-label=${t("mast.link")}>

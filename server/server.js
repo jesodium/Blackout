@@ -241,8 +241,7 @@ app.post("/api/connMode", async (req, res) => {
     return res.status(400).json({ error: "mode must be 'usb' or 'bt'" });
 
   if (mode === "bt") {
-    disconnectSerial(); // close usb, block reconnect — actual ble connect happens client-side
-    bleActive = true;
+    disconnectSerial(); // close usb, block reconnect — actual ble connect happens client-side via /api/bridge/start
   } else {
     bleActive = false;
     connectSerial(selectedPortPath);
