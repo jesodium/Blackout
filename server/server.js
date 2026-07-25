@@ -299,23 +299,111 @@ app.delete("/api/blk/:name", (req, res) => {
 // sage as workflow author: editor chats here, sage replies with prose + one
 // fenced blk program. plain text reply — not the json persona used elsewhere.
 // own path (not /api/blk/:name) so it can't collide with a workflow's name.
+// `mode` swaps the job (write/explain/fix/improve) and `program` is whatever is
+// on the editor canvas right now, so "add a turn at the end" has something to
+// add to.
+const BLK_MODES = {
+  write: "The operator wants a workflow written or changed. Reply with one or two sentences, then the complete program.",
+  explain: "Explain the operator's current program in plain language, step by step, and call out anything risky. Do NOT include a code block unless they ask for a change.",
+  fix: "Audit the operator's current program for mistakes, unsafe moves, unreachable blocks and missing obstacle checks. Say what's wrong in a couple of lines, then give the corrected complete program.",
+  improve: "Improve the operator's current program — smarter sensing, safer moves, fewer blind runs — without changing what it is for. Say what you changed, then give the complete improved program.",
+};
+
 app.post("/api/blk-sage", async (req, res) => {
   if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
   const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-10) : [];
   if (!msgs.length) return res.status(400).json({ error: "messages required" });
+  const mode = BLK_MODES[req.body?.mode] ? req.body.mode : "write";
+  const program = String(req.body?.program || "").slice(0, 8000);
   try {
+    const ctx = [{ role: "system", content: BLK_MODES[mode] }];
+    if (program.trim()) {
+      ctx.push({ role: "system", content: `The program currently on the operator's canvas:\n\n\`\`\`blk\n${program}\n\`\`\`` });
+    }
+    const d = freshData();
+    if (d) ctx.push({ role: "system", content: `Live readings right now (useful for picking thresholds):\n${readingLines(d)}` });
     const resp = await openai.chat.completions.create({
       model: process.env.CEREBRAS_MODEL || "gemma-4-31b",
       messages: [
         { role: "system", content: BLK_SYSTEM },
+        ...ctx,
         ...msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") })),
       ],
-      max_tokens: 700,
+      max_tokens: 900,
     });
     res.json({ reply: resp.choices[0]?.message?.content || "" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// yes/no judgement for the blk `ask` and `find` ops. one shared helper: both
+// want a decision the program can branch on, not prose, so the model is pinned
+// to a tiny json shape and anything unparseable reads as "no".
+async function sageDecide(question, { images = [], extra = "" } = {}) {
+  const text = `${question}\n\n${extra}\nAnswer with JSON only: {"yes": true|false, "why": "<one short sentence>"}`;
+  const resp = await openai.chat.completions.create({
+    model: process.env.CEREBRAS_MODEL || "gemma-4-31b",
+    messages: [
+      { role: "system", content: CHAT_SYSTEM },
+      { role: "system", content: "In this turn you are making a yes/no call for a running workflow. Reply with the JSON object and nothing else." },
+      { role: "user", content: images.length ? [{ type: "text", text }, ...images] : text },
+    ],
+    max_tokens: 120,
+  });
+  const raw = String(resp.choices[0]?.message?.content || "");
+  const s = raw.indexOf("{"), e = raw.lastIndexOf("}");
+  try {
+    const o = JSON.parse(raw.slice(s, e + 1));
+    return { yes: o.yes === true || o.yes === "true", text: String(o.why || "").slice(0, 140) };
+  } catch {
+    return { yes: /\byes\b/i.test(raw), text: raw.slice(0, 140) };
+  }
+}
+
+// `ask <question>` — judged from telemetry (+ the live view when there is one).
+app.post("/api/blk-ask", async (req, res) => {
+  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  const question = String(req.body?.question || "").trim().slice(0, 400);
+  if (!question) return res.status(400).json({ error: "question required" });
+  try {
+    // the simulator has no camera and its own fake telemetry — take what it sends
+    const sim = !!req.body?.sim;
+    const d = sim ? req.body.telemetry : freshData();
+    const images = sim ? [] : await eyeParts();
+    const extra = d ? buildChatContext(d) : "No live readings right now — running dark.";
+    const out = await sageDecide(question, { images, extra: sim ? `Simulated readings:\n${JSON.stringify(d)}` : extra });
+    io.emit("blk-decision", { kind: "ask", question, ...out, sim, timestamp: Date.now() });
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// `find <thing>` — camera-backed: is that thing in view right now? a hit is
+// logged to the analysis panel like any other discovery.
+app.post("/api/blk-find", async (req, res) => {
+  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  const thing = String(req.body?.thing || "").trim().slice(0, 200);
+  if (!thing) return res.status(400).json({ error: "thing required" });
+  try {
+    const images = await eyeParts();
+    if (!images.length) return res.json({ yes: false, text: "no camera view" });
+    const out = await sageDecide(`Look at your forward camera view. Is there ${thing} in it?`, { images });
+    if (out.yes) recordFinding(`found: ${thing}${out.text ? " — " + out.text : ""}`, lastImage([{ content: images }]));
+    io.emit("blk-decision", { kind: "find", question: thing, ...out, timestamp: Date.now() });
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// headlamp from a workflow's `led` step (0-255). fire-and-forget on the cam side.
+app.post("/api/led", async (req, res) => {
+  const v = Math.max(0, Math.min(255, Math.round(Number(req.body?.value))));
+  if (isNaN(v)) return res.status(400).json({ error: "value 0-255 required" });
+  try { await setLed(v); res.json({ ok: true, value: v }); }
+  catch (err) { res.status(502).json({ error: err.message }); }
 });
 
 let latestData = null;
@@ -612,7 +700,9 @@ function buildAiPrompt(data) {
 ${readingLines(data)}${trendLine(data)}${lampLine()}`;
 }
 
-async function runAiAnalysis(mode) {
+// `focus` is the optional text a workflow's `analyze <what to look at>` step
+// carries — it steers this one read without changing the persona.
+async function runAiAnalysis(mode, focus) {
   const present = mode === "present";
   // always emit a result: the dashboard locks into "analyzing" on request and only
   // an ai-analysis event releases it, so a silent return here = infinite spinner.
@@ -629,7 +719,8 @@ async function runAiAnalysis(mode) {
   io.emit("cam-yield");
   try {
     const eyes = await eyeParts();
-    const promptText = buildAiPrompt(data) + (eyes.length
+    const focusLine = focus ? `\nThe operator's workflow asked you to look at this specifically: ${focus}` : "";
+    const promptText = buildAiPrompt(data) + focusLine + (eyes.length
       ? "\n(Attached is your live forward-camera view — read it for what's ahead.)"
       : "\n(Your eye is dark right now. Don't mention this or say anything about not being able to see — just report normally from the readings you do have, as if vision were never part of it.)");
     const sage = await askSage([
@@ -704,8 +795,9 @@ io.on("connection", (socket) => {
   if (latestData) socket.emit("sensor-data", latestData);
   socket.on("request-analysis", (opts) => {
     const mode = opts?.mode;
-    console.log(`On-demand analysis requested${mode ? ` (${mode})` : ""}`);
-    runAiAnalysis(mode);
+    const focus = String(opts?.prompt || "").trim().slice(0, 300) || null;
+    console.log(`On-demand analysis requested${mode ? ` (${mode})` : ""}${focus ? ` — focus: ${focus}` : ""}`);
+    runAiAnalysis(mode, focus);
   });
   // send the agent the current mission so a freshly-connected dashboard shows it.
   socket.emit("mission-set", { mission: currentMission });

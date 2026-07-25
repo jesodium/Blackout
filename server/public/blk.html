@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <title>BLACKOUT · BLK Editor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -10,615 +10,591 @@
   <link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
   <style>
-    /* editor chrome on console tokens; blocks get scratch category colors */
+    /* ─── BLK editor: chunky Spike/EV3-style blocks, built for fingers first ───
+       every action is reachable by touch (tap to select → action bar, drag to
+       the bin to delete); keyboard shortcuts stay as accelerators only. */
     :root {
       --c-motion: #4c97ff;
       --c-control: #ffab19;
+      --c-data: #ff8c1a;
+      --c-proc: #ff6680;
       --c-looks: #9966ff;
-      --c-ai: #3b82f6;
+      --c-ai: #12b886;
+      --c-comment: #6b6559;
+      --tap: 44px;              /* minimum touch target */
+      --r-blk: 13px;            /* block corner radius */
+      --bar-h: 58px;
     }
-    body { background-image: none; overflow: hidden; }
-    .blk-ed { display: flex; flex-direction: column; height: 100vh; padding: 10px clamp(10px, 2vw, 22px) 12px; gap: 10px; }
+    * { -webkit-tap-highlight-color: transparent; }
+    /* our display:flex/grid rules outrank the UA's [hidden] rule — put it back,
+       or hidden panes (text view, bin, action bar) keep taking up space */
+    [hidden] { display: none !important; }
+    html, body { overscroll-behavior: none; }
+    body { background-image: none; overflow: hidden; touch-action: manipulation; }
 
-    .blk-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
-    .blk-bar .folio-sm { color: var(--accent); margin-right: 4px; }
-    .blk-bar input[type="text"], .blk-bar select {
+    .app { display: flex; flex-direction: column; height: 100dvh; }
+
+    /* ───────────── top bar ───────────── */
+    .bar {
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+      height: var(--bar-h); padding: 0 10px;
+      background: var(--panel); border-bottom: 1px solid var(--line);
+    }
+    .brand { font: 800 13px/1 var(--grotesk); letter-spacing: 0.2em; color: var(--accent); }
+    .wf-name {
+      font: 500 12px/1 var(--mono); color: var(--ink-2); max-width: 26vw;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .wf-name.is-dirty::after { content: " •"; color: var(--accent); }
+    .spacer { flex: 1; }
+
+    .btn-t, .icon-btn, .seg-btn, .sheet-btn {
       -webkit-appearance: none; appearance: none;
-      font: 500 12px/1 var(--mono); min-height: 30px; padding: 0 8px;
-      color: var(--ink); background: var(--inset); border: 1px solid var(--line-2); border-radius: var(--r-s);
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      min-height: var(--tap); min-width: var(--tap); padding: 0 14px;
+      font: 600 11px/1 var(--grotesk); letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--ink); background: var(--panel-2);
+      border: 1px solid var(--line-2); border-radius: 11px; cursor: pointer;
+      user-select: none; transition: transform 0.08s ease, background 0.15s ease;
     }
-    .blk-bar select {
-      padding-right: 24px;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%239a9384' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: right 7px center;
-      background-size: 10px;
-    }
-    .blk-bar select::-ms-expand { display: none; }
-    .blk-bar input[type="text"] { width: 160px; }
-    .blk-btn {
-      font: 600 10px/1 var(--grotesk); letter-spacing: 0.18em; text-transform: uppercase;
-      padding: 9px 11px; color: var(--ink); background: var(--panel-2);
-      border: 1px solid var(--line-2); cursor: pointer;
-    }
-    .blk-btn:hover { border-color: var(--ink-2); }
-    .blk-btn.is-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-    .blk-btn.is-danger { color: var(--accent); }
-    .blk-btn.is-sage { background: var(--c-looks); border-color: var(--c-looks); color: #fff; }
+    .btn-t:active, .icon-btn:active, .seg-btn:active, .sheet-btn:active { transform: scale(0.94); }
+    .icon-btn { padding: 0; font-size: 17px; letter-spacing: 0; text-transform: none; }
+    .btn-t:disabled, .icon-btn:disabled { opacity: 0.35; }
+    .btn-t.is-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn-t.is-ghost { background: transparent; }
+    .btn-t.is-danger, .icon-btn.is-danger { color: var(--accent); border-color: var(--accent); }
+    .icon-btn.is-on, .btn-t.is-on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 
-    /* ask-sage popup: sage writes workflows from a description */
-    .sage-modal[hidden] { display: none; } /* display:flex below would defeat the hidden attribute */
+    /* segmented blocks/text switch */
+    .seg { display: flex; background: var(--inset); border: 1px solid var(--line-2); border-radius: 12px; padding: 3px; gap: 3px; }
+    .seg-btn { min-height: 38px; border: none; background: transparent; border-radius: 9px; padding: 0 13px; }
+    .seg-btn.is-on { background: var(--panel-2); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
+
+    /* the one green button that matters */
+    .run-btn {
+      -webkit-appearance: none; appearance: none;
+      display: inline-flex; align-items: center; gap: 8px;
+      height: 46px; padding: 0 20px; border: none; border-radius: 23px; cursor: pointer;
+      font: 700 12px/1 var(--grotesk); letter-spacing: 0.14em; text-transform: uppercase;
+      background: var(--go); color: #06240f; box-shadow: 0 3px 0 rgba(0,0,0,0.4);
+    }
+    .run-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0,0,0,0.4); }
+    .run-btn.is-stop { background: var(--accent); color: #fff; }
+
+    /* ───────────── workspace ───────────── */
+    .work { flex: 1; display: flex; min-height: 0; position: relative; }
+
+    /* category strip */
+    .cats {
+      width: 74px; flex-shrink: 0; overflow-y: auto; padding: 8px 0;
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      background: var(--panel); border-right: 1px solid var(--line);
+    }
+    .cat-btn {
+      -webkit-appearance: none; appearance: none;
+      width: 62px; padding: 8px 2px 6px; border: none; background: none; cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; gap: 5px;
+      border-radius: 12px; color: var(--ink-3);
+      font: 600 8.5px/1.1 var(--grotesk); letter-spacing: 0.06em; text-transform: uppercase;
+    }
+    .cat-btn .ring {
+      width: 32px; height: 32px; border-radius: 50%;
+      display: grid; place-items: center; font-size: 15px; color: #fff;
+      border: 2.5px solid transparent;
+    }
+    .cat-btn.is-on { background: var(--inset); color: var(--ink); }
+    .cat-btn.is-on .ring { border-color: var(--ink); }
+
+    /* palette */
+    .palette-col {
+      width: 230px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px;
+      padding: 10px; background: var(--panel); border-right: 1px solid var(--line);
+    }
+    .palette-col input {
+      -webkit-appearance: none; appearance: none; width: 100%;
+      min-height: 38px; padding: 0 12px; border-radius: 11px;
+      font: 500 13px/1 var(--mono); color: var(--ink);
+      background: var(--inset); border: 1px solid var(--line-2);
+    }
+    .blk-palette { overflow-y: auto; display: flex; flex-direction: column; gap: 7px; padding-bottom: 20px; -webkit-overflow-scrolling: touch; }
+    .blk-palette h3 {
+      font: 700 9px/1 var(--grotesk); letter-spacing: 0.22em; text-transform: uppercase;
+      color: var(--ink-3); margin: 10px 0 1px;
+    }
+    .blk-palette h3:first-child { margin-top: 0; }
+
+    /* canvas */
+    .main { flex: 1; min-width: 0; display: flex; position: relative; }
+    .pane { flex: 1; min-width: 0; display: flex; }
+    .blk-canvas {
+      flex: 1; overflow: auto; padding: 16px 16px 140px;
+      background: var(--inset);
+      background-image: radial-gradient(rgba(236,229,214,0.08) 1.5px, transparent 1.5px);
+      background-size: 26px 26px;
+      -webkit-overflow-scrolling: touch;
+    }
+    #code {
+      flex: 1; resize: none; padding: 16px; tab-size: 2; border-radius: 0;
+      font: 500 14px/1.7 var(--mono); color: var(--ink);
+      background: var(--inset); border: none; outline: none;
+    }
+
+    /* ───────────── blocks ───────────── */
+    .blk-node { margin: 5px 0; font: 600 13px/1 var(--grotesk); user-select: none; }
+    .blk-head {
+      position: relative;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      min-height: var(--tap); padding: 8px 12px; width: max-content; max-width: 100%;
+      border-radius: var(--r-blk); color: #fff; cursor: grab;
+      box-shadow: 0 2px 0 rgba(0,0,0,0.45), 0 4px 10px rgba(0,0,0,0.25);
+      touch-action: none; /* the head is a drag handle — never pan the canvas */
+    }
+    /* the little stud on top, so blocks read as clipping together */
+    .blk-head::before {
+      content: ""; position: absolute; top: -4px; left: 18px;
+      width: 20px; height: 5px; background: inherit; border-radius: 3px 3px 0 0;
+    }
+    .blk-node.is-drag > .blk-head { opacity: 0.3; }
+    .blk-node.is-off > .blk-head { opacity: 0.45; filter: grayscale(0.75); }
+    .blk-node.is-sel > .blk-head { box-shadow: 0 0 0 3px var(--ink), 0 2px 0 rgba(0,0,0,0.45); }
+    .blk-node.is-live > .blk-head { box-shadow: 0 0 0 3px var(--go), 0 0 18px rgba(74,222,128,0.55); }
+    .cat-motion  > .blk-head { background: var(--c-motion); }
+    .cat-control > .blk-head { background: var(--c-control); color: #3a2600; }
+    .cat-data    > .blk-head { background: var(--c-data); color: #331a00; }
+    .cat-proc    > .blk-head { background: var(--c-proc); }
+    .cat-looks   > .blk-head { background: var(--c-looks); }
+    .cat-ai      > .blk-head { background: var(--c-ai); color: #04241a; }
+    .cat-comment > .blk-head {
+      background: var(--panel-2); color: var(--ink-3);
+      border: 1.5px dashed var(--line-2); box-shadow: none;
+    }
+    .cat-comment > .blk-head::before { display: none; }
+
+    .blk-head .lbl { white-space: nowrap; }
+    .blk-head .unit { font-size: 11px; opacity: 0.8; }
+    .blk-head input, .blk-head select {
+      -webkit-appearance: none; appearance: none;
+      font: 700 13px/1 var(--mono); min-height: 34px; padding: 0 10px;
+      border: none; border-radius: 9px; background: rgba(255,255,255,0.94); color: #111;
+    }
+    .blk-head select { padding-right: 26px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%23555' d='M2 4l4 4 4-4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 9px center; background-size: 10px; }
+    .blk-head input[type="number"] { width: 68px; text-align: center; -moz-appearance: textfield; }
+    .blk-head input[type="number"]::-webkit-inner-spin-button { display: none; }
+    .blk-head input[type="text"] { width: 132px; }
+    .blk-head input.wide { width: 190px; }
+    /* number steppers — typing a value on a tablet is the slow path */
+    .stepper { display: inline-flex; align-items: center; gap: 3px; }
+    .stepper button {
+      -webkit-appearance: none; appearance: none;
+      width: 30px; height: 34px; border: none; border-radius: 9px; cursor: pointer;
+      font: 700 15px/1 var(--mono); color: inherit; background: rgba(0,0,0,0.2);
+    }
+    .stepper button:active { background: rgba(0,0,0,0.38); }
+    .blk-head .fx {
+      -webkit-appearance: none; appearance: none;
+      min-width: 34px; height: 34px; padding: 0 8px; border: none; border-radius: 9px;
+      font: 700 11px/1 var(--mono); color: inherit; background: rgba(0,0,0,0.2); cursor: pointer;
+    }
+    .blk-head .chev {
+      -webkit-appearance: none; appearance: none;
+      width: 30px; height: 30px; border: none; border-radius: 8px; cursor: pointer;
+      font-size: 13px; color: inherit; background: rgba(0,0,0,0.16);
+    }
+    /* only an armed breakpoint marks the block — no control sits on it */
+    .blk-head .bpdot {
+      width: 11px; height: 11px; border-radius: 50%;
+      background: #ff3b30; box-shadow: 0 0 0 2px rgba(255,255,255,0.55);
+    }
+    .blk-head .hits {
+      font: 700 10px/1 var(--mono); padding: 4px 7px; border-radius: 9px;
+      background: rgba(0,0,0,0.28);
+    }
+
+    /* C-shape */
+    .blk-body { margin-left: 12px; padding-left: 14px; border-left: 7px solid; min-height: 18px; }
+    .blk-else, .blk-cap, .blk-fold {
+      width: max-content; min-height: 34px; padding: 8px 16px; border-radius: 10px;
+      display: flex; align-items: center; gap: 10px;
+      font: 700 10px/1 var(--grotesk); letter-spacing: 0.16em; text-transform: uppercase; color: #3a2600;
+    }
+    .cat-motion  > .blk-body { border-color: var(--c-motion); }
+    .cat-control > .blk-body { border-color: var(--c-control); }
+    .cat-proc    > .blk-body { border-color: var(--c-proc); }
+    .cat-control > .blk-else, .cat-control > .blk-cap { background: var(--c-control); }
+    .cat-proc > .blk-else, .cat-proc > .blk-cap { background: var(--c-proc); color: #fff; }
+    .blk-cap { box-shadow: 0 2px 0 rgba(0,0,0,0.45); }
+    .blk-else.is-add {
+      background: none; border: 1.5px dashed var(--line-2); color: var(--ink-3);
+      cursor: pointer; min-height: var(--tap);
+    }
+    .blk-else .x {
+      -webkit-appearance: none; appearance: none;
+      width: 26px; height: 26px; border: none; border-radius: 7px;
+      background: rgba(0,0,0,0.2); color: inherit; cursor: pointer; font-size: 13px;
+    }
+    .blk-fold { background: var(--panel-2); color: var(--ink-3); cursor: pointer; margin-left: 12px; }
+
+    /* drop feedback */
+    .blk-list { min-height: 14px; }
+    .blk-list.is-over { outline: 3px dashed var(--accent); outline-offset: 4px; border-radius: 10px; }
+    .blk-node.is-before > .blk-head { box-shadow: 0 -6px 0 var(--accent), 0 2px 0 rgba(0,0,0,0.45); }
+    .blk-node.is-after  > .blk-head { box-shadow: 0 6px 0 var(--accent), 0 2px 0 rgba(0,0,0,0.45); }
+    .blk-list-root { min-height: 100%; }
+    .blk-hint { color: var(--ink-3); font: 500 13px/1.7 var(--mono); padding: 14px; pointer-events: none; }
+
+    /* the block that follows your finger */
+    .ghost {
+      position: fixed; z-index: 90; pointer-events: none; opacity: 0.95;
+      transform-origin: 12px 20px; transform: rotate(-2deg) scale(1.04);
+      box-shadow: 0 10px 26px rgba(0,0,0,0.55);
+    }
+    /* bin: only exists while something is being dragged */
+    .trash {
+      position: absolute; right: 18px; bottom: 18px; z-index: 60;
+      width: 74px; height: 74px; border-radius: 22px;
+      display: grid; place-items: center; font-size: 27px;
+      background: var(--panel-2); border: 2px dashed var(--line-2); color: var(--ink-3);
+    }
+    .trash.is-over { background: var(--accent); border-color: var(--accent); color: #fff; transform: scale(1.12); }
+
+    .blk-palette .blk-node { margin: 0; }
+    .blk-palette .blk-head { width: 100%; box-shadow: 0 2px 0 rgba(0,0,0,0.35); }
+
+    /* ───────────── selection action bar ───────────── */
+    .actionbar {
+      position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 55;
+      display: flex; align-items: center; gap: 6px; padding: 7px;
+      background: var(--panel); border: 1px solid var(--line-2); border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6); max-width: calc(100% - 24px); overflow-x: auto;
+    }
+    .actionbar .what {
+      font: 700 10px/1 var(--grotesk); letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--ink-3); padding: 0 8px 0 6px; white-space: nowrap;
+    }
+    .actionbar .icon-btn { border-radius: 12px; }
+
+    /* ───────────── simulator rail ───────────── */
+    .rail {
+      width: 340px; flex-shrink: 0; overflow-y: auto; padding: 12px;
+      background: var(--panel); border-left: 1px solid var(--line);
+      display: flex; flex-direction: column; gap: 10px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .rail h3 {
+      font: 700 9px/1 var(--grotesk); letter-spacing: 0.22em; text-transform: uppercase;
+      color: var(--ink-3); margin: 2px 0;
+    }
+    .rail .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; flex: none; }
+    .rail > * { flex-shrink: 0; }
+    .rail .row .btn-t { flex: 1; padding: 0 10px; }
+    .rail .run-btn { width: 100%; justify-content: center; flex: none; } /* flex column would squash it */
+    .rail canvas { width: 100%; display: block; border-radius: 12px; border: 1px solid var(--line-2); background: #0d0d0f; touch-action: none; cursor: crosshair; }
+    .rail label { font: 500 11px/1.4 var(--mono); color: var(--ink-3); display: flex; align-items: center; gap: 8px; min-height: 34px; }
+    .rail label input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--go); }
+    .rail select {
+      -webkit-appearance: none; appearance: none;
+      min-height: 38px; padding: 0 24px 0 10px; border-radius: 10px;
+      font: 500 12px/1 var(--mono); color: var(--ink); background: var(--inset);
+      border: 1px solid var(--line-2);
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%239a9384' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 8px center; background-size: 10px;
+    }
+    .rail input[type="range"] { flex: 1; height: 30px; accent-color: var(--c-motion); }
+    .val { color: var(--ink-2); min-width: 30px; text-align: right; font: 500 11px/1 var(--mono); }
+    .tele, .vars { font: 500 11px/1.5 var(--mono); color: var(--ink-2); word-break: break-word; }
+    .vars { color: var(--c-data); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); display: inline-block; }
+    .dot.on { background: var(--go); box-shadow: 0 0 7px var(--go); }
+    .sim-log {
+      height: 168px; overflow-y: auto; padding: 8px; border-radius: 10px;
+      background: var(--inset); border: 1px solid var(--line);
+      font: 500 11px/1.6 var(--mono); color: var(--ink-2);
+    }
+    .sim-row { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .sim-row.ok { color: var(--go); } .sim-row.err { color: var(--accent); }
+    .sim-row.say { color: var(--c-looks); } .sim-row.ai { color: var(--c-ai); }
+    .sim-row.bp { color: var(--c-control); }
+
+    /* ───────────── footer ───────────── */
+    .foot {
+      flex-shrink: 0; display: flex; align-items: center; gap: 14px;
+      padding: 7px 12px; min-height: 40px;
+      background: var(--panel); border-top: 1px solid var(--line);
+    }
+    .blk-status { flex: 1; font: 500 11.5px/1.45 var(--mono); color: var(--ink-2); white-space: pre-line; max-height: 42px; overflow: hidden; }
+    .blk-status.is-err { color: var(--accent); }
+    .blk-status.is-ok { color: var(--go); }
+    .blk-meta { font: 500 10.5px/1.4 var(--mono); color: var(--ink-3); white-space: nowrap; }
+    .blk-lint { font: 500 10.5px/1.5 var(--mono); color: var(--c-control); max-width: 34%; max-height: 42px; overflow: hidden; }
+
+    /* ───────────── sheets (files, and the drawers on small screens) ───────────── */
+    .scrim { position: fixed; inset: 0; z-index: 70; background: rgba(6,6,7,0.6); backdrop-filter: blur(6px); }
+    .scrim[hidden] { display: none; }
+    .sheet {
+      position: fixed; z-index: 75; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: min(560px, 94vw); max-height: 86dvh; overflow-y: auto;
+      padding: 16px; border-radius: 18px;
+      background: var(--bg); border: 1px solid var(--line-2);
+      box-shadow: 0 24px 70px rgba(0,0,0,0.7);
+      animation: pop 0.22s cubic-bezier(0.2,0.9,0.25,1.1) both;
+    }
+    .sheet[hidden] { display: none; }
+    .sheet h2 { font: 800 12px/1 var(--grotesk); letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 12px; }
+    .sheet .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+    .sheet .field > span { font: 600 9.5px/1 var(--grotesk); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
+    .sheet input[type="text"], .sheet select {
+      -webkit-appearance: none; appearance: none;
+      min-height: var(--tap); padding: 0 14px; border-radius: 12px; width: 100%;
+      font: 500 14px/1 var(--mono); color: var(--ink);
+      background: var(--inset); border: 1px solid var(--line-2);
+    }
+    .sheet .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px; }
+    .sheet-btn { width: 100%; }
+    @keyframes pop { from { opacity: 0; transform: translate(-50%, calc(-50% + 16px)) scale(0.97); } }
+
+    /* ───────────── responsive: tablets and small consoles ─────────────
+       one rule for both sizes: the body class means "visible". on a wide
+       screen the panel is a column, on a narrow one the same class slides a
+       drawer in over the canvas. */
+    body:not(.palette-open) .palette-col { display: none; }
+    body:not(.rail-open) .rail { display: none; }
+
+    @media (max-width: 1280px) {
+      body:not(.rail-open) .rail { display: flex; } /* stays mounted, slides out */
+      .rail {
+        position: fixed; z-index: 80; top: 0; right: 0; height: 100dvh; width: min(340px, 88vw);
+        transform: translateX(101%); transition: transform 0.24s cubic-bezier(0.2,0.9,0.25,1);
+        box-shadow: -14px 0 40px rgba(0,0,0,0.5);
+      }
+      body.rail-open .rail { transform: none; }
+    }
+    @media (max-width: 900px) {
+      body:not(.palette-open) .palette-col { display: flex; }
+      .palette-col {
+        position: fixed; z-index: 80; top: 0; left: 74px; height: 100dvh; width: min(260px, 70vw);
+        transform: translateX(-115%); transition: transform 0.24s cubic-bezier(0.2,0.9,0.25,1);
+        box-shadow: 14px 0 40px rgba(0,0,0,0.5);
+      }
+      body.palette-open .palette-col { transform: none; }
+      .wf-name, .blk-lint { display: none; }
+    }
+    @media (max-width: 620px) {
+      .brand { display: none; }
+      .blk-meta { display: none; }
+      .cats { width: 60px; }
+      .cat-btn { width: 52px; }
+    }
+    /* a mouse gets tighter spacing, but hit targets stay 44px: a tablet with a
+       trackpad case reports a fine pointer and still gets poked with a thumb */
+    @media (hover: hover) and (pointer: fine) {
+      .blk-node { margin: 4px 0; }
+      .blk-canvas { padding: 12px 12px 120px; }
+    }
+
+    /* ───────────── Sage ───────────── */
+    .sage-modal[hidden] { display: none; }
     .sage-modal {
-      position: fixed; inset: 0; z-index: 50;
+      position: fixed; inset: 0; z-index: 85;
       display: flex; align-items: center; justify-content: center;
-      background: rgba(6, 6, 7, 0.5);
-      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      background: rgba(6,6,7,0.55); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
       animation: sageFade 0.2s ease both;
     }
     .sage-panel {
       display: flex; flex-direction: column;
-      width: min(660px, 92vw); height: min(620px, 86vh);
-      background: var(--bg); border: 1px solid var(--line-2);
-      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65);
-      animation: sagePop 0.28s cubic-bezier(0.2, 0.9, 0.25, 1.1) both;
+      width: min(680px, 94vw); height: min(660px, 88dvh);
+      background: var(--bg); border: 1px solid var(--line-2); border-radius: 18px; overflow: hidden;
+      box-shadow: 0 24px 70px rgba(0,0,0,0.65);
+      animation: pop 0.26s cubic-bezier(0.2,0.9,0.25,1.1) both;
     }
     .sage-head {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 8px 12px; border-bottom: 1.5px solid var(--c-looks); flex-shrink: 0;
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+      padding: 10px 12px; border-bottom: 2px solid var(--c-looks);
     }
-    .sage-head .label { color: var(--c-looks); }
+    .sage-head .label { color: var(--c-looks); flex: 1; }
+    .sage-head select {
+      -webkit-appearance: none; appearance: none;
+      min-height: 38px; padding: 0 12px; border-radius: 10px;
+      font: 500 12px/1 var(--mono); color: var(--ink); background: var(--inset); border: 1px solid var(--line-2);
+    }
     .sage-msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
-    .sage-empty { color: var(--ink-3); font: 500 12px/1.7 var(--mono); margin: auto; text-align: center; max-width: 380px; }
+    .sage-empty { color: var(--ink-3); font: 500 13px/1.7 var(--mono); margin: auto; text-align: center; max-width: 400px; }
     .sage-msg {
-      max-width: 88%; padding: 9px 12px; border: 1px solid var(--line-2);
-      font: 500 12px/1.6 var(--grotesk); color: var(--ink); white-space: pre-wrap;
+      max-width: 92%; padding: 11px 14px; border-radius: 14px; border: 1px solid var(--line-2);
+      font: 500 13px/1.6 var(--grotesk); color: var(--ink); white-space: pre-wrap;
     }
     .sage-msg.is-user { align-self: flex-end; background: var(--panel-2); }
     .sage-msg.is-sage { align-self: flex-start; background: var(--panel); border-left: 3px solid var(--c-looks); }
     .sage-msg.is-think { align-self: flex-start; color: var(--ink-3); border-style: dashed; animation: sagePulse 1.2s ease-in-out infinite; }
     .sage-msg pre {
-      font: 500 11px/1.6 var(--mono); background: var(--inset); border: 1px solid var(--line);
-      padding: 9px; margin: 8px 0; overflow-x: auto; white-space: pre;
+      font: 500 12px/1.6 var(--mono); background: var(--inset); border: 1px solid var(--line);
+      border-radius: 10px; padding: 11px; margin: 9px 0; overflow-x: auto; white-space: pre;
     }
-    .sage-form { display: flex; gap: 6px; padding: 10px; border-top: 1px solid var(--line); flex-shrink: 0; }
+    .sage-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+    .sage-diff .d-add { color: var(--go); }
+    .sage-diff .d-del { color: var(--accent); }
+    .sage-diff .d-same { color: var(--ink-3); }
+    .sage-form { display: flex; gap: 7px; padding: 11px; border-top: 1px solid var(--line); flex-shrink: 0; }
     .sage-form input {
-      -webkit-appearance: none; appearance: none;
-      flex: 1; font: 500 12px/1 var(--mono); min-height: 34px; padding: 0 10px;
-      color: var(--ink); background: var(--inset); border: 1px solid var(--line-2); border-radius: var(--r-s);
+      -webkit-appearance: none; appearance: none; flex: 1;
+      min-height: var(--tap); padding: 0 14px; border-radius: 12px;
+      font: 500 13px/1 var(--mono); color: var(--ink); background: var(--inset); border: 1px solid var(--line-2);
     }
     @keyframes sageFade { from { opacity: 0; } }
-    @keyframes sagePop { from { opacity: 0; transform: translateY(18px) scale(0.97); } }
     @keyframes sagePulse { 50% { opacity: 0.4; } }
-    /* exit: reverse of the entrance, then hidden lands */
     .sage-modal.is-closing { animation: sageFadeOut 0.2s ease both; pointer-events: none; }
-    .sage-modal.is-closing .sage-panel { animation: sagePopOut 0.2s cubic-bezier(0.5, 0, 0.75, 0.4) both; }
     @keyframes sageFadeOut { to { opacity: 0; } }
-    @keyframes sagePopOut { to { opacity: 0; transform: translateY(14px) scale(0.97); } }
-
-    /* workspace: palette | canvas */
-    .blk-work { flex: 1; display: flex; gap: 10px; min-height: 0; }
-    .blk-palette {
-      width: 210px; flex-shrink: 0; overflow-y: auto; padding: 10px;
-      background: var(--panel); border: 1px solid var(--line);
-      display: flex; flex-direction: column; gap: 6px;
-    }
-    .blk-palette h3 {
-      font: 600 9px/1 var(--grotesk); letter-spacing: 0.26em; text-transform: uppercase;
-      color: var(--ink-3); margin: 10px 0 2px;
-    }
-    .blk-palette h3:first-child { margin-top: 0; }
-    .blk-canvas {
-      flex: 1; overflow: auto; padding: 14px;
-      background: var(--inset); border: 1px solid var(--line);
-      /* faint dot grid like a scratch workspace */
-      background-image: radial-gradient(rgba(236,229,214,0.07) 1px, transparent 1px);
-      background-size: 22px 22px;
-    }
-
-    /* blocks */
-    .blk-node { margin: 3px 0; font: 600 12px/1 var(--grotesk); user-select: none; }
-    .blk-head {
-      display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
-      padding: 7px 10px; border-radius: 5px; cursor: grab; width: max-content; max-width: 100%;
-      color: #fff; box-shadow: 0 1px 0 rgba(0,0,0,0.45);
-    }
-    .blk-node.is-drag > .blk-head { opacity: 0.35; }
-    .cat-motion  > .blk-head { background: var(--c-motion); }
-    .cat-control > .blk-head { background: var(--c-control); color: #3a2600; }
-    .cat-looks   > .blk-head { background: var(--c-looks); }
-    .cat-ai      > .blk-head { background: var(--c-ai); }
-
-    .blk-head input, .blk-head select {
-      font: 700 11px/1 var(--mono); border: none; border-radius: 10px; padding: 3px 7px;
-      background: rgba(255,255,255,0.9); color: #111; min-height: 20px;
-    }
-    .blk-head input[type="number"] { width: 62px; text-align: center; }
-    .blk-head input[type="text"] { width: 130px; }
-    .blk-head .unit { font-size: 10px; opacity: 0.75; }
-    .blk-head .del {
-      background: none; border: none; color: inherit; opacity: 0.55; cursor: pointer;
-      font-size: 14px; line-height: 1; padding: 0 0 0 3px;
-    }
-    .blk-head .del:hover { opacity: 1; }
-
-    /* c-shape: colored spine + end cap */
-    .blk-body { margin-left: 9px; padding-left: 12px; border-left: 5px solid; border-radius: 0 0 0 4px; min-height: 14px; }
-    .blk-else, .blk-cap {
-      width: max-content; margin-left: 0; padding: 4px 12px; border-radius: 4px;
-      font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #3a2600;
-    }
-    .cat-motion  .blk-body { border-color: var(--c-motion); }
-    .cat-control > .blk-body { border-color: var(--c-control); }
-    .cat-control > .blk-else, .cat-control > .blk-cap { background: var(--c-control); }
-    .blk-cap { box-shadow: 0 1px 0 rgba(0,0,0,0.45); }
-
-    /* drop targets */
-    .blk-list { min-height: 10px; }
-    .blk-list.is-over { outline: 2px dashed var(--accent); outline-offset: 3px; }
-    .blk-node.is-before > .blk-head { box-shadow: 0 -3px 0 var(--accent), 0 1px 0 rgba(0,0,0,0.45); }
-    .blk-node.is-after  > .blk-head { box-shadow: 0 3px 0 var(--accent), 0 1px 0 rgba(0,0,0,0.45); }
-    .blk-list-root { min-height: 100%; padding-bottom: 60px; }
-    .blk-hint { color: var(--ink-3); font: 500 12px/1.7 var(--mono); padding: 8px; pointer-events: none; }
-
-    /* palette blocks reuse node look, click or drag */
-    .blk-palette .blk-node { margin: 0; }
-    .blk-palette .blk-head { width: 100%; padding: 6px 9px; font-size: 11px; }
-
-    .blk-status { font: 500 11px/1.5 var(--mono); min-height: 34px; color: var(--ink-2); white-space: pre-line; }
-    .blk-status.is-err { color: var(--accent); }
-    .blk-status.is-ok { color: var(--go); }
-    .blk-ref { border-top: 1px solid var(--line); padding-top: 8px; color: var(--ink-3); font: 500 10px/1.7 var(--mono); }
-    .blk-ref b { color: var(--ink-2); }
   </style>
 </head>
 <body>
-  <div class="blk-ed">
-    <div class="blk-bar">
-      <span class="folio-sm">BLK-03</span>
-      <span class="label">BLK Workflow Editor</span>
-      <span style="flex:1"></span>
-      <button class="blk-btn is-sage" id="ask-sage">✦ Ask Sage</button>
-      <input type="text" id="name" placeholder="workflow name" aria-label="Workflow name" maxlength="60">
-      <select id="saved" aria-label="Saved workflows"><option value="">— saved —</option></select>
-      <button class="blk-btn is-primary" id="save">Save</button>
-      <button class="blk-btn" id="new">New</button>
-      <button class="blk-btn" id="import">Import</button>
-      <button class="blk-btn" id="export">Export</button>
-      <button class="blk-btn is-danger" id="delete">Del</button>
-      <input type="file" id="file" accept=".blk,.txt" hidden>
-    </div>
+  <div class="app">
+    <header class="bar">
+      <button class="icon-btn" id="menu-btn" aria-label="Workflow files" title="Files, templates, save">☰</button>
+      <span class="brand">BLK</span>
+      <div class="seg" role="tablist">
+        <button class="seg-btn is-on" id="tab-blocks" role="tab">Blocks</button>
+        <button class="seg-btn" id="tab-text" role="tab">Text</button>
+      </div>
+      <span class="wf-name" id="wf-name">untitled</span>
+      <span class="spacer"></span>
+      <button class="icon-btn" id="undo" aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
+      <button class="icon-btn" id="redo" aria-label="Redo" title="Redo (Ctrl+Shift+Z)">↷</button>
+      <button class="btn-t" id="ask-sage" title="Describe a behaviour and Sage writes it">✦ Ask Sage</button>
+      <button class="icon-btn" id="palette-toggle" aria-label="Show blocks" title="Blocks">▦</button>
+      <button class="icon-btn is-on" id="rail-toggle" aria-label="Show simulator" title="Simulator">◧</button>
+    </header>
 
-    <div class="blk-work" id="pane-blocks">
-      <div class="blk-palette" id="palette"></div>
-      <div class="blk-canvas" id="canvas"></div>
-    </div>
+    <main class="work">
+      <nav class="cats" id="cats" aria-label="Block categories"></nav>
 
-    <p class="blk-status" id="status">Drag blocks from the palette — drop onto a block's top/bottom edge to insert, into a loop's body to nest.</p>
-    <div class="blk-ref">
-      <b>.blk files are plain text</b> (hand-editable, import/export friendly) ·
-      forward/back/left/right &lt;ms&gt; · speed &lt;pwm&gt; · wait &lt;ms&gt; · say &lt;text&gt; · analyze · stop ·
-      repeat &lt;n&gt;…end · forever…end · if/repeat until/wait until &lt;sensor&gt; &lt;cmp&gt; &lt;n&gt; ·
-      sensors: dist temp humid smoke airq roll pitch yaw · run it from CONTROL MODE → BLK LANG
+      <aside class="palette-col" id="palette-col">
+        <input type="text" id="search" placeholder="search blocks" aria-label="Search blocks" autocomplete="off">
+        <div class="blk-palette" id="palette"></div>
+      </aside>
+
+      <section class="main">
+        <div class="pane" id="pane-blocks"><div class="blk-canvas" id="canvas"></div></div>
+        <div class="pane" id="pane-text" hidden><textarea id="code" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="BLK source"></textarea></div>
+
+        <div class="trash" id="trash" hidden aria-hidden="true">🗑</div>
+
+        <div class="actionbar" id="actionbar" hidden>
+          <span class="what" id="act-what">block</span>
+          <button class="icon-btn" id="act-up" aria-label="Move up" title="Move up">▲</button>
+          <button class="icon-btn" id="act-down" aria-label="Move down" title="Move down">▼</button>
+          <button class="icon-btn" id="act-dup" aria-label="Duplicate" title="Duplicate">⧉</button>
+          <button class="icon-btn" id="act-off" aria-label="Disable" title="Disable — kept in the file, skipped at run">⦿</button>
+          <button class="icon-btn" id="act-bp" aria-label="Breakpoint" title="Breakpoint">●</button>
+          <button class="icon-btn is-danger" id="act-del" aria-label="Delete" title="Delete">🗑</button>
+          <button class="icon-btn" id="act-close" aria-label="Deselect" title="Deselect">✕</button>
+        </div>
+      </section>
+
+      <aside class="rail" id="rail">
+        <div class="row">
+          <h3 style="flex:1">Simulator</h3>
+          <button class="icon-btn" id="rail-close" aria-label="Close simulator" title="Close — this also stops a running simulation">✕</button>
+        </div>
+        <canvas id="sim-canvas"></canvas>
+        <div class="tele" id="sim-tele">—</div>
+        <div class="tele">tap the arena to add or clear a wall · two-finger tap (or shift-tap) to move the rover</div>
+        <button class="run-btn" id="sim-run" title="Run the program in the simulator (Ctrl+Enter)">▶ Run sim</button>
+        <div class="row">
+          <button class="btn-t" id="sim-pause">⏸ Pause</button>
+          <button class="btn-t" id="sim-step">⏭ Step</button>
+          <button class="btn-t" id="sim-reset">↺ Reset</button>
+        </div>
+        <div class="row">
+          <label>Speed
+            <select id="sim-speed">
+              <option value="1">1×</option>
+              <option value="2" selected>2×</option>
+              <option value="4">4×</option>
+              <option value="8">8×</option>
+              <option value="100">max</option>
+            </select>
+          </label>
+          <label>Arena <select id="sim-layout"></select></label>
+        </div>
+        <div class="row">
+          <label><input type="checkbox" id="sim-reset-on-run" checked> reset on run</label>
+          <label title="read conditions from the real rover instead of the fake arena">
+            <input type="checkbox" id="live-toggle"> live sensors <span class="dot" id="live-dot"></span></label>
+        </div>
+        <h3>Variables</h3>
+        <div class="vars" id="sim-vars">no variables set</div>
+        <h3>Fake environment</h3>
+        <label>temp <input type="range" id="env-temp" min="0" max="60" value="22"><span class="val" id="env-temp-v">22</span></label>
+        <label>smoke <input type="range" id="env-smoke" min="0" max="900" value="0"><span class="val" id="env-smoke-v">0</span></label>
+        <label>airq <input type="range" id="env-airq" min="0" max="900" value="120"><span class="val" id="env-airq-v">120</span></label>
+        <label>humid <input type="range" id="env-humid" min="0" max="100" value="45"><span class="val" id="env-humid-v">45</span></label>
+        <h3>Run log</h3>
+        <div class="sim-log" id="sim-log"></div>
+      </aside>
+    </main>
+
+    <footer class="foot">
+      <p class="blk-status" id="status">Drag a block in from the left. Tap a block to select it — the bar at the bottom moves, copies, disables or deletes it.</p>
+      <div class="blk-lint" id="lint" hidden></div>
+      <div class="blk-meta" id="meta"></div>
+    </footer>
+  </div>
+
+  <div class="scrim" id="scrim" hidden></div>
+
+  <!-- files, templates, save/load: one sheet instead of a crowded toolbar -->
+  <div class="sheet" id="files-sheet" hidden role="dialog" aria-label="Workflow files">
+    <h2>Workflow</h2>
+    <div class="field">
+      <span>Name</span>
+      <input type="text" id="name" placeholder="workflow name" maxlength="60" autocomplete="off">
     </div>
+    <div class="field">
+      <span>Saved on the server</span>
+      <select id="saved"><option value="">— saved —</option></select>
+    </div>
+    <div class="field">
+      <span>Start from a template</span>
+      <select id="tpl"></select>
+    </div>
+    <div class="grid">
+      <button class="sheet-btn btn-t is-primary" id="save">Save</button>
+      <button class="sheet-btn btn-t" id="save-run">▶ Save &amp; run on rover</button>
+      <button class="sheet-btn btn-t" id="new">New</button>
+      <button class="sheet-btn btn-t" id="import">Import .blk</button>
+      <button class="sheet-btn btn-t" id="export">Export .blk</button>
+      <button class="sheet-btn btn-t is-danger" id="delete">Delete</button>
+    </div>
+    <div class="grid" style="margin-top:8px">
+      <button class="sheet-btn btn-t is-ghost" id="sage-explain">✦ Explain this</button>
+      <button class="sheet-btn btn-t is-ghost" id="sage-fix">✦ Find mistakes</button>
+      <button class="sheet-btn btn-t is-ghost" id="sage-improve">✦ Improve it</button>
+      <button class="sheet-btn btn-t" id="files-close">Close</button>
+    </div>
+    <input type="file" id="file" accept=".blk,.txt" hidden>
   </div>
 
   <div class="sage-modal" id="sage-modal" hidden>
     <div class="sage-panel" role="dialog" aria-label="Ask Sage">
       <div class="sage-head">
-        <span class="label">✦ Sage · Workflow Author</span>
-        <button type="button" class="blk-btn" id="sage-close" aria-label="Close">✕</button>
+        <span class="label">✦ Sage</span>
+        <select id="sage-mode" aria-label="Sage mode">
+          <option value="write">write</option>
+          <option value="explain">explain</option>
+          <option value="fix">fix</option>
+          <option value="improve">improve</option>
+        </select>
+        <button type="button" class="icon-btn" id="sage-close" aria-label="Close">✕</button>
       </div>
       <div class="sage-msgs" id="sage-msgs"></div>
       <form class="sage-form" id="sage-form">
-        <input type="text" id="sage-input" placeholder="describe the behavior — e.g. patrol and avoid walls" autocomplete="off">
-        <button type="submit" class="blk-btn is-sage" id="sage-send">Send</button>
+        <input type="text" id="sage-input" placeholder="what should the rover do?" autocomplete="off">
+        <button type="submit" class="btn-t is-primary" id="sage-send">Send</button>
       </form>
     </div>
   </div>
 
-  <script type="module">
-    import { NODE_META, SENSORS, CMPS, LIMITS, parse, serialize, clampArg } from "./js/blk.js";
-
-    const $ = (id) => document.getElementById(id);
-    const bc = new BroadcastChannel("blk"); // nudges the console to refresh its workflow list
-
-    const DEMO = `# blk workflow — edit me
-speed 140
-say Starting patrol
-forever
-  forward 500
-  if dist < 20
-    say Obstacle!
-    back 400
-    right 400
-  end
-end`;
-
-    // program tree is the single working copy; .blk text only exists at save/load/import/export
-    let program = parse(DEMO).program;
-    let dragged = null;      // node being moved (lives in program)
-    let dragFactory = null;  // palette drag: () => fresh node
-
-    const setStatus = (msg, cls = "") => { const s = $("status"); s.textContent = msg; s.className = "blk-status " + cls; };
-    const argUnit = { ms: "ms", pwm: "pwm", count: "times" };
-
-    /* tree helpers */
-    const subLists = (n) => [n.body, n.elseBody].filter(Boolean);
-    function findList(list, node) { // list that directly contains node
-      for (const n of list) {
-        if (n === node) return list;
-        for (const sub of subLists(n)) { const r = findList(sub, node); if (r) return r; }
-      }
-      return null;
-    }
-    function ownsList(node, list) { // is `list` inside node's own subtree (no self-nesting)
-      for (const sub of subLists(node)) {
-        if (sub === list) return true;
-        for (const ch of sub) if (ownsList(ch, list)) return true;
-      }
-      return false;
-    }
-    function dropInto(list, index) {
-      let node;
-      if (dragFactory) node = dragFactory();
-      else if (dragged) {
-        if (dragged !== null && ownsList(dragged, list)) return; // can't drop a loop into itself
-        const src = findList(program, dragged);
-        if (!src) return;
-        const si = src.indexOf(dragged);
-        src.splice(si, 1);
-        if (src === list && si < index) index--;
-        node = dragged;
-      } else return;
-      list.splice(index, 0, node);
-      render();
-    }
-
-    /* condition editor: sensor + cmp + number */
-    function condInputs(cond) {
-      const frag = document.createDocumentFragment();
-      const sel = (opts, cur, set) => {
-        const s = document.createElement("select");
-        s.innerHTML = opts.map(o => `<option${o === cur ? " selected" : ""}>${o}</option>`).join("");
-        s.onchange = () => set(s.value);
-        s.onpointerdown = (e) => e.stopPropagation();
-        frag.appendChild(s);
-      };
-      sel(SENSORS, cond.s, (v) => { cond.s = v; });
-      sel(CMPS, cond.c, (v) => { cond.c = v; });
-      const num = document.createElement("input");
-      num.type = "number"; num.value = cond.v;
-      num.onchange = () => { cond.v = +num.value || 0; num.value = cond.v; };
-      frag.appendChild(num);
-      return frag;
-    }
-
-    /* one block (recursive for containers) */
-    function renderNode(node, list) {
-      const meta = NODE_META[node.op];
-      const el = document.createElement("div");
-      el.className = `blk-node cat-${meta.cat}`;
-
-      const head = document.createElement("div");
-      head.className = "blk-head";
-      head.draggable = true;
-      const label = document.createElement("span");
-      label.textContent = meta.label;
-      head.appendChild(label);
-
-      if (meta.arg) {
-        const num = document.createElement("input");
-        num.type = "number";
-        num.min = LIMITS[meta.arg][0]; num.max = LIMITS[meta.arg][1];
-        num.value = node.arg;
-        num.onchange = () => { node.arg = clampArg(meta.arg, num.value); num.value = node.arg; };
-        head.appendChild(num);
-        const u = document.createElement("span"); u.className = "unit"; u.textContent = argUnit[meta.arg];
-        head.appendChild(u);
-      }
-      if (meta.cond) head.appendChild(condInputs(node.cond));
-      if (meta.text) {
-        const txt = document.createElement("input");
-        txt.type = "text"; txt.value = node.text; txt.placeholder = "text to speak";
-        txt.onchange = () => { node.text = txt.value.trim() || "..."; };
-        head.appendChild(txt);
-      }
-      // inputs shouldn't start a block drag
-      head.querySelectorAll("input,select").forEach(inp => { inp.draggable = false; inp.ondragstart = (e) => { e.preventDefault(); e.stopPropagation(); }; });
-
-      const del = document.createElement("button");
-      del.className = "del"; del.textContent = "×"; del.title = "delete block";
-      del.setAttribute("aria-label", "delete " + meta.label);
-      del.onclick = () => { const l = findList(program, node); l && l.splice(l.indexOf(node), 1); render(); };
-      head.appendChild(del);
-      el.appendChild(head);
-
-      /* drag source */
-      head.addEventListener("dragstart", (e) => {
-        e.stopPropagation();
-        dragged = node; dragFactory = null;
-        e.dataTransfer.effectAllowed = "move";
-        setTimeout(() => el.classList.add("is-drag"));
-      });
-      head.addEventListener("dragend", () => { dragged = dragFactory = null; el.classList.remove("is-drag"); render(); });
-
-      /* drop before/after this block, split at pointer midline */
-      head.addEventListener("dragover", (e) => {
-        e.preventDefault(); e.stopPropagation();
-        const after = e.offsetY > head.offsetHeight / 2;
-        el.classList.toggle("is-before", !after);
-        el.classList.toggle("is-after", after);
-      });
-      head.addEventListener("dragleave", () => el.classList.remove("is-before", "is-after"));
-      head.addEventListener("drop", (e) => {
-        e.preventDefault(); e.stopPropagation();
-        const after = e.offsetY > head.offsetHeight / 2;
-        el.classList.remove("is-before", "is-after");
-        dropInto(list, list.indexOf(node) + (after ? 1 : 0));
-      });
-
-      /* container: body (+ else) + end cap */
-      if (meta.container) {
-        el.appendChild(renderList(node.body));
-        if (node.op === "if") {
-          if (node.elseBody) {
-            const elseBar = document.createElement("div");
-            elseBar.className = "blk-else";
-            elseBar.textContent = "else";
-            el.appendChild(elseBar);
-            el.appendChild(renderList(node.elseBody));
-          } else {
-            // little affordance to grow an else arm
-            const addElse = document.createElement("button");
-            addElse.className = "blk-else"; addElse.style.cursor = "pointer";
-            addElse.style.border = "none"; addElse.style.opacity = "0.55";
-            addElse.textContent = "+ else";
-            addElse.onclick = () => { node.elseBody = []; render(); };
-            el.appendChild(addElse);
-          }
-        }
-        const cap = document.createElement("div");
-        cap.className = "blk-cap";
-        cap.textContent = "end";
-        el.appendChild(cap);
-      }
-      return el;
-    }
-
-    function renderList(list, isRoot = false) {
-      const wrap = document.createElement("div");
-      wrap.className = "blk-body";
-      const inner = document.createElement("div");
-      inner.className = "blk-list" + (isRoot ? " blk-list-root" : "");
-      if (isRoot) wrap.style.cssText = "margin:0;padding:0;border:none;height:100%";
-      for (const n of list) inner.appendChild(renderNode(n, list));
-      if (!list.length && !isRoot) inner.style.minHeight = "16px";
-      if (!list.length && isRoot) inner.innerHTML = '<div class="blk-hint">empty program — click or drag blocks from the palette</div>';
-      // drop at end of this list (or into empty body)
-      inner.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); inner.classList.add("is-over"); });
-      inner.addEventListener("dragleave", () => inner.classList.remove("is-over"));
-      inner.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); inner.classList.remove("is-over"); dropInto(list, list.length); });
-      wrap.appendChild(inner);
-      return wrap;
-    }
-
-    function render() {
-      const c = $("canvas");
-      c.innerHTML = "";
-      c.appendChild(renderList(program, true));
-    }
-
-    /* palette — every block type, scratch-grouped. click appends, drag drops anywhere */
-    const cond = () => ({ s: "dist", c: "<", v: 20 });
-    const PALETTE = [
-      ["Motion", [
-        () => ({ op: "forward", arg: 500 }),
-        () => ({ op: "back", arg: 500 }),
-        () => ({ op: "left", arg: 400 }),
-        () => ({ op: "right", arg: 400 }),
-        () => ({ op: "speed", arg: 140 }),
-      ]],
-      ["Control", [
-        () => ({ op: "wait", arg: 500 }),
-        () => ({ op: "wait_until", cond: cond() }),
-        () => ({ op: "repeat", arg: 3, body: [] }),
-        () => ({ op: "repeat_until", cond: cond(), body: [] }),
-        () => ({ op: "forever", body: [] }),
-        () => ({ op: "if", cond: cond(), body: [], elseBody: null }),
-        () => ({ op: "if", cond: cond(), body: [], elseBody: [] }),
-        () => ({ op: "stop" }),
-      ]],
-      ["Voice + AI", [
-        () => ({ op: "say", text: "hello" }),
-        () => ({ op: "analyze" }),
-      ]],
-    ];
-    for (const [title, items] of PALETTE) {
-      const h = document.createElement("h3");
-      h.textContent = title;
-      $("palette").appendChild(h);
-      for (const make of items) {
-        const sample = make();
-        const meta = NODE_META[sample.op];
-        const el = document.createElement("div");
-        el.className = `blk-node cat-${meta.cat}`;
-        const head = document.createElement("div");
-        head.className = "blk-head";
-        head.draggable = true;
-        head.textContent = meta.label
-          + (meta.arg ? ` ${sample.arg} ${argUnit[meta.arg]}` : "")
-          + (meta.cond ? " …" : "")
-          + (sample.op === "if" && sample.elseBody ? " / else" : "")
-          + (meta.text ? " …" : "");
-        head.title = "click to add, or drag into the program";
-        head.onclick = () => { program.push(make()); render(); };
-        head.addEventListener("dragstart", (e) => {
-          dragFactory = make; dragged = null;
-          e.dataTransfer.effectAllowed = "copy";
-        });
-        head.addEventListener("dragend", () => { dragFactory = null; });
-        el.appendChild(head);
-        $("palette").appendChild(el);
-      }
-    }
-
-    /* save / load / delete */
-    async function refreshSaved(keep) {
-      try {
-        const { files } = await (await fetch("/api/blk")).json();
-        $("saved").innerHTML = '<option value="">— saved —</option>' +
-          files.map(f => `<option${f === keep ? " selected" : ""}>${f}</option>`).join("");
-      } catch { /* server offline — editor still works */ }
-    }
-
-    $("save").onclick = async () => {
-      const name = $("name").value.trim();
-      if (!name) { setStatus("give the workflow a name first", "is-err"); $("name").focus(); return; }
-      const text = serialize(program);
-      const r = await fetch("/api/blk/" + encodeURIComponent(name), {
-        method: "POST", headers: { "Content-Type": "text/plain" }, body: text,
-      }).catch(() => null);
-      if (r?.ok) { setStatus(`saved "${name}"`, "is-ok"); refreshSaved(name); bc.postMessage("saved"); }
-      else setStatus("save failed — is the server running?", "is-err");
-    };
-
-    function loadText(text, name, sourceLabel) {
-      const { program: p, errors } = parse(text);
-      $("name").value = name;
-      program = p;
-      render();
-      // parser recovers per line, so a hand-edited odd file still loads — bad lines get reported and dropped
-      setStatus(errors.length ? "skipped bad lines:\n" + errors.join("\n") : sourceLabel, errors.length ? "is-err" : "is-ok");
-    }
-
-    $("saved").onchange = async () => {
-      const name = $("saved").value;
-      if (!name) return;
-      const r = await fetch("/api/blk/" + encodeURIComponent(name)).catch(() => null);
-      if (!r?.ok) { setStatus("load failed", "is-err"); return; }
-      loadText(await r.text(), name, `loaded "${name}"`);
-    };
-
-    $("delete").onclick = async () => {
-      const name = $("saved").value || $("name").value.trim();
-      if (!name || !confirm(`delete workflow "${name}"?`)) return;
-      await fetch("/api/blk/" + encodeURIComponent(name), { method: "DELETE" }).catch(() => {});
-      setStatus(`deleted "${name}"`, "is-ok");
-      refreshSaved(); bc.postMessage("saved");
-    };
-
-    $("new").onclick = () => {
-      program = parse(DEMO).program;
-      $("name").value = ""; $("saved").value = "";
-      render();
-      setStatus("new workflow");
-    };
-
-    /* import / export — plain .blk text files */
-    $("export").onclick = () => {
-      const text = serialize(program);
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
-      a.download = ($("name").value.trim() || "workflow") + ".blk";
-      a.click();
-      URL.revokeObjectURL(a.href);
-    };
-    $("import").onclick = () => $("file").click();
-    $("file").onchange = async () => {
-      const f = $("file").files[0];
-      if (!f) return;
-      loadText(await f.text(), f.name.replace(/\.(blk|txt)$/i, ""), `imported "${f.name}" — hit save to keep it`);
-      $("file").value = "";
-    };
-
-    /* ask sage: describe a behavior, sage answers with prose + a blk program to load */
-    const sageHist = [];
-    let sagePending = false;
-    const CODE_RE = /```(?:blk)?\s*\n([\s\S]*?)```/;
-
-    function renderSage() {
-      const box = $("sage-msgs");
-      box.innerHTML = "";
-      if (!sageHist.length && !sagePending) {
-        box.innerHTML = '<div class="sage-empty">Tell me what the rover should do and I\'ll build the workflow.<br><br>' +
-          '"patrol forward and dodge obstacles"<br>"spin slowly until it gets hot, then report"<br>"drive a square, then analyze"</div>';
-        return;
-      }
-      for (const m of sageHist) {
-        const div = document.createElement("div");
-        div.className = "sage-msg " + (m.role === "user" ? "is-user" : "is-sage");
-        if (m.role === "assistant") {
-          const match = m.content.match(CODE_RE);
-          const prose = m.content.replace(CODE_RE, "").trim();
-          if (prose) div.appendChild(Object.assign(document.createElement("div"), { textContent: prose }));
-          if (match) {
-            const code = match[1].trim();
-            div.appendChild(Object.assign(document.createElement("pre"), { textContent: code }));
-            const btn = Object.assign(document.createElement("button"), { className: "blk-btn is-primary", textContent: "Load into editor" });
-            btn.onclick = () => {
-              const { program: p, errors } = parse(code);
-              if (errors.length) { setStatus("sage program has errors:\n" + errors.join("\n"), "is-err"); return; }
-              program = p;
-              render();
-              closeSage();
-              setStatus("workflow loaded from Sage — tweak blocks, then Save", "is-ok");
-            };
-            div.appendChild(btn);
-          }
-        } else div.textContent = m.content;
-        box.appendChild(div);
-      }
-      if (sagePending) {
-        box.appendChild(Object.assign(document.createElement("div"),
-          { className: "sage-msg is-sage is-think", textContent: "Sage is writing…" }));
-      }
-      box.scrollTop = box.scrollHeight;
-    }
-
-    $("sage-form").onsubmit = async (e) => {
-      e.preventDefault();
-      const q = $("sage-input").value.trim();
-      if (!q || sagePending) return;
-      $("sage-input").value = "";
-      sageHist.push({ role: "user", content: q });
-      sagePending = true; $("sage-send").disabled = true;
-      renderSage();
-      try {
-        const r = await fetch("/api/blk-sage", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: sageHist.slice(-10) }),
-        });
-        const d = await r.json();
-        sageHist.push({ role: "assistant", content: d.reply || d.error || "No reply." });
-      } catch (err) {
-        sageHist.push({ role: "assistant", content: "Connection failed: " + err.message });
-      }
-      sagePending = false; $("sage-send").disabled = false;
-      renderSage();
-      $("sage-input").focus();
-    };
-
-    // animated close: play exit, then actually hide
-    function closeSage() {
-      const m = $("sage-modal");
-      if (m.hidden || m.classList.contains("is-closing")) return;
-      m.classList.add("is-closing");
-      setTimeout(() => { m.hidden = true; m.classList.remove("is-closing"); }, 220);
-    }
-
-    $("ask-sage").onclick = () => { $("sage-modal").hidden = false; renderSage(); $("sage-input").focus(); };
-    $("sage-close").onclick = closeSage;
-    $("sage-modal").addEventListener("click", (e) => { if (e.target === $("sage-modal")) closeSage(); });
-
-    // esc: close sage popup first if open, else close the console's editor overlay
-    window.addEventListener("keydown", (e) => {
-      if (e.key !== "Escape") return;
-      if (!$("sage-modal").hidden) return closeSage();
-      if (window.parent !== window) window.parent.postMessage("blk:close", "*");
-    });
-
-    render();
-    refreshSaved();
-  </script>
+  <!-- optional: lets the editor watch real telemetry (the page still works without the server) -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="js/blkedit.js"></script>
 </body>
 </html>

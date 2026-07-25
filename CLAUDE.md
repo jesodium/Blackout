@@ -20,6 +20,9 @@ Node.js PC server/dashboard.
   - **Flash LED (GPIO 4) debug:** boot = slow blink (500ms), error (camera/WiFi
     fail) = rapid blink (100ms), connected = steady dim (PWM 32). Handled by
     `ledUpdate()` in `main.ino`, called from `loop()` every 50ms.
+- `server/public/js/blk.js` — the BLK language (parser, serializer, evaluator,
+  linter, interpreter). Text is the file format; `blkedit.js` + `blk.html` are
+  the editor, `blksim.js` the offline rover simulator. See "BLK" below.
 - `server/` — Node.js dashboard + "Sage" AI agent (Cerebras). BLE is read
   directly by the browser (Web Bluetooth) and forwarded to
   `/api/mega/sensor`; gamepad input goes out the same way as dashboard
@@ -29,6 +32,34 @@ Node.js PC server/dashboard.
 - `OUTDATED/` — retired Mega 2560 + Uno R3 two-board setup, kept only for
   porting reference. Not part of the current build.
 - `cad/`, `step/` — mechanical
+
+## BLK
+
+Operator-authored workflows, saved as plain `.blk` text in `server/workflows/`
+and run **in the browser** (the browser owns the BLE link) by `BlkCtl` in
+`app.js`. Not to be confused with the on-board `Step` routines below — BLK runs
+off the board, `routines.h` runs on it.
+
+- Ops: `forward/back/left/right <expr>` (or `… until <cond> [timeout <ms>]`),
+  `speed`, `wait`, `wait until`, `repeat n|until|while`, `forever`, `if/else`,
+  `break`, `continue`, `stop`, `set`/`change` (variables), `def`/`call`
+  (procedures), `say`, `log`, `led`, `analyze [focus]`, `ask`, `find`, `#`
+  comments, `~` prefix to disable a block.
+- Expressions and conditions are real: maths, `and/or/not`, parens,
+  `min/max/abs/round/random/clamp`, sensor and variable reads, `{var}`
+  interpolation inside `say`/`log`.
+- `ask`/`find` are Sage yes/no calls (`/api/blk-ask`, `/api/blk-find`); the
+  answer lands in the `answer`/`found` variable so the program can branch. A
+  failed request reads as *no* — never as "go ahead".
+- The editor is **touch-first**: dragging is pointer-event based (html5
+  drag-and-drop never fires on a touchscreen — don't "fix" it by adding
+  `draggable`), hit targets are 44px, and every destructive action is on the
+  selection action bar or the drag-to-bin target, never keyboard-only.
+  `npm run test:editor` drives the real page over CDP and checks exactly that.
+- Anything added to the language must land in **all four** places or it silently
+  half-works: `parse` + `serialize` (roundtrip), `NODE_META` (editor blocks),
+  the interpreter's `runList`, and `prompts/blk.md` (what Sage is allowed to
+  write). `node server/test-blk.mjs` is the self-check — extend it too.
 
 ## Dictated routines
 

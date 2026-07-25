@@ -6,7 +6,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "node test-blk.mjs",
+    "test:editor": "node test-blk-editor.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

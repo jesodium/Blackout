@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import htm from "htm";
 import { createRoverScene } from "./scene.js";
 import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./i18n.js";
-import { parse as blkParse, run as blkRun } from "./blk.js";
+import { parse as blkParse, run as blkRun, lint as blkLint, estimate as blkEstimate, fmtMs } from "./blk.js";
 
 const html = htm.bind(React.createElement);
 
@@ -383,8 +383,10 @@ function MotorDebug({ onCmd, enabled }) {
 function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
   const [files, setFiles] = useState([]);
   const [sel, setSel] = useState(() => localStorage.getItem("blkSel") || "");
-  const [run, setRun] = useState(null); // {n, label} while executing
+  const [run, setRun] = useState(null); // {n, label, vars} while executing
   const [err, setErr] = useState(null);
+  const [note, setNote] = useState(null); // last log/ask/find line from the program
+  const [preview, setPreview] = useState(null); // what the picked workflow does, before it runs
   const [editorOpen, setEditorOpen] = useState(false); // false | "open" | "closing"
   const token = useRef(0);
   const runRef = useRef(false); // mirrors run for unmount cleanup
@@ -396,9 +398,16 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     setTimeout(() => setEditorOpen(false), 240);
   }, []);
 
-  // editor iframe asks to close (esc key inside it)
+  // editor iframe talks back: esc asks to close, "save & run" hands us a workflow
   useEffect(() => {
-    const fn = (e) => { if (e.data === "blk:close") closeEditor(); };
+    const fn = (e) => {
+      if (e.data === "blk:close") return closeEditor();
+      if (e.data?.type === "blk:run" && e.data.name) {
+        pick(e.data.name);
+        closeEditor();
+        setTimeout(() => startRef.current(e.data.name), 320); // let the editor finish closing
+      }
+    };
     window.addEventListener("message", fn);
     return () => window.removeEventListener("message", fn);
   }, [closeEditor]);
@@ -414,15 +423,32 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     window.addEventListener("focus", loadFiles);
     return () => { bc.close(); window.removeEventListener("focus", loadFiles); };
   }, [loadFiles]);
+  // read the picked workflow ahead of time: the operator gets its text, its
+  // rough runtime and any lint warnings before anything moves.
+  useEffect(() => {
+    if (!sel) { setPreview(null); return; }
+    let live = true;
+    fetch("/api/blk/" + encodeURIComponent(sel))
+      .then(r => r.ok ? r.text() : Promise.reject())
+      .then(text => {
+        if (!live) return;
+        const { program, errors } = blkParse(text);
+        setPreview({ text, warns: errors.length ? errors : blkLint(program), ms: fmtMs(blkEstimate(program)) });
+      })
+      .catch(() => live && setPreview(null));
+    return () => { live = false; };
+  }, [sel]);
+
   // leaving blk mode unmounts this panel — kill a live run and the motors with it
   useEffect(() => () => { token.current++; if (runRef.current) onCmd("stop"); }, [onCmd]);
 
-  const start = async () => {
-    if (!sel || run) return;
+  const start = async (name = sel) => {
+    if (!name || run) return;
     setErr(null);
+    setNote(null);
     let text;
     try {
-      const r = await fetch("/api/blk/" + encodeURIComponent(sel));
+      const r = await fetch("/api/blk/" + encodeURIComponent(name));
       if (!r.ok) throw new Error("not found");
       text = await r.text();
     } catch { setErr("couldn't load workflow"); return; }
@@ -436,24 +462,45 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
       while (!stopped() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 50));
     };
     setRun({ n: 0, label: "start" });
+    // a yes/no call the program can branch on. the server does the thinking;
+    // a failed request reads as "no" so a dead link can't send the rover on.
+    const decide = async (path, body) => {
+      try {
+        const r = await fetch(path, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        setNote(`${d.yes ? "yes" : "no"}${d.text ? " — " + d.text : ""}`);
+        return !!d.yes;
+      } catch { setNote("AI didn't answer — treating as no"); return false; }
+    };
     // interpreter walks the tree live: conditions read the latest telemetry packet,
     // forever/until loops run until STOP (or their condition trips)
     await blkRun(program, {
       stopped, sleep,
       drive: async (verb, pwm, ms) => { onCmd(`drv,${verb},${pwm},${ms}`); await sleep(ms + 150); },
-      analyze: async () => { // fire the agent, wait until it's done (30s cap)
-        onAnalyze();
+      analyze: async (focus) => { // fire the agent, wait until it's done (30s cap)
+        onAnalyze(null, focus);
         await sleep(500);
         const t0 = Date.now();
         while (!stopped() && busyRef.current && Date.now() - t0 < 30000) await sleep(300);
       },
+      ask: (q) => decide("/api/blk-ask", { question: q }),
+      find: (thing) => decide("/api/blk-find", { thing }),
+      led: (v) => { fetch("/api/led", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) }).catch(() => {}); },
+      log: (txt) => setNote(txt),
       say: (txt) => speak(txt),
       sensors: () => packetRef?.current,
       halt: () => onCmd("stop"),
-      onStep: (node, n) => setRun({ n, label: node.op.replace("_", " ") }),
+      onStep: (node, n, st) => setRun({ n, label: node.op.replace("_", " "), vars: { ...st.vars } }),
     });
     if (!stopped()) setRun(null);
   };
+
+  // the editor's "save & run" fires through a ref so the message listener above
+  // always calls the current start(), not the one from its first render
+  const startRef = useRef(start);
+  startRef.current = start;
 
   const stop = () => { token.current++; setRun(null); onCmd("stop"); };
   const pick = (v) => { setSel(v); localStorage.setItem("blkSel", v); };
@@ -470,9 +517,20 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
       </div>
       ${run
         ? html`<button type="button" class="btn blk-stop" onClick=${stop}>■ STOP — step ${run.n} · ${run.label.toUpperCase()}</button>`
-        : html`<button type="button" class="btn btn--primary" disabled=${!enabled || !sel} onClick=${start}>▶ RUN WORKFLOW</button>`}
+        : html`<button type="button" class="btn btn--primary" disabled=${!enabled || !sel} onClick=${() => start()}>▶ RUN WORKFLOW</button>`}
+      ${preview && !run && html`
+        <details class="blk-prev">
+          <summary>${preview.text.split("\n").filter(l => l.trim()).length} lines · ~${preview.ms} per pass${preview.warns.length ? ` · ${preview.warns.length} warning${preview.warns.length === 1 ? "" : "s"}` : ""}</summary>
+          <pre>${preview.text}</pre>
+          ${preview.warns.map(w => html`<div class="blk-warn" key=${w}>⚠ ${w}</div>`)}
+        </details>`}
+      ${run && Object.keys(run.vars || {}).length > 0 && html`
+        <small style=${{ opacity: 0.75, fontFamily: "var(--mono)" }}>
+          ${Object.entries(run.vars).map(([k, v]) => `${k}=${Math.round(v * 100) / 100}`).join("  ·  ")}
+        </small>`}
       <small style=${{ opacity: 0.7 }}>
         ${err ? html`<span style=${{ color: "var(--accent)" }}>${err}</span>`
+          : note ? html`<span style=${{ color: "var(--ink-2)" }}>${note}</span>`
           : !enabled ? "BT bridge off — connect to run."
           : run ? "Running — STOP or switching mode halts the rover. Forever loops run until stopped."
           : "Author programs in the EDITOR (blocks or text), save, run here."}
@@ -1368,6 +1426,12 @@ function App() {
       setChats(cs => cs.map(c => c.id === chat.id
         ? { ...c, findings: [...(c.findings || []), entry].slice(-40) } : c));
     });
+    // a running blk workflow asked sage a yes/no (ask/find) — log the call so the
+    // operator can see why the program branched the way it did.
+    socket.on("blk-decision", d => {
+      if (!d?.question) return;
+      addLog(`${d.kind === "find" ? "find" : "ask"} "${d.question}" → ${d.yes ? "YES" : "no"}${d.text ? " · " + d.text : ""}`, d.yes ? "ai" : "system");
+    });
     socket.on("serial-line", d => {
       if (!d?.line) return;
       setSerialLines(p => [...p, {
@@ -1476,11 +1540,13 @@ function App() {
   const bleRef = useRef({ device: null, char: null, cmd: null });
 
   // defined above onblenotify because that handler calls it — deps are evaluated during render, so later `const` would be in temporal dead zone.
-  const analyze = useCallback((mode) => {
+  // `focus` comes from a workflow's `analyze <what to look at>` step — it steers
+  // this one read only.
+  const analyze = useCallback((mode, focus) => {
     if (analyzingRef.current) return;
     analyzingRef.current = true; // set now, not on re-render — two calls in one tick must not both emit
     setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
-    socketRef.current?.emit("request-analysis", { mode: mode || null });
+    socketRef.current?.emit("request-analysis", { mode: mode || null, prompt: focus || null });
   }, []);
 
   // board notifies two kinds of line: "s:" telemetry, and "e:" events a routine raises as it runs (an analyze step asking for an ai read).
