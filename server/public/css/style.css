@@ -1057,3 +1057,19 @@ input[type="range"]:focus { box-shadow: none; }
   }
   .reveal { opacity: 1; transform: none; }
 }
+
+/* blk run panel: what the picked workflow does, before it runs */
+.blk-prev { font: 500 10.5px/1.6 var(--mono); color: var(--ink-3); }
+.blk-prev summary { cursor: pointer; }
+.blk-prev pre {
+  margin: 6px 0 0; padding: 8px; max-height: 190px; overflow: auto;
+  background: var(--inset); border: 1px solid var(--line); color: var(--ink-2);
+  font: 500 10.5px/1.6 var(--mono); white-space: pre;
+}
+.blk-warn { color: var(--warn, #ffab19); margin-top: 4px; }
+
+/* the blk editor takes the whole screen on a tablet — 86vw of a small screen
+   is a lot of wasted room, and the editor has its own drawers for the panels */
+@media (max-width: 900px) {
+  .blk-modal-frame { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
+}
