@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Blackout V3 · Recon rover for the dark</title>
+<title>Blackout · Recon rover for the dark</title>
 <meta name="description" content="Blackout is a recon rover built for WRO 2026 Future Innovators. It drives into places people should not enter, looks around, and reports back out loud.">
 <meta name="theme-color" content="#0e0e10">
 <link rel="icon" href="assets/mark.png">
@@ -190,15 +190,44 @@ section{padding:clamp(100px,14vw,170px) 0;position:relative}
 @media (max-width:820px){.plans{grid-template-columns:1fr}.plan.feature{grid-row:auto;justify-content:flex-start}}
 .note{margin-top:28px;font-size:13px;color:var(--muted);border-left:2px solid var(--accent);padding-left:18px;max-width:72ch}
 
-/* ============ roadmap rail ============ */
-.rail{display:flex;gap:18px;overflow-x:auto;padding:4px 4px 20px;scroll-snap-type:x mandatory;
+/* ============ roadmap rail — reads as a map: grid terrain + dashed route + pins ============ */
+.map{position:relative}
+.map::before{content:"";position:absolute;inset:-20px -24px 0;z-index:-1;opacity:.5;
+  background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+  background-size:34px 34px;
+  -webkit-mask-image:radial-gradient(85% 100% at 50% 0%,#000 45%,transparent 90%);
+  mask-image:radial-gradient(85% 100% at 50% 0%,#000 45%,transparent 90%)}
+.rail{display:flex;gap:18px;overflow-x:auto;padding:44px 4px 20px;scroll-snap-type:x mandatory;
+  counter-reset:stop;
   scrollbar-width:thin;scrollbar-color:var(--line-2) transparent;
+  background-image:repeating-linear-gradient(90deg,var(--accent) 0 8px,transparent 8px 20px);
+  background-position:0 23px;background-size:100% 2px;background-repeat:repeat-x;background-attachment:local;
   -webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 80px),transparent);
   mask-image:linear-gradient(90deg,#000 calc(100% - 80px),transparent)}
-.ver{flex:0 0 310px;scroll-snap-align:start;border:1px solid var(--line);border-radius:20px;background:var(--bg-2);
-  padding:28px;display:flex;flex-direction:column;gap:14px;transition:border-color 250ms ease,transform 250ms var(--ease)}
+.ver{flex:0 0 310px;scroll-snap-align:start;position:relative;counter-increment:stop;cursor:pointer;
+  border:1px solid var(--line);border-radius:20px;background:var(--bg-2);
+  display:flex;align-items:stretch;
+  transition:border-color 250ms ease,transform 250ms var(--ease),flex-basis 320ms var(--ease)}
 .ver:hover{border-color:var(--line-2);transform:translateY(-4px)}
 .ver.now{border-color:var(--accent);background:linear-gradient(180deg,var(--accent-soft),var(--bg-2) 40%)}
+.ver.open{flex-basis:480px}
+.ver-main{flex:1;min-width:0;padding:28px;display:flex;flex-direction:column;gap:14px;position:relative}
+/* image slot — 0-width until opened, expands to the right on click */
+.ver-shot{flex:0 0 0;width:0;overflow:hidden;align-self:stretch;border-radius:0 20px 20px 0;
+  background:var(--bg-3);transition:width 320ms var(--ease),flex-basis 320ms var(--ease)}
+.ver.open .ver-shot{flex:0 0 170px;width:170px}
+.ver-shot img{width:170px;height:100%;object-fit:cover;display:block;filter:saturate(.85)}
+.ver-hint{position:absolute;bottom:16px;right:16px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+  color:var(--dim);border:1px solid var(--line-2);border-radius:999px;padding:4px 9px;pointer-events:none}
+.ver:hover .ver-hint{color:var(--accent);border-color:var(--accent)}
+/* teardrop map pin, planted on the dashed route above each stop */
+.pin{position:absolute;top:-34px;left:50%;width:26px;height:26px;z-index:1;
+  transform:translateX(-50%) rotate(45deg);
+  border:1px solid var(--line-2);border-radius:50% 50% 50% 0;background:var(--bg-2);
+  display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.pin::before{content:counter(stop);transform:rotate(-45deg)}
+.ver.now .pin{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);
+  box-shadow:0 0 0 0 rgba(224,164,92,.5);animation:ping 2.2s ease-out infinite}
 .ver .state{align-self:flex-start;font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;
   padding:5px 10px;border-radius:999px;border:1px solid var(--line-2);color:var(--muted)}
 .ver.now .state{border-color:var(--accent);color:var(--accent)}
@@ -261,7 +290,7 @@ footer nav a:hover{color:var(--accent)}
     <span class="bl">HDG <i data-jit="184" data-unit="°">184°</i></span>
     <span class="br">LINK <i>BLE · OK</i></span>
   </div>
-  <p class="tag">Introducing Blackout V3</p>
+  <p class="tag">Introducing Blackout</p>
   <h1 class="display" id="heroTitle">Send it into the <span class="accent">dark.</span></h1>
   <p class="lede">A recon rover for places people should not enter. It drives in, looks around, and reports back out loud.</p>
   <div class="cta">
@@ -389,55 +418,10 @@ footer nav a:hover{color:var(--accent)}
       <p class="lede">Each version threw away something the last one was proud of. Drag sideways to walk through them.</p>
     </div>
   </div>
-  <div class="wrap">
-    <!-- IMPORTANT NOTE: no per-version photos — those assets don't exist yet.
-         Drop an <img> above each <h3> once V1/V2/V3 stills are shot. -->
-    <div class="rail">
-      <article class="ver" data-reveal>
-        <span class="state">Retired</span>
-        <h3 class="display">V1</h3>
-        <p>Two boards and a relay. A Mega read the sensors, an Uno drove the motors, an ESP32 carried Bluetooth between them.</p>
-        <dl>
-          <div class="hasnt"><dt aria-hidden="true">✕</dt><dd>One board</dd></div>
-          <div class="hasnt"><dt aria-hidden="true">✕</dt><dd>Camera</dd></div>
-          <div class="hasnt"><dt aria-hidden="true">✕</dt><dd>Speaks its findings</dd></div>
-          <div class="hasnt"><dt aria-hidden="true">✕</dt><dd>Runs without the laptop</dd></div>
-        </dl>
-      </article>
-      <article class="ver" data-reveal>
-        <span class="state">Retired</span>
-        <h3 class="display">V2</h3>
-        <p>Collapsed to a single Uno R4 WiFi, added the ESP32-CAM on its own network, and introduced Sage as the voice of the robot.</p>
-        <dl>
-          <div class="has"><dt aria-hidden="true">✓</dt><dd>One board</dd></div>
-          <div class="has"><dt aria-hidden="true">✓</dt><dd>Camera</dd></div>
-          <div class="has"><dt aria-hidden="true">✓</dt><dd>Speaks its findings</dd></div>
-          <div class="hasnt"><dt aria-hidden="true">✕</dt><dd>Runs without the laptop</dd></div>
-        </dl>
-      </article>
-      <article class="ver now" data-reveal>
-        <span class="state">Shipping now</span>
-        <h3 class="display">V3</h3>
-        <p>Giga R1 WiFi, runs became the BLK language, findings log with saved frames, one command flashes both boards. The competition build.</p>
-        <dl>
-          <div class="has"><dt aria-hidden="true">✓</dt><dd>One board</dd></div>
-          <div class="has"><dt aria-hidden="true">✓</dt><dd>Camera</dd></div>
-          <div class="has"><dt aria-hidden="true">✓</dt><dd>Speaks its findings</dd></div>
-          <div class="has"><dt aria-hidden="true">✓</dt><dd>Runs without the laptop</dd></div>
-          <div class="hasnt"><dt aria-hidden="true">✕</dt><dd>Closed-loop motion</dd></div>
-        </dl>
-      </article>
-      <article class="ver" data-reveal>
-        <span class="state">In design</span>
-        <h3 class="display">V4</h3>
-        <p>Not built. Closed-loop motion: wheel encoders for real angles, on-board vision with no laptop in the loop, gas and orientation sensing.</p>
-        <dl>
-          <div class="has"><dt aria-hidden="true">✓</dt><dd>Closed-loop motion</dd></div>
-          <div class="has"><dt aria-hidden="true">✓</dt><dd>Vision on the board</dd></div>
-          <div class="has"><dt aria-hidden="true">✓</dt><dd>Gas and orientation</dd></div>
-        </dl>
-      </article>
-    </div>
+  <div class="wrap map">
+    <!-- IMPORTANT NOTE: cards are rendered from roadmap.json (see renderRoadmap() below) —
+         edit that file to add/reorder versions or swap in real photos, no HTML editing needed. -->
+    <div class="rail"></div>
   </div>
 </section>
 
@@ -466,8 +450,42 @@ footer nav a:hover{color:var(--accent)}
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script>
-(() => {
+(async () => {
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* roadmap — cards come from roadmap.json so the lineup is editable without touching HTML */
+  async function renderRoadmap() {
+    const rail = document.querySelector('.rail');
+    if (!rail) return;
+    const versions = await (await fetch('roadmap.json')).json();
+    rail.innerHTML = versions.map(v => `
+      <article class="ver${v.now ? ' now' : ''}" data-reveal tabindex="0" role="button"
+        aria-expanded="false" aria-label="Toggle ${v.version} photo">
+        <span class="pin" aria-hidden="true"></span>
+        <div class="ver-main">
+          <span class="state">${v.state}</span>
+          <h3 class="display">${v.version}</h3>
+          <p>${v.desc}</p>
+          <dl>${v.features.map(f => `<div class="${f.has ? 'has' : 'hasnt'}">
+            <dt aria-hidden="true">${f.has ? '✓' : '✕'}</dt><dd>${f.label}</dd></div>`).join('')}</dl>
+          <span class="ver-hint" aria-hidden="true">+ photo</span>
+        </div>
+        <div class="ver-shot"><img src="${v.image}" alt="${v.version} build photo" loading="lazy"></div>
+      </article>`).join('');
+
+    const toggle = (card) => {
+      const open = card.classList.toggle('open');
+      card.setAttribute('aria-expanded', open);
+      card.querySelector('.ver-hint').textContent = open ? '− photo' : '+ photo';
+    };
+    rail.querySelectorAll('.ver').forEach(card => {
+      card.addEventListener('click', () => toggle(card));
+      card.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(card); }
+      });
+    });
+  }
+  await renderRoadmap();
 
   /* telemetry ticker — build one lane, duplicate for the seamless loop */
   const feed = ['DIST <i>42 CM</i>','TEMP <i>23°C</i>','HUM <i>61%</i>','HDG <i>184°</i>',
