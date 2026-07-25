@@ -1,0 +1,54 @@
+[
+  {
+    "version": "V1",
+    "state": "Retired",
+    "now": false,
+    "desc": "Two boards and a relay. A Mega read the sensors, an Uno drove the motors, an ESP32 carried Bluetooth between them.",
+    "image": "assets/placeholder.png",
+    "features": [
+      { "label": "Several boards", "has": false },
+      { "label": "Camera", "has": false },
+      { "label": "Advanced AI Features", "has": false },
+      { "label": "Functional Motor Control", "has": false }
+    ]
+  },
+  {
+    "version": "V2",
+    "state": "Retired",
+    "now": false,
+    "desc": "Collapsed to a single Uno R4 WiFi, added the ESP32-CAM on its own network, and introduced Sage as the voice of the robot.",
+    "image": "assets/placeholder.png",
+    "features": [
+      { "label": "One board", "has": true },
+      { "label": "Camera", "has": true },
+      { "label": "Speaks its findings", "has": true },
+      { "label": "Runs without the laptop", "has": false }
+    ]
+  },
+  {
+    "version": "V3",
+    "state": "Shipping now",
+    "now": true,
+    "desc": "Giga R1 WiFi, runs became the BLK language, findings log with saved frames, one command flashes both boards. The competition build.",
+    "image": "assets/placeholder.png",
+    "features": [
+      { "label": "One board", "has": true },
+      { "label": "Camera", "has": true },
+      { "label": "Speaks its findings", "has": true },
+      { "label": "Runs without the laptop", "has": true },
+      { "label": "Closed-loop motion", "has": false }
+    ]
+  },
+  {
+    "version": "V4",
+    "state": "In design",
+    "now": false,
+    "desc": "Not built. Closed-loop motion: wheel encoders for real angles, on-board vision with no laptop in the loop, gas and orientation sensing.",
+    "image": "assets/placeholder.png",
+    "features": [
+      { "label": "Closed-loop motion", "has": true },
+      { "label": "Vision on the board", "has": true },
+      { "label": "Gas and orientation", "has": true }
+    ]
+  }
+]
