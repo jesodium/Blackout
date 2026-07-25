@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blackout V3 · Recon rover for the dark</title>
+<meta name="description" content="Blackout is a recon rover built for WRO 2026 Future Innovators. It drives into places people should not enter, looks around, and reports back out loud.">
+<meta name="theme-color" content="#131315">
+<link rel="icon" href="assets/mark.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caesar+Dressing&family=Roboto+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ---------------------------------------------------------------
+   Blackout landing page. Dark theme only, on purpose: the brand
+   guide is charcoal + tan and the product is named Blackout.
+   Radius system: 14px surfaces, 10px controls, 8px chips. One accent
+   (tan #e0a45c) everywhere except the WRO strip, which is WRO pink.
+----------------------------------------------------------------*/
+:root{
+  --bg:#131315;
+  --bg-2:#191a1c;
+  --bg-3:#202124;
+  --line:rgba(255,255,255,.10);
+  --line-2:rgba(255,255,255,.16);
+  --ink:#f3f0ea;
+  --muted:#a29c93;
+  --accent:#e0a45c;
+  --accent-soft:rgba(224,164,92,.14);
+  --accent-ink:#1a1409;
+  --wro:#ff4f9a;
+  --r-surface:14px;
+  --r-control:10px;
+  --r-chip:8px;
+  --wrap:1220px;
+  --mono:"Roboto Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --display:"Caesar Dressing","Roboto Mono",cursive;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--mono);
+  font-weight:400;
+  font-size:15px;
+  line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+img{max-width:100%;display:block}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:var(--wrap);margin:0 auto;padding:0 24px}
+.display{font-family:var(--display);font-weight:400;letter-spacing:.01em;line-height:1.05}
+.eyebrow{
+  font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--accent);font-weight:500;
+}
+.lede{color:var(--muted);max-width:62ch}
+
+/* --- focus + tactility ------------------------------------------------ */
+a:focus-visible,button:focus-visible{
+  outline:2px solid var(--accent);outline-offset:3px;border-radius:var(--r-chip);
+}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  white-space:nowrap;gap:10px;
+  padding:12px 22px;border-radius:var(--r-control);
+  font-size:13px;font-weight:500;letter-spacing:.04em;
+  border:1px solid transparent;cursor:pointer;
+  transition:transform .18s cubic-bezier(.16,1,.3,1),background .18s,border-color .18s,color .18s;
+}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn-primary:hover{background:#efb571}
+.btn-ghost{border-color:var(--line-2);color:var(--ink);background:transparent}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.btn-sm{padding:7px 14px;font-size:12px}
+
+/* --- WRO strip -------------------------------------------------------- */
+.wro{
+  background:linear-gradient(90deg,rgba(255,79,154,.16),rgba(255,79,154,.05) 55%,transparent);
+  border-bottom:1px solid rgba(255,79,154,.28);
+}
+.wro .wrap{
+  display:flex;align-items:center;gap:16px;
+  min-height:52px;padding-top:8px;padding-bottom:8px;flex-wrap:wrap;
+}
+/* the official mark is black type on transparent, so it needs a light chip to
+   survive on a charcoal page. same treatment as the Blackout marks. */
+.wro-mark{
+  flex:none;display:inline-flex;align-items:center;
+  background:#f3f0ea;border-radius:var(--r-chip);padding:5px 9px;
+}
+.wro-mark img{height:24px;width:auto}
+.wro-text{font-size:12px;letter-spacing:.10em;text-transform:uppercase;color:#ffd4e6}
+.wro-text b{color:#fff;font-weight:500}
+.wro .btn{margin-left:auto;border-color:rgba(255,79,154,.55);color:#ffd4e6}
+.wro .btn:hover{border-color:var(--wro);color:#fff;background:rgba(255,79,154,.14)}
+@media (max-width:640px){
+  .wro-text{font-size:11px;letter-spacing:.06em}
+  .wro .btn{margin-left:0}
+}
+
+/* --- nav -------------------------------------------------------------- */
+.nav{
+  position:sticky;top:0;z-index:40;
+  height:72px;display:flex;align-items:center;
+  background:rgba(19,19,21,.82);backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line);
+}
+.nav .wrap{display:flex;align-items:center;gap:28px;width:100%}
+.brand{display:flex;align-items:center;gap:10px;flex:none}
+.brand img.mk{width:26px;height:26px;border-radius:6px}
+.brand img.wm{height:20px;width:auto}
+.nav-links{display:flex;gap:26px;margin-left:12px}
+.nav-links a{
+  font-size:12.5px;letter-spacing:.08em;color:var(--muted);
+  transition:color .18s;white-space:nowrap;
+}
+.nav-links a:hover{color:var(--ink)}
+.nav .btn{margin-left:auto}
+@media (max-width:860px){.nav-links{display:none}}
+
+/* --- hero ------------------------------------------------------------- */
+.hero{padding:88px 0 72px;border-bottom:1px solid var(--line);position:relative;overflow:hidden}
+.hero::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(760px 420px at 12% 0%,rgba(224,164,92,.10),transparent 70%);
+}
+.hero .wrap{
+  position:relative;z-index:1;
+  display:grid;grid-template-columns:1.15fr .85fr;gap:64px;align-items:center;
+}
+.hero h1{font-size:clamp(3rem,7vw,5.6rem);margin:18px 0 20px}
+.hero h1 span{color:var(--accent)}
+.hero .lede{font-size:16px;max-width:44ch}
+.hero-cta{display:flex;gap:12px;margin-top:32px;flex-wrap:wrap}
+.shot{
+  border:1px solid var(--line-2);border-radius:var(--r-surface);
+  overflow:hidden;background:var(--bg-2);
+}
+/* the turf in this photo is louder than the rest of the palette, so pull the
+   saturation back a touch rather than recolouring anything. */
+.shot img{width:100%;height:100%;object-fit:cover;aspect-ratio:4/3;filter:brightness(.92) contrast(1.06) saturate(.82)}
+.shot-cap{
+  font-size:11.5px;color:var(--muted);letter-spacing:.04em;
+  padding:10px 14px;border-top:1px solid var(--line);
+}
+@media (max-width:900px){
+  .hero{padding:56px 0 56px}
+  .hero .wrap{grid-template-columns:1fr;gap:36px}
+}
+
+/* --- built on --------------------------------------------------------- */
+.builton{border-bottom:1px solid var(--line);padding:40px 0;background:var(--bg-2)}
+.builton .wrap{display:flex;align-items:center;gap:48px;flex-wrap:wrap}
+.builton p{font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink)}
+.builton ul{display:flex;gap:52px;list-style:none;flex-wrap:wrap;align-items:center}
+.builton li{position:relative;display:flex;cursor:default;border-radius:var(--r-chip)}
+.builton img{height:30px;opacity:.72;transition:opacity .2s,transform .2s cubic-bezier(.16,1,.3,1)}
+.builton li:hover img,.builton li:focus-visible img{opacity:1;transform:translateY(-3px)}
+/* name on hover, so the wall stays logos-only at rest */
+.builton li::after{
+  content:attr(data-label);position:absolute;bottom:calc(100% + 12px);left:50%;
+  background:var(--bg-3);border:1px solid var(--line-2);color:var(--ink);
+  font-size:11px;letter-spacing:.06em;padding:5px 10px;border-radius:var(--r-chip);
+  white-space:nowrap;opacity:0;pointer-events:none;
+  transform:translate(-50%,4px);transition:opacity .18s,transform .18s cubic-bezier(.16,1,.3,1);
+}
+.builton li:hover::after,.builton li:focus-visible::after{opacity:1;transform:translate(-50%,0)}
+
+/* --- sections --------------------------------------------------------- */
+section{scroll-margin-top:80px}
+.sec{padding:104px 0}
+.sec-head{max-width:56ch;margin-bottom:44px}
+.sec-head h2{font-size:clamp(2.1rem,4.4vw,3.4rem);margin-bottom:14px}
+.sec + .sec{border-top:1px solid var(--line)}
+
+/* --- bento ------------------------------------------------------------ */
+.bento{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
+.cell{
+  border:1px solid var(--line);border-radius:var(--r-surface);
+  background:var(--bg-2);padding:28px;position:relative;overflow:hidden;
+  transition:border-color .22s,transform .22s cubic-bezier(.16,1,.3,1);
+}
+.cell:hover{border-color:var(--line-2);transform:translateY(-2px)}
+.cell h3{font-family:var(--display);font-weight:400;font-size:1.6rem;margin-bottom:10px;line-height:1.15}
+.cell p{color:var(--muted);font-size:13.5px;max-width:46ch}
+.cell .num{
+  font-size:3.2rem;font-weight:300;color:var(--accent);
+  letter-spacing:-.03em;line-height:1;margin-bottom:8px;
+}
+.cell-a{grid-column:span 7;min-height:340px;display:flex;align-items:flex-end;padding:0}
+.cell-a .photo{position:absolute;inset:0}
+.cell-a .photo img{width:100%;height:100%;object-fit:cover;opacity:.5}
+.cell-a .photo::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,rgba(19,19,21,.15) 20%,rgba(19,19,21,.94) 92%);
+}
+.cell-a .body{position:relative;padding:28px}
+.cell-b{grid-column:span 5}
+.cell-c{grid-column:span 5}
+.cell-d{grid-column:span 7;min-height:280px;display:flex;align-items:flex-end;padding:0}
+.cell-d .photo{position:absolute;inset:0}
+.cell-d .photo img{width:100%;height:100%;object-fit:cover;opacity:.42}
+.cell-d .photo::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,rgba(19,19,21,.2) 15%,rgba(19,19,21,.95) 90%);
+}
+.cell-d .body{position:relative;padding:28px}
+.cell-e{
+  grid-column:span 12;
+  background:linear-gradient(115deg,rgba(224,164,92,.16),rgba(224,164,92,.03) 46%,var(--bg-2));
+  display:flex;gap:32px;align-items:center;justify-content:space-between;flex-wrap:wrap;
+}
+.cell-e .say{
+  font-family:var(--display);font-size:clamp(1.3rem,2.6vw,2rem);
+  color:var(--accent);max-width:22ch;line-height:1.2;
+}
+@media (max-width:900px){
+  .cell-a,.cell-b,.cell-c,.cell-d,.cell-e{grid-column:span 12}
+}
+
+/* --- updates ---------------------------------------------------------- */
+.updates{display:grid;grid-template-columns:.9fr 1.1fr;gap:56px;align-items:start}
+.log{list-style:none;display:grid;gap:2px}
+.log li{
+  display:grid;grid-template-columns:104px 1fr;gap:20px;
+  padding:20px 0;border-bottom:1px solid var(--line);
+}
+.log li:last-child{border-bottom:0}
+.log .tag{
+  font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--accent);padding-top:3px;
+}
+.log h4{font-size:14px;font-weight:500;letter-spacing:.02em;margin-bottom:5px}
+.log p{color:var(--muted);font-size:13px;max-width:52ch}
+@media (max-width:900px){
+  .updates{grid-template-columns:1fr;gap:32px}
+  .log li{grid-template-columns:1fr;gap:6px}
+}
+
+/* --- versions rail ---------------------------------------------------- */
+.rail{display:flex;gap:16px;overflow-x:auto;padding-bottom:14px;scroll-snap-type:x mandatory}
+.rail::-webkit-scrollbar{height:6px}
+.rail::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:99px}
+.ver{
+  flex:0 0 320px;scroll-snap-align:start;
+  border:1px solid var(--line);border-radius:var(--r-surface);
+  background:var(--bg-2);padding:26px;display:flex;flex-direction:column;gap:14px;
+  transition:border-color .22s,background .22s;
+}
+.ver:hover{border-color:var(--line-2)}
+.ver.now{border-color:var(--accent);background:linear-gradient(180deg,var(--accent-soft),var(--bg-2) 40%)}
+.ver .state{
+  align-self:flex-start;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  padding:4px 9px;border-radius:var(--r-chip);border:1px solid var(--line-2);color:var(--muted);
+}
+.ver.now .state{border-color:var(--accent);color:var(--accent)}
+.ver h3{font-family:var(--display);font-weight:400;font-size:2rem;line-height:1}
+.ver p{color:var(--muted);font-size:13px}
+.ver .kit{list-style:none;display:grid;gap:7px;margin-top:auto;padding-top:8px}
+.ver .kit li{font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:7px}
+
+/* --- pricing ---------------------------------------------------------- */
+.plans{display:grid;grid-template-columns:1fr 1.25fr;gap:16px;align-items:stretch}
+.plan{
+  border:1px solid var(--line);border-radius:var(--r-surface);
+  background:var(--bg-2);padding:30px;display:flex;flex-direction:column;gap:18px;
+}
+.plan.feature{
+  border-color:var(--accent);
+  background:linear-gradient(160deg,rgba(224,164,92,.15),var(--bg-2) 52%);
+}
+.plan h3{font-size:13px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--muted)}
+.plan.feature h3{color:var(--accent)}
+.price{font-family:var(--display);font-size:clamp(2.4rem,5vw,3.6rem);line-height:1}
+.price small{font-family:var(--mono);font-size:12px;letter-spacing:.1em;color:var(--muted);display:block;margin-top:8px}
+.plan ul{list-style:none;display:grid;gap:10px;font-size:13px;color:var(--muted)}
+.plan ul li{padding-left:18px;position:relative}
+.plan ul li::before{content:"+";position:absolute;left:0;color:var(--accent)}
+.plan .btn{align-self:flex-start}
+.plan .foot{margin-top:auto;display:grid;gap:14px;padding-top:20px;justify-items:start}
+.plan .foot p{font-size:12.5px;color:var(--muted);max-width:42ch}
+.plan-side{display:grid;gap:16px}
+.disclaimer{
+  margin-top:22px;font-size:12px;color:var(--muted);
+  border-left:2px solid var(--accent);padding-left:14px;max-width:70ch;
+}
+@media (max-width:900px){.plans{grid-template-columns:1fr}}
+
+/* --- specs ------------------------------------------------------------ */
+.specs{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:40px 32px}
+.spec h4{
+  font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);
+  padding-bottom:12px;border-bottom:1px solid var(--line);margin-bottom:16px;font-weight:500;
+}
+.spec dl{display:grid;gap:12px;font-size:13px}
+.spec dt{color:var(--ink);font-weight:400}
+.spec dd{color:var(--muted);font-size:12.5px}
+
+/* --- closing CTA + footer -------------------------------------------- */
+.close{
+  padding:112px 0;text-align:center;border-top:1px solid var(--line);
+  background:radial-gradient(680px 340px at 50% 0%,rgba(224,164,92,.12),transparent 72%);
+}
+.close h2{font-size:clamp(2.4rem,6vw,4.4rem);margin-bottom:18px}
+.close .lede{margin:0 auto 34px}
+footer{border-top:1px solid var(--line);padding:34px 0;font-size:12px;color:var(--muted)}
+footer .wrap{display:flex;gap:20px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+footer nav{display:flex;gap:22px;flex-wrap:wrap}
+footer nav a:hover{color:var(--ink)}
+
+/* --- hero entrance ----------------------------------------------------- */
+/* above the fold, so it animates on load rather than waiting on an observer.
+   nothing here starts hidden for keyboard or reduced-motion users. */
+@media (prefers-reduced-motion:no-preference){
+  .up{animation:up .7s cubic-bezier(.16,1,.3,1) both}
+  .up:nth-child(2){animation-delay:.06s}
+  .up:nth-child(3){animation-delay:.12s}
+  .up:nth-child(4){animation-delay:.18s}
+  .hero .shot.up{animation-delay:.1s}
+}
+@keyframes up{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+
+/* --- scroll reveal ---------------------------------------------------- */
+.rv{opacity:0;transform:translateY(22px)}
+@media (prefers-reduced-motion:no-preference){
+  .rv{transition:opacity .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1)}
+}
+.rv.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){
+  .rv{opacity:1;transform:none}
+  .cell:hover,.btn:active{transform:none}
+}
+</style>
+</head>
+<body>
+
+<!-- WRO strip. Pink is scoped to this bar only, everything below is tan. -->
+<div class="wro">
+  <div class="wrap">
+    <span class="wro-mark"><img src="assets/wro.png" width="136" height="24" alt="World Robot Olympiad"></span>
+    <span class="wro-text">Competing at <b>World Robot Olympiad 2026</b> · Future Innovators</span>
+    <a class="btn btn-ghost btn-sm" href="#" title="Link coming soon">Learn more</a>
+  </div>
+</div>
+
+<nav class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Blackout home">
+      <img class="mk" src="assets/mark.png" alt="">
+      <img class="wm" src="assets/wordmark.png" alt="Blackout">
+    </a>
+    <div class="nav-links">
+      <a href="#system">System</a>
+      <a href="#updates">Updates</a>
+      <a href="#versions">Versions</a>
+      <a href="#specs">Specs</a>
+      <a href="#pricing">Pricing</a>
+    </div>
+    <a class="btn btn-primary btn-sm" href="#pricing">Get Blackout</a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <div>
+      <p class="eyebrow up">Introducing Blackout V3</p>
+      <h1 class="display up">Send it into<br>the <span>dark.</span></h1>
+      <p class="lede up">A recon rover for places people should not enter. It drives in, looks around, and reports back out loud.</p>
+      <div class="hero-cta up">
+        <a class="btn btn-primary" href="#system">Learn more</a>
+        <a class="btn btn-ghost" href="#specs">Read the specs</a>
+      </div>
+    </div>
+    <figure class="shot up">
+      <img src="assets/rover.jpg" width="1280" height="960" fetchpriority="high"
+           alt="The Blackout rover: black printed chassis on four knobbly wheels, ultrasonic sensor and camera mounted up front.">
+      <figcaption class="shot-cap">Blackout V3, parked between runs.</figcaption>
+    </figure>
+  </div>
+</header>
+
+<div class="builton">
+  <div class="wrap">
+    <p>Built on</p>
+    <ul>
+      <li tabindex="0" data-label="Arduino Giga R1 WiFi"><img src="https://cdn.simpleicons.org/arduino/f3f0ea" alt="Arduino" height="30" loading="lazy"></li>
+      <li tabindex="0" data-label="ESP32-CAM, AI-Thinker"><img src="https://cdn.simpleicons.org/espressif/f3f0ea" alt="Espressif" height="30" loading="lazy"></li>
+      <li tabindex="0" data-label="Node.js console server"><img src="https://cdn.simpleicons.org/nodedotjs/f3f0ea" alt="Node.js" height="30" loading="lazy"></li>
+      <li tabindex="0" data-label="Socket.IO live telemetry"><img src="https://cdn.simpleicons.org/socketdotio/f3f0ea" alt="Socket.IO" height="30" loading="lazy"></li>
+      <li tabindex="0" data-label="Bluetooth Low Energy link"><img src="https://cdn.simpleicons.org/bluetooth/f3f0ea" alt="Bluetooth Low Energy" height="30" loading="lazy"></li>
+      <li tabindex="0" data-label="Chrome Web Bluetooth"><img src="https://cdn.simpleicons.org/googlechrome/f3f0ea" alt="Google Chrome" height="30" loading="lazy"></li>
+    </ul>
+  </div>
+</div>
+
+<section class="sec" id="system">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <h2 class="display">One rover, three machines, no wires out.</h2>
+      <p class="lede">The board drives. The camera streams. The laptop thinks. Any one of them can drop without stranding the robot on the field.</p>
+    </div>
+
+    <div class="bento">
+      <article class="cell cell-a rv">
+        <div class="photo"><img src="assets/frame-relic.jpg" alt="Dim camera frame of a painted cave wall with a pale figure at the left edge." loading="lazy"></div>
+        <div class="body">
+          <h3>Sage rides along</h3>
+          <p>An onboard scout persona on Cerebras. It reads the sensor line, pulls a still off the camera, names what it is looking at, and says it out loud to the operator and the judges.</p>
+        </div>
+      </article>
+
+      <article class="cell cell-b rv">
+        <h3>Routines run on the board</h3>
+        <p>Motion sequences live in the firmware, not in the laptop. Lose Bluetooth mid-run and the rover finishes the run anyway, then waits to be found.</p>
+      </article>
+
+      <article class="cell cell-c rv">
+        <div class="num">10 Hz</div>
+        <h3>Telemetry you can watch</h3>
+        <p>One CSV line every 100 ms over BLE notify: temperature, humidity, distance, and the slot for every sensor still on the bench.</p>
+      </article>
+
+      <article class="cell cell-d rv">
+        <div class="photo"><img src="assets/frame-wall.jpg" alt="Camera frame of a textured cave wall lit by the rover headlamp." loading="lazy"></div>
+        <div class="body">
+          <h3>Every look is logged</h3>
+          <p>Each analysis saves the exact frame it was based on. The findings log is the run history, and it is what the team reviews after a heat.</p>
+        </div>
+      </article>
+
+      <article class="cell cell-e rv">
+        <p class="say">It talks. In English and in Spanish.</p>
+        <p>Neural text to speech through Deepgram, falling back to Edge voices when the key is missing. The operator drives with a gamepad and listens instead of reading tiles.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="updates">
+  <div class="wrap updates">
+    <div class="rv">
+      <h2 class="display" style="font-size:clamp(2.1rem,4.4vw,3.4rem);margin-bottom:14px">Shipped in V3</h2>
+      <p class="lede">Everything here is on the robot today. The roadmap lives one section down, clearly marked as not built yet.</p>
+    </div>
+    <ul class="log rv">
+      <li>
+        <span class="tag">Language</span>
+        <div>
+          <h4>BLK, a block language for runs</h4>
+          <p>A drag and drop editor in the console. Compose a run out of blocks, save it, send it. Sage can write one for you and hand it back for edits.</p>
+        </div>
+      </li>
+      <li>
+        <span class="tag">Control</span>
+        <div>
+          <h4>Gamepad drive</h4>
+          <p>A controller maps straight onto the same BLE command channel the dashboard uses. Manual driving and scripted routines share one path.</p>
+        </div>
+      </li>
+      <li>
+        <span class="tag">Tooling</span>
+        <div>
+          <h4>One command flashes both boards</h4>
+          <p>The deploy script finds the Giga R1 and the ESP32-CAM, compiles each, and uploads without anyone guessing at port names.</p>
+        </div>
+      </li>
+      <li>
+        <span class="tag">Vision</span>
+        <div>
+          <h4>Headlamp under AI control</h4>
+          <p>Sage raises the camera lamp when a frame comes back too dark, takes the shot again, and drops it back down.</p>
+        </div>
+      </li>
+      <li>
+        <span class="tag">Reliability</span>
+        <div>
+          <h4>Camera reconnects itself</h4>
+          <p>The stream retries on drop instead of leaving a dead panel, and an analysis without a camera says so rather than spinning forever.</p>
+        </div>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<section class="sec" id="versions">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <p class="eyebrow">Roadmap</p>
+      <h2 class="display">Three rebuilds to get here.</h2>
+      <p class="lede">Each version threw away something the last one was proud of. Drag sideways to walk through them.</p>
+    </div>
+    <div class="rail rv">
+      <article class="ver">
+        <span class="state">Retired</span>
+        <h3 class="display">Blackout V1</h3>
+        <p>Two boards and a relay. A Mega read the sensors, an Uno drove the motors, and an ESP32 module carried Bluetooth between them.</p>
+        <ul class="kit">
+          <li>Mega 2560 plus Uno R3</li>
+          <li>Serial bridge between boards</li>
+          <li>Retired for cable count</li>
+        </ul>
+      </article>
+      <article class="ver">
+        <span class="state">Retired</span>
+        <h3 class="display">Blackout V2</h3>
+        <p>Collapsed to a single Uno R4 WiFi, added the ESP32-CAM on its own network, and introduced Sage as the voice of the robot.</p>
+        <ul class="kit">
+          <li>One board, BLE only</li>
+          <li>MJPEG camera, independent power</li>
+          <li>First on-board routines</li>
+        </ul>
+      </article>
+      <article class="ver now">
+        <span class="state">Shipping now</span>
+        <h3 class="display">Blackout V3</h3>
+        <p>Moved to the Giga R1 WiFi, runs became a language, and the whole robot flashes from one command. This is the competition build.</p>
+        <ul class="kit">
+          <li>Arduino Giga R1 WiFi</li>
+          <li>BLK block language</li>
+          <li>Findings log with saved frames</li>
+        </ul>
+      </article>
+      <article class="ver">
+        <span class="state">In design</span>
+        <h3 class="display">Blackout V4</h3>
+        <p>Not built. The open question is closed-loop motion: every turn today is a guess in milliseconds that drifts with battery charge.</p>
+        <ul class="kit">
+          <li>Wheel encoders for real angles</li>
+          <li>On-board vision, no laptop in the loop</li>
+          <li>Gas and orientation sensing</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="specs">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <h2 class="display">What is actually on the robot.</h2>
+      <p class="lede">Wired and working today. Fields with no sensor behind them report zero rather than a number nobody measured.</p>
+    </div>
+    <div class="specs rv">
+      <div class="spec">
+        <h4>Compute</h4>
+        <dl>
+          <dt>Arduino Giga R1 WiFi</dt>
+          <dd>Sensors, motors, routines, BLE endpoint</dd>
+          <dt>ESP32-CAM, AI-Thinker</dt>
+          <dd>Own WiFi, own power, MJPEG only</dd>
+          <dt>Operator laptop</dt>
+          <dd>Node console, Sage, text to speech</dd>
+        </dl>
+      </div>
+      <div class="spec">
+        <h4>Sensing</h4>
+        <dl>
+          <dt>DHT11</dt>
+          <dd>Air temperature and humidity, pin D2</dd>
+          <dt>HC-SR04</dt>
+          <dd>Forward distance, 60 ms between pings</dd>
+          <dt>OV2640</dt>
+          <dd>Stills for analysis, live stream for the operator</dd>
+        </dl>
+      </div>
+      <div class="spec">
+        <h4>Drive</h4>
+        <dl>
+          <dt>L298N H-bridge</dt>
+          <dd>Two geared DC motors, PWM on both channels</dd>
+          <dt>Open loop</dt>
+          <dd>Turns are timed, so they get tuned on the field</dd>
+          <dt>Headlamp</dt>
+          <dd>Camera LED, dim by default, raised for dark frames</dd>
+        </dl>
+      </div>
+      <div class="spec">
+        <h4>Link</h4>
+        <dl>
+          <dt>BLE notify</dt>
+          <dd>Telemetry out and commands in, same channel</dd>
+          <dt>Web Bluetooth</dt>
+          <dd>The browser holds the radio link, not the server</dd>
+          <dt>Local network</dt>
+          <dd>Camera reachable at blackout-cam.local</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="pricing">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <p class="eyebrow">Pricing</p>
+      <h2 class="display">Build it yourself, or take ours.</h2>
+      <p class="lede">Same firmware in every tier. What changes is how much of the soldering, tuning and swearing is already done.</p>
+    </div>
+    <div class="plans">
+      <div class="plan-side">
+        <article class="plan rv">
+          <h3>Bench</h3>
+          <div class="price display">$0<small>Open source, bring your own boards</small></div>
+          <ul>
+            <li>Firmware, console and BLK editor</li>
+            <li>Wiring map and routine reference</li>
+            <li>Your own AI and voice keys</li>
+          </ul>
+          <div class="foot">
+            <a class="btn btn-ghost" href="https://github.com/jesodium/Blackout-Explorations">Clone the repo</a>
+          </div>
+        </article>
+        <article class="plan rv">
+          <h3>Expedition</h3>
+          <div class="price display">$6,900<small>From, per three-rover team</small></div>
+          <ul>
+            <li>Three field units and a spares crate</li>
+            <li>Routine tuning on your own floor</li>
+            <li>A person in the pit on event day</li>
+          </ul>
+          <div class="foot">
+            <a class="btn btn-ghost" href="#">Talk to the team</a>
+          </div>
+        </article>
+      </div>
+      <article class="plan feature rv">
+        <h3>Field unit</h3>
+        <div class="price display">$1,485<small>One rover, assembled and flashed</small></div>
+        <ul>
+          <li>Chassis built, wired and labelled</li>
+          <li>Both boards flashed and paired</li>
+          <li>Turn timings tuned on a real floor</li>
+          <li>Sage set up in English and Spanish</li>
+          <li>Findings log and console preloaded</li>
+          <li>One season of firmware updates</li>
+        </ul>
+        <div class="foot">
+          <p>Arrives paired. Charge it, open the console, run a heat the same afternoon.</p>
+          <a class="btn btn-primary" href="#">Get Blackout</a>
+        </div>
+      </article>
+    </div>
+    <p class="disclaimer rv">Competition fiction: Blackout is a WRO 2026 Future Innovators project, not a company. The prices above are part of the pitch. Nothing here is for sale, and the robot, the code and the camera frames are real.</p>
+  </div>
+</section>
+
+<section class="close">
+  <div class="wrap">
+    <h2 class="display rv">The cave is dark.<br>The rover is not scared.</h2>
+    <p class="lede rv">Read how it works, or watch what it found on the last run.</p>
+    <div class="hero-cta rv" style="justify-content:center">
+      <a class="btn btn-primary" href="#pricing">Get Blackout</a>
+      <a class="btn btn-ghost" href="https://github.com/jesodium/Blackout-Explorations">Read the docs</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="brand">
+      <img class="mk" src="assets/mark.png" alt="" width="26" height="26">
+      <span>Blackout · WRO 2026 Future Innovators</span>
+    </div>
+    <nav>
+      <a href="#system">System</a>
+      <a href="#versions">Versions</a>
+      <a href="#specs">Specs</a>
+      <a href="#pricing">Pricing</a>
+      <a href="https://github.com/jesodium/Blackout-Explorations">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+// Reveal on scroll. IntersectionObserver, so no scroll listener on the main
+// thread. Reduced motion skips it entirely and everything starts visible.
+(function () {
+  var items = document.querySelectorAll('.rv');
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) {
+    items.forEach(function (el) { el.classList.add('in'); });
+    return;
+  }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      e.target.classList.add('in');
+      io.unobserve(e.target);
+    });
+  }, { threshold: 0.15, rootMargin: '0px 0px -8% 0px' });
+  items.forEach(function (el, i) {
+    el.style.transitionDelay = (Math.min(i, 4) * 60) + 'ms';
+    io.observe(el);
+  });
+})();
+</script>
+</body>
+</html>

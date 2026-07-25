@@ -1,13 +1,9 @@
-// uno r4 wifi — sensor hub + motion routines. reads sensors, broadcasts csv over
+// giga r1 wifi — sensor hub + motion routines. reads sensors, broadcasts csv over
 // ble notify. same "s:" format the server already parses (temp,humid,dist,
 // smoke,airq,roll,pitch,yaw,co,co_alert,pressure,routine). everything from co
 // onward is optional, so older lines without them still parse.
 // also emits "e:analyze" lines: routine events for the dashboard, not
 // telemetry. the server ignores anything that isn't "s:".
-// order matters: arduinographics before arduino_led_matrix.
-#include <ArduinoGraphics.h>
-#include <Arduino_LED_Matrix.h>
-#include <TextAnimation.h>
 #include <ArduinoBLE.h>
 #include <DHT11.h>
 #include "routines.h" // op/step + the presentation and run tables
@@ -52,13 +48,8 @@ const Step* routine = nullptr; // null = idle
 uint8_t stepIdx = 0;
 unsigned long stepStart = 0;
 
-ArduinoLEDMatrix matrix;
 DHT11 dht(DHT_PIN);
 int dhtTemp = 0, dhtHumid = 0; // last good dht11 read, cached between polls
-// max frames ~= text length * font width (5px/char for font_5x7) — 80 covers
-// "  blackout  " with headroom.
-TEXT_ANIMATION_DEFINE(matrixAnim, 80)
-volatile bool matrixReplay = false;
 
 unsigned long lastSend = 0;
 unsigned long lastDht = 0;
@@ -75,19 +66,6 @@ void setup() {
   pinMode(ENA, OUTPUT); pinMode(ENB, OUTPUT);
   analogWrite(ENA, 0); analogWrite(ENB, 0); // stopped until told otherwise
 
-  matrix.begin();
-  matrix.beginDraw();
-  matrix.stroke(0xFFFFFFFF);
-  matrix.textFont(Font_5x7);
-  matrix.textScrollSpeed(60);
-  matrix.setCallback(matrixDone);
-  matrix.beginText(0, 1, 0xFFFFFF);
-  matrix.println("BLACKOUT ");
-  matrix.endTextAnimation(SCROLL_LEFT, matrixAnim);
-  matrix.loadTextAnimationSequence(matrixAnim);
-  matrix.play();
-  matrix.endDraw();
-
   if (!BLE.begin()) {
     while (1) { Serial.println("BLE init failed"); delay(1000); }
   }
@@ -103,8 +81,6 @@ void setup() {
   BLE.advertise();
   Serial.println("BLE advertising as BLACKOUT-V1");
 }
-
-void matrixDone() { matrixReplay = true; } // irq context — keep it fast
 
 // both motors forward at `speed` (0-255 pwm). if a motor spins backward, swap
 // that motor's two output wires at the l298n screw terminals — don't flip the
@@ -265,15 +241,6 @@ void loop() {
   tickRoutine(); // before the send_interval return below — that skips the rest
                  // of loop() most iterations, which would stall the routine.
   tickDrive();
-
-  if (matrixReplay) { // loop the scroll forever
-    matrixReplay = false;
-    matrix.beginText(0, 1, 0xFFFFFF);
-    matrix.println("BLACKOUT ");
-    matrix.endTextAnimation(SCROLL_LEFT, matrixAnim);
-    matrix.loadTextAnimationSequence(matrixAnim);
-    matrix.play();
-  }
 
   unsigned long now = millis();
   if (now - lastSend < SEND_INTERVAL) return;

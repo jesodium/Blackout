@@ -3,21 +3,20 @@ name: Arduino Compile
 on:
   push:
     paths:
-      - "arduino-uno-r4/**"
+      - "giga-r1/**"
   pull_request:
     paths:
-      - "arduino-uno-r4/**"
+      - "giga-r1/**"
 
 jobs:
-  compile-uno-r4:
+  compile-giga-r1:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/compile-sketches@v1
         with:
-          fqbn: arduino:renesas_uno:unor4wifi
-          sketch-paths: arduino-uno-r4/main
+          fqbn: arduino:mbed_giga:giga
+          sketch-paths: giga-r1/main
           libraries: |
             - name: ArduinoBLE
-            - name: ArduinoGraphics
             - name: DHT11
