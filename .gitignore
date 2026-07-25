@@ -53,6 +53,8 @@ step/
 *~
 
 # ── Misc ────────────────────────────────────────────────
+# What cmds/flash.sh last put on each board — local machine state
+.last-flash
 /advanced-project-context
 *.log
 scratchpad/

@@ -1215,7 +1215,6 @@ function Topbar({ connected, ports, currentPort, bridge, onBridge, connMode, onC
       <div class="brand">
         <span class="brand-tick" aria-hidden="true"></span>
         <span class="brand-name">Blackout</span>
-        <span class="brand-ver">V3</span>
       </div>
       <p class="lamp visually-hidden" role="status" aria-live="polite">
         ${connected ? t("mast.linkLive") : t("mast.noSignal")}
@@ -1284,6 +1283,115 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
     </div>`;
 }
 
+/* flash.sh draws a braille spinner with \r — treat CR as "rewind to start of
+   line" so the log pane shows one live line instead of thousands of frames. */
+function appendLog(log, chunk) {
+  return chunk.split(/(\r\n|\n|\r)/).reduce((acc, tok) => {
+    if (tok === "\r") return acc.slice(0, acc.lastIndexOf("\n") + 1);
+    if (tok === "\r\n") return acc + "\n";
+    return acc + tok;
+  }, log);
+}
+
+// which rover is on the wire. the giga is V3, the uno r4 is V2 — flash.sh builds
+// V2 straight out of git history, so both are flashable from here.
+const roverModel = (b) => b.giga ? "Blackout V3" : b.unor4 ? "Blackout V2" : "Blackout";
+const anyBoard = (b) => !!(b.giga || b.unor4 || b.esp32cam);
+
+/* usb board plugged in = someone is setting the rover up. that's the only thing
+   that surfaces the updater — there's no permanent button for it. */
+function UpdateBar({ boards, onUpdate }) {
+  const stale = boards.status !== "current";
+  return html`
+    <div class=${"update-bar" + (stale ? " is-stale" : "")} role="status">
+      <span class="lamp-dot ${stale ? "is-abort" : "is-go"}" aria-hidden="true"></span>
+      <span class="update-bar-msg">
+        ${t("update.connected", { model: roverModel(boards) })} · ${t("update.st." + boards.status)}
+      </span>
+      <button type="button" class="serial-btn" onClick=${onUpdate}>${t("update.button")}</button>
+    </div>`;
+}
+
+// flash.sh's stdout is the only progress signal there is — arduino-cli's own
+// percentages go to its temp log, not the stream. what does come through is one
+// "▸" per board and one "✔" per finished compile/upload: two ticks per board.
+const FLASH_TICKS_PER_BOARD = 2;
+function flashProgress(log, boards, phase) {
+  const heads = [...log.matchAll(/^▸ (.+?) @ /gm)].map(m => m[1]);
+  const ticks = (log.match(/✔/g) || []).length;
+  const planned = ["giga", "unor4", "esp32cam"].filter(k => boards[k]).length;
+  const total = Math.max(planned, heads.length, 1) * FLASH_TICKS_PER_BOARD;
+  const board = heads[heads.length - 1] || null;
+  const step = !board ? "prep" : ticks % 2 === 0 ? "compile" : "upload";
+  // never show a full bar until the script actually exits — 99 is "nearly", not "done"
+  return { pct: phase === "done" ? 100 : Math.min(99, Math.round((ticks / total) * 100)), board, step };
+}
+
+/* sage's face + bar. the eyes blink while work is happening and settle into
+   ^_^ / x_x the moment the script exits — the bar is the actual read-out. */
+const SAGE_EYES = { work: "O", ok: "^", error: "x" };
+function FlashProgress({ log, boards, phase, code }) {
+  const { pct, board, step } = flashProgress(log, boards, phase);
+  const state = phase !== "done" ? "work" : code === 0 ? "ok" : "error";
+  const eye = SAGE_EYES[state];
+  const label = step === "prep" ? t("update.prep")
+    : t(step === "compile" ? "update.compiling" : "update.uploading", { board });
+  return html`
+    <div class=${"flash-prog is-" + state}>
+      <div class="sage-face" aria-hidden="true">
+        <span class="sage-eye">${eye}</span><span class="sage-mouth">_</span><span class="sage-eye">${eye}</span>
+      </div>
+      <div class="flash-bar" role="progressbar" aria-valuenow=${pct} aria-valuemin="0" aria-valuemax="100"
+        aria-label=${t("update.title")}>
+        <div class="flash-bar-fill" style=${{ width: pct + "%" }}></div>
+      </div>
+      <div class="flash-prog-line">
+        <span>${phase === "done" ? (code === 0 ? t("update.done") : t("update.error")) : label}</span>
+        <span class="flash-pct">${pct}%</span>
+      </div>
+    </div>`;
+}
+
+/* update blackout — self-serve firmware flash over usb. detect → flashing → done */
+function UpdateModal({ open, phase, boards, log, code, onFlash, onClose }) {
+  const logRef = useRef(null);
+  useEffect(() => { const el = logRef.current; if (el) el.scrollTop = el.scrollHeight; }, [log]);
+  const locked = phase === "flashing"; // no way out mid-flash — pulling the rug corrupts the board
+  const board = (label, ok, note) => html`
+    <div class=${"flash-board " + (ok ? "is-ok" : "is-missing")}>
+      ${label}<small>${ok ? (note || t("update.detected")) : t("update.notDetected")}</small>
+    </div>`;
+  return html`
+    <div class=${"blk-modal" + (open === "closing" ? " is-closing" : "")}
+      onClick=${(e) => { if (e.target === e.currentTarget && !locked) onClose(); }}>
+      <div class="blk-modal-frame update-frame" role="dialog" aria-label=${t("update.title")}>
+        <span class="update-title">${t("update.title")}</span>
+        ${phase === "detect" && html`
+          <p>${anyBoard(boards) ? t("update.st." + boards.status) : t("update.plugin")}</p>
+          <div class="flash-boards">
+            ${board(t("update.esp32cam"), boards.esp32cam)}
+            ${board(t("update.mainboard"), boards.giga || boards.unor4,
+              boards.giga ? "Giga R1 · V3" : boards.unor4 ? "Uno R4 · V2" : null)}
+          </div>`}
+        ${(phase === "flashing" || phase === "done") && html`
+          <${FlashProgress} log=${log} boards=${boards} phase=${phase} code=${code} />
+          <div class="flash-log" role="log" ref=${logRef}>${log || "…"}</div>`}
+        ${phase === "flashing" && html`<p>${t("update.flashing")}</p>`}
+        ${phase === "done" && html`
+          <p class=${"flash-status " + (code === 0 ? "is-ok" : "is-error")}>
+            ${code === 0 ? t("update.done") : t("update.error")}
+          </p>`}
+        ${!locked && html`
+          <div class="update-actions">
+            ${phase === "detect" && html`
+              <button type="button" class="serial-btn" disabled=${!anyBoard(boards)}
+                onClick=${onFlash}>${t("update.flashNow")}</button>`}
+            <button type="button" class="serial-btn" onClick=${onClose}>${t("update.close")}</button>
+          </div>`}
+      </div>
+    </div>`;
+}
+
 /* toasts */
 function Toasts({ items }) {
   return html`<div class="toasts">${items.map(t => html`<div key=${t.id} class=${"toast k-" + t.kind}>${t.msg}</div>`)}</div>`;
@@ -1316,6 +1424,11 @@ function App() {
   const [drawerTab, setDrawerTab] = useState("logs");
   const [warn, setWarn] = useState(false);     // first-open debug warning gate
   const [warnCount, setWarnCount] = useState(3);
+  const [updateOpen, setUpdateOpen] = useState(false); // false | "open" | "closing"
+  const [flashPhase, setFlashPhase] = useState("choose");
+  const [flashBoards, setFlashBoards] = useState({ giga: false, esp32cam: false, unor4: false, status: "none" });
+  const [flashLog, setFlashLog] = useState("");
+  const [flashCode, setFlashCode] = useState(null);
   const [speaking, setSpeaking] = useState(false);
   // chats = briefed recon sessions. each holds its own mission + conversation.
   const [chats, setChats] = useState(() => { try { return JSON.parse(localStorage.getItem("chats") || "[]"); } catch { return []; } });
@@ -1432,6 +1545,8 @@ function App() {
       if (!d?.question) return;
       addLog(`${d.kind === "find" ? "find" : "ask"} "${d.question}" → ${d.yes ? "YES" : "no"}${d.text ? " · " + d.text : ""}`, d.yes ? "ai" : "system");
     });
+    socket.on("flash-log", d => setFlashLog(l => appendLog(l, d?.chunk || "")));
+    socket.on("flash-done", d => { setFlashCode(d?.code ?? -1); setFlashPhase("done"); });
     socket.on("serial-line", d => {
       if (!d?.line) return;
       setSerialLines(p => [...p, {
@@ -1775,6 +1890,35 @@ function App() {
     return () => clearInterval(id);
   }, [warn]);
 
+  const openUpdate = useCallback(() => {
+    setFlashPhase("detect"); // model is already known from the poll — nothing to pick
+    setFlashLog(""); setFlashCode(null);
+    setUpdateOpen("open");
+  }, []);
+  const closeUpdate = useCallback(() => {
+    setUpdateOpen(o => o === "open" ? "closing" : o);
+    setTimeout(() => setUpdateOpen(false), 240);
+  }, []);
+  const startFlash = useCallback(() => {
+    setFlashLog(""); setFlashCode(null); setFlashPhase("flashing");
+    fetch("/api/flash/start", { method: "POST" }).then(r => {
+      if (!r.ok) throw new Error(r.status === 409 ? "a flash is already running" : `server said ${r.status}`);
+    }).catch(err => {
+      setFlashLog(err.message); setFlashCode(-1); setFlashPhase("done");
+    });
+  }, []);
+
+  // watch usb for a board the whole time the dashboard is up — plugging one in is
+  // what reveals the updater. tightens up while the modal is open, and backs off
+  // entirely mid-flash so board list doesn't poke the port arduino-cli is using.
+  useEffect(() => {
+    if (flashPhase === "flashing") return;
+    const poll = () => fetch("/api/flash/boards").then(r => r.json()).then(setFlashBoards).catch(() => {});
+    poll();
+    const id = setInterval(poll, updateOpen === "open" ? 1200 : 5000);
+    return () => clearInterval(id);
+  }, [updateOpen, flashPhase]);
+
   // backtick jumps to the serial tab of the console drawer (ignored while typing in a field).
   useEffect(() => {
     const onKey = (e) => {
@@ -1802,6 +1946,8 @@ function App() {
           ping=${ping} packets=${packets} uptime=${uptime} onPort=${switchPort}
           lang=${lang} onLang=${changeLang} onConsole=${toggleDrawer} consoleOpen=${drawer === "open"} />
 
+        ${flashBoards.status !== "none" && html`<${UpdateBar} boards=${flashBoards} onUpdate=${openUpdate} />`}
+
         <main class="cockpit" id="sensors">
           <div class="col-main">
             <div class="stage-row">
@@ -1825,6 +1971,11 @@ function App() {
       </div>
 
       <${Toasts} items=${toasts} />
+
+      ${updateOpen && createPortal(html`
+        <${UpdateModal} open=${updateOpen} phase=${flashPhase} boards=${flashBoards}
+          log=${flashLog} code=${flashCode}
+          onFlash=${startFlash} onClose=${closeUpdate} />`, document.body)}
 
       ${warn && createPortal(html`
         <div class="blk-modal" onClick=${(e) => { if (e.target === e.currentTarget) setWarn(false); }}>
