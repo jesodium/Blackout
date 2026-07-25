@@ -12,7 +12,7 @@ r = subprocess.run(['arduino-cli', 'board', 'list', '--format', 'json'],
 data = json.loads(r.stdout)
 
 profiles = [
-    ('arduino-uno-r4/main', 'arduino:renesas_uno:unor4wifi', 'usbmodem',  'Uno R4 WiFi'),
+    ('giga-r1/main',        'arduino:mbed_giga:giga',        'usbmodem',  'Giga R1 WiFi'),
     ('esp32-cam/main',      'esp32:esp32:esp32cam',          'usbserial',   'ESP32-CAM'),
     ('esp32-cam/main',      'esp32:esp32:esp32cam',          'wchusbserial','ESP32-CAM'),
 ]
@@ -53,7 +53,7 @@ spin() {
 
 boards=$(detect_boards)
 if [[ -z "$boards" ]]; then
-  echo "No boards found. Connect Uno R4 or ESP32-CAM." >&2
+  echo "No boards found. Connect Giga R1 or ESP32-CAM." >&2
   exit 1
 fi
 
@@ -73,7 +73,7 @@ while IFS='|' read -r dir fqbn port label; do
     sleep 1
   fi
 
-  # Uno R4 re-enumerates after compile — get fresh port
+  # Giga R1 re-enumerates after compile — get fresh port
   fresh=$(detect_boards | grep "^$dir|" | head -1 | cut -d'|' -f3)
   port="${fresh:-$port}"
 

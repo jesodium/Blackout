@@ -1,15 +1,15 @@
 WRO 2026 Project. Future Innovators.
 
-Single Arduino Uno R4 WiFi (sensors, BLE) + Node.js dashboard.
+Single Arduino Giga R1 WiFi (sensors, BLE) + Node.js dashboard.
 
 ## Quick start
 
-### 1. Sensors (Uno R4 WiFi)
+### 1. Sensors (Giga R1 WiFi)
 
 ```bash
-cd arduino-uno-r4/main
-arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi
-arduino-cli upload --port /dev/cu.usbmodem1101 --fqbn arduino:renesas_uno:unor4wifi
+cd giga-r1/main
+arduino-cli compile --fqbn arduino:mbed_giga:giga
+arduino-cli upload --port /dev/cu.usbmodem1101 --fqbn arduino:mbed_giga:giga
 ```
 
 Sensors: DHT11, HSRC04
@@ -30,7 +30,7 @@ toggle to pair.
 ## Project layout
 
 ```
-├── arduino-uno-r4/   Uno R4 WiFi — sensors + BLE
+├── giga-r1/          Giga R1 WiFi — sensors + BLE
 ├── esp32-cam/        ESP32-CAM — standalone MJPEG streamer (LED debug: boot=slow blink, error=rapid, ok=steady)
 ├── server/           Node.js dashboard + AI
 ├── OUTDATED/         Retired Mega 2560 + Uno R3 two-board setup (porting reference only)

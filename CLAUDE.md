@@ -1,11 +1,11 @@
 # WRO 2026 — Blackout V1
 
-WRO 2026 robot project. Single Arduino Uno R4 WiFi (sensor hub, BLE) plus a
+WRO 2026 robot project. Single Arduino Giga R1 WiFi (sensor hub, BLE) plus a
 Node.js PC server/dashboard.
 
 ## Layout
 
-- `arduino-uno-r4/` — Uno R4 WiFi (`main/`): sensor hub + motor driver + BLE
+- `giga-r1/` — Giga R1 WiFi (`main/`): sensor hub + motor driver + BLE
   command endpoint, one board. Reads sensors, broadcasts CSV over BLE notify;
   DHT11 (temp/humidity, D2) and HC-SR04 (ultrasonic, D11/D12) wired so far,
   rest of the CSV field set sends 0 until a sensor lands. Also drives an
@@ -15,7 +15,7 @@ Node.js PC server/dashboard.
   the board so a BLE drop mid-run doesn't strand it. `motor_test/` is a
   bench-only sketch for wiring/direction checks, not part of the build.
 - `esp32-cam/` — ESP32-CAM (AI-Thinker) (`main/`): standalone MJPEG streamer
-  on its own WiFi + power. Never touches the Uno/BLE path; the dashboard
+  on its own WiFi + power. Never touches the Giga/BLE path; the dashboard
   `<img>` pulls `http://blackout-cam.local/stream` directly.
   - **Flash LED (GPIO 4) debug:** boot = slow blink (500ms), error (camera/WiFi
     fail) = rapid blink (100ms), connected = steady dim (PWM 32). Handled by
@@ -33,7 +33,7 @@ Node.js PC server/dashboard.
 ## Dictated routines
 
 When the user narrates a new motion routine step by step ("go forward once,
-back up, rotate, turn 360°, ...") for `arduino-uno-r4/main/routines.h`,
+back up, rotate, turn 360°, ...") for `giga-r1/main/routines.h`,
 they're recording a `Step` sequence, not asking for a fresh design — transcribe
 each spoken step into `{op, ms, pwm}` in order using the file's own
 conventions:

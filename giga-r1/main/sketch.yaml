@@ -1,0 +1,2 @@
+default_fqbn: arduino:mbed_giga:giga
+default_port: /dev/cu.usbmodem1101

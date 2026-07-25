@@ -57,3 +57,4 @@ step/
 *.log
 scratchpad/
 server/workflows/
+/.zed
