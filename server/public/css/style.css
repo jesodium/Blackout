@@ -105,7 +105,6 @@ body {
   font-family: 'Caesar Dressing', var(--display); font-weight: 400; font-size: 19px; line-height: 1;
   letter-spacing: 0.02em; text-transform: uppercase; color: var(--ink);
 }
-.brand-ver { font: 700 10px/1 var(--mono); color: var(--accent); letter-spacing: 0.08em; }
 
 .lamp { display: flex; align-items: center; gap: 8px; }
 .lamp-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex-shrink: 0; }
@@ -986,6 +985,87 @@ input[type="range"]:focus { box-shadow: none; }
 .warn-actions { display: flex; gap: 8px; align-self: flex-end; }
 .warn-go { color: var(--warn); border-color: var(--warn); }
 .warn-go:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* usb-board strip under the topbar — the only entry point to the updater */
+.update-bar {
+  flex-shrink: 0; display: flex; align-items: center; gap: 12px;
+  padding: 9px 16px; border-bottom: 1px solid var(--line);
+  background: var(--go-bg);
+  opacity: 0; transform: translateY(-6px);
+  animation: reveal 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.update-bar.is-stale { background: var(--warn-bg); }
+.update-bar-msg {
+  flex: 1; min-width: 0;
+  font: 700 10px/1.3 var(--grotesk); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2);
+}
+.update-bar.is-stale .update-bar-msg { color: var(--warn); }
+
+/* update blackout (firmware flash) */
+.update-frame {
+  width: min(560px, 92vw); height: auto; max-height: 88dvh;
+  gap: 16px; padding: 24px; align-items: stretch;
+}
+.update-frame p { font: 500 13px/1.6 var(--grotesk); color: var(--ink-2); margin: 0; }
+.update-title { font: 800 12px/1 var(--grotesk); letter-spacing: 0.16em; color: var(--ink); }
+.update-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.update-frame .serial-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.flash-boards { display: flex; gap: 10px; }
+.flash-board {
+  flex: 1; display: flex; flex-direction: column; gap: 4px;
+  padding: 12px 14px; border: 1px solid var(--line-2); border-radius: var(--r-s);
+  font: 700 10px/1.3 var(--grotesk); letter-spacing: 0.1em; text-transform: uppercase;
+  transition: color 0.15s, border-color 0.15s;
+}
+.flash-board small { font: 500 10px/1.3 var(--mono); letter-spacing: 0; text-transform: none; }
+.flash-board.is-ok { color: var(--go); border-color: var(--go); }
+.flash-board.is-missing { color: var(--ink-3); }
+/* flash progress: sage watches the flash — eyes blink while working, settle on exit */
+.flash-prog { display: flex; flex-direction: column; gap: 10px; }
+.sage-face {
+  display: flex; justify-content: center; align-items: baseline; gap: 10px;
+  padding: 10px 0 6px; color: var(--ink);
+  font: 700 34px/1 var(--mono); letter-spacing: 0.04em;
+  text-shadow: 0 0 18px rgba(236, 229, 214, 0.25);
+  transition: color 0.4s ease;
+}
+.sage-eye {
+  display: inline-block; transform-origin: 50% 55%;
+  animation: sage-blink 4.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.sage-eye:last-child { animation-delay: 0.06s; } /* half a frame off — reads alive, not mechanical */
+.sage-mouth { opacity: 0.55; }
+.flash-prog.is-ok    .sage-face { color: var(--go);     text-shadow: 0 0 18px rgba(63, 207, 142, 0.3); }
+.flash-prog.is-error .sage-face { color: var(--accent); text-shadow: 0 0 18px rgba(225, 169, 95, 0.3); }
+.flash-prog.is-ok .sage-eye, .flash-prog.is-error .sage-eye { animation: none; }
+@keyframes sage-blink {
+  0%, 88%, 95%, 100% { transform: scaleY(1); }
+  91%                { transform: scaleY(0.06); }  /* ~140ms shut, opens slower than it closes */
+}
+@media (prefers-reduced-motion: reduce) { .sage-eye { animation: none; } }
+
+.flash-bar { height: 4px; border-radius: 99px; background: rgba(236, 229, 214, 0.1); overflow: hidden; }
+.flash-bar-fill {
+  height: 100%; border-radius: 99px; background: var(--ink);
+  transition: width 0.45s cubic-bezier(0.2, 0.7, 0.2, 1), background 0.4s ease;
+}
+.flash-prog.is-ok    .flash-bar-fill { background: var(--go); }
+.flash-prog.is-error .flash-bar-fill { background: var(--accent); }
+.flash-prog-line {
+  display: flex; justify-content: space-between; gap: 12px;
+  font: 700 10px/1.3 var(--grotesk); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2);
+}
+.flash-pct { font-family: var(--mono); letter-spacing: 0; color: var(--ink-3); }
+.flash-prog.is-ok    .flash-prog-line { color: var(--go); }
+.flash-prog.is-error .flash-prog-line { color: var(--accent); }
+
+.flash-log {
+  font: 500 11px/1.5 var(--mono); color: var(--ink-2); white-space: pre-wrap; word-break: break-word;
+  max-height: 40dvh; overflow-y: auto; padding: 12px;
+  background: rgba(6, 6, 7, 0.5); border: 1px solid var(--line-2); border-radius: var(--r-s);
+}
+.flash-status.is-ok    { color: var(--go); }
+.flash-status.is-error { color: var(--accent); }
 
 /* ============================================================
    toasts
