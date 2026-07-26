@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import htm from "htm";
 import { createRoverScene } from "./scene.js";
 import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./i18n.js";
@@ -253,11 +253,12 @@ function Reading({ s, value }) {
 }
 
 /* cam box — standalone camera feed */
-function CamBox({ packet }) {
+function CamBox({ packet, onFpv }) {
   return html`
     <section class="zone stage-cam reveal" aria-labelledby="cam-h">
       <div class="zone-head">
         <h2 class="zone-title" id="cam-h">${t("zone.camera")}</h2>
+        <button type="button" class="tag fpv-enter" onClick=${onFpv}>△ FPV</button>
       </div>
       <div class="stage-body">
         <${CamView} />
@@ -550,8 +551,10 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
 }
 
 /* drive — manual control hub: on-screen pad (hold-to-drive), wasd/arrows, gamepad, routines, stop.
-   drive is sent as short timed bursts re-sent every 150ms while held: firmware auto-halts 300ms
+   drive is sent as short timed bursts re-sent every 60ms while held: firmware auto-halts 200ms
    after the last burst, so a dropped link or stuck ui never leaves wheels spinning.
+   the poll interval is the floor on input latency (press → radio), so it stays well under
+   the burst duration; the burst duration is the ceiling on how long a lost link keeps rolling.
    autopilot on = all manual input ignored. control mode: remote + blk live; autonomous placeholder. */
 const MODES = [["remote", "REMOTE"], ["blk", "BLK"], ["auto", "AUTO"]];
 const KEYMAP = {
@@ -632,8 +635,8 @@ function Drive({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
         return;
       }
       moving.current = true; setVerb(v);
-      onCmd(`drv,${v},${MANUAL_PWM},300`);
-    }, 150);
+      onCmd(`drv,${v},${MANUAL_PWM},200`);
+    }, 60);
     return () => clearInterval(id);
   }, [onCmd]);
 
@@ -702,6 +705,16 @@ function Drive({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     </section>`;
 }
 
+/* enum camera settings, [var, [[value, label], ...]]. values are the ov2640's own,
+   not ours — see the /control handler in esp32-cam/main/main.ino.
+   wb_mode is the pink-cast knob: auto first, the fixed presets compensate when a
+   module with no ir-cut filter makes auto give up. framesize caps at SVGA(8)
+   because that's what sized the psram buffer at init; lower = less latency. */
+const CAM_PICKS = [
+  ["wb_mode", [[0, "auto"], [1, "sunny"], [2, "cloudy"], [3, "office"], [4, "home"]]],
+  ["framesize", [[8, "SVGA 800×600"], [6, "VGA 640×480"], [5, "CIF 400×296"], [4, "QVGA 320×240"]]],
+];
+
 /* camera view (esp32-cam mjpeg) — lives inside the stage */
 function CamView() {
   const [state, setState] = useState("loading");
@@ -709,7 +722,10 @@ function CamView() {
   const [yielded, setYielded] = useState(false);
   const [host, setHost] = useState(camHost());
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [sliders, setSliders] = useState({ brightness: -1, contrast: -1, ae_level: 0, led: 15 });
+  // defaults mirror what the firmware sets at boot — the panel opens showing the
+  // real state, not zeroes. change one here only if you change it in main.ino too.
+  const [sliders, setSliders] = useState({ brightness: -1, contrast: -1, saturation: 0, ae_level: 0, led: 15 });
+  const [picks, setPicks] = useState({ wb_mode: 0, framesize: 8 });
   const imgRef = useRef(null);
 
   useEffect(() => {
@@ -750,6 +766,13 @@ function CamView() {
     setSliders(p => ({ ...p, [varName]: val }));
     fetch(`http://${host}/control?var=${varName}&val=${val}`).catch(() => {});
   };
+  // enum settings — same endpoint, but a slider can't label "cloudy" vs "office".
+  // framesize reallocates the frame buffer, so the stream stutters for a frame on
+  // change; it can't exceed the init size (SVGA=8) — see the control handler.
+  const pick = (varName, val) => {
+    setPicks(p => ({ ...p, [varName]: val }));
+    fetch(`http://${host}/control?var=${varName}&val=${val}`).catch(() => {});
+  };
 
   return html`
     <div class="stage-view stage-view--cam">
@@ -774,7 +797,14 @@ function CamView() {
             onClick=${() => setSettingsOpen(o => !o)}>${t("cam.settings")}</button>
           ${settingsOpen ? html`
             <div class="cam-pop">
-              ${[["brightness", -2, 2], ["contrast", -2, 2], ["ae_level", -2, 2], ["led", 0, 255]].map(([k, min, max]) => html`
+              ${CAM_PICKS.map(([k, opts]) => html`
+                <label key=${k} class="cam-pick">
+                  <span>${k}</span>
+                  <select value=${picks[k]} onChange=${(e) => pick(k, parseInt(e.target.value))}>
+                    ${opts.map(([v, label]) => html`<option key=${v} value=${v}>${label}</option>`)}
+                  </select>
+                </label>`)}
+              ${[["brightness", -2, 2], ["contrast", -2, 2], ["saturation", -2, 2], ["ae_level", -2, 2], ["led", 0, 255]].map(([k, min, max]) => html`
                 <label key=${k} class="cam-slider">
                   <span class="cam-slider-row"><span>${k}</span><b>${sliders[k]}</b></span>
                   <input type="range" min=${min} max=${max} step="1" value=${sliders[k]}
@@ -782,6 +812,61 @@ function CamView() {
                 </label>`)}
             </div>` : null}
         </div>` : null}
+    </div>`;
+}
+
+/* ---- fpv hud ----
+   glass drawn over the fullscreen feed: corner brackets, reticle, an attitude
+   line driven by roll/pitch and a heading tape driven by yaw. all of it is
+   pointer-events:none so it never eats a click meant for the feed underneath.
+   with no packet the numbers read 0 and the horizon sits level — a dead link
+   should look obviously dead, not frozen at the last good attitude. */
+const COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+const wrap360 = (d) => ((d % 360) + 360) % 360;
+const headingLabel = (d) => (d % 45 === 0 ? COMPASS[(d / 45) % 8] : String(d).padStart(3, "0"));
+
+// ±50° of heading either side of centre, one tick per 10°. off is -0.5..0.5 of the tape width.
+function headingTicks(yaw) {
+  const out = [];
+  for (let a = Math.ceil((yaw - 50) / 10) * 10; a <= yaw + 50; a += 10) {
+    out.push({ deg: wrap360(a), off: (a - yaw) / 100 });
+  }
+  return out;
+}
+
+function FpvOverlay({ packet }) {
+  const roll = packet?.roll ?? 0;
+  const pitch = packet?.pitch ?? 0;
+  const yaw = wrap360(packet?.yaw ?? 0);
+  const dist = packet?.dist;
+  // close obstacle turns the reticle red — the one number that matters while driving blind
+  const near = dist != null && !isNaN(dist) && dist > 0 && dist < 30;
+
+  return html`
+    <div class="fpv-glass" aria-hidden="true">
+      <div class="fpv-brackets"><i></i><i></i><i></i><i></i></div>
+
+      <div class="fpv-tape">
+        ${headingTicks(yaw).map(k => html`
+          <span key=${k.deg} class=${"fpv-tick" + (k.deg % 45 === 0 ? " is-major" : "")}
+            style=${{ left: (50 + k.off * 100) + "%" }}>${headingLabel(k.deg)}</span>`)}
+        <span class="fpv-tape-now">${Math.round(yaw).toString().padStart(3, "0")}°</span>
+      </div>
+
+      <div class="fpv-attitude" style=${{ transform: `translateY(${Math.max(-28, Math.min(28, pitch)) * 4}px) rotate(${-roll}deg)` }}>
+        <span class="fpv-horizon"></span>
+      </div>
+
+      <div class=${"fpv-reticle" + (near ? " is-near" : "")}>
+        <svg viewBox="0 0 120 120">
+          <path d="M60 42V54 M60 66V78 M42 60H54 M66 60H78" />
+          <circle cx="60" cy="60" r="1.6" class="fpv-pip" />
+        </svg>
+        <span class="fpv-reticle-num">${fmt(dist, 0)}<i>cm</i></span>
+      </div>
+
+      <div class="fpv-scan"></div>
+      <div class="fpv-vignette"></div>
     </div>`;
 }
 
@@ -1430,6 +1515,7 @@ function App() {
   const [flashLog, setFlashLog] = useState("");
   const [flashCode, setFlashCode] = useState(null);
   const [speaking, setSpeaking] = useState(false);
+  const [fpv, setFpv] = useState(false);      // △/Y — fullscreen camera + hud overlay
   // chats = briefed recon sessions. each holds its own mission + conversation.
   const [chats, setChats] = useState(() => { try { return JSON.parse(localStorage.getItem("chats") || "[]"); } catch { return []; } });
   const [activeId, setActiveId] = useState(() => localStorage.getItem("activeChat") || "");
@@ -1653,6 +1739,7 @@ function App() {
   const BLE_CHAR = "19b10001-e8f2-537e-4f6c-d104768a1214";
   const BLE_CMD = "19b10002-e8f2-537e-4f6c-d104768a1214"; // write = motion routine verbs
   const bleRef = useRef({ device: null, char: null, cmd: null });
+  const gattTail = useRef(Promise.resolve()); // serialises cmd writes, see sendcmd
 
   // defined above onblenotify because that handler calls it — deps are evaluated during render, so later `const` would be in temporal dead zone.
   // `focus` comes from a workflow's `analyze <what to look at>` step — it steers
@@ -1696,11 +1783,20 @@ function App() {
     const { device, cmd } = bleRef.current;
     if (!device?.gatt?.connected) { toast(t("toast.cmdNoLink"), "danger"); return false; }
     if (!cmd) { toast(t("toast.cmdNoChar"), "danger"); return false; } // linked but firmware lacks cmd char
-    try {
-      await cmd.writeValue(new TextEncoder().encode(word));
-      addLog(t("log.cmdSent", { cmd: word }), "system");
+    // drive bursts go unacked: a write-with-response costs a full round trip, and at the
+    // 60ms hold cadence that round trip *is* the lag. a dropped burst self-heals 60ms later.
+    // stop/go stay acked — those must land, and they're one-shot so the cost doesn't repeat.
+    const burst = word.startsWith("drv,");
+    // chrome allows one gatt op at a time — overlapping writes throw. queue them on a
+    // single tail promise instead of dropping, so a "stop" can never lose a race with a burst.
+    const send = gattTail.current.then(async () => {
+      await (burst ? cmd.writeValueWithoutResponse(new TextEncoder().encode(word))
+                   : cmd.writeValue(new TextEncoder().encode(word)));
+      if (!burst) addLog(t("log.cmdSent", { cmd: word }), "system"); // bursts would flood the log
       return true;
-    } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); return false; }
+    }).catch((e) => { addLog(t("log.error", { msg: e.message }), "danger"); return false; });
+    gattTail.current = send;
+    return send;
   }, [addLog, toast]);
 
   const loadBridge = useCallback(async () => {
@@ -1821,6 +1917,43 @@ function App() {
       setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
     }
   }, [addLog, showSage, runScan, sendCmd]);
+
+  /* fpv — camera fullscreen, stats + agent become edge huds. △/Y toggles, ○/B talks to sage.
+     own poll (not drive's) because drive's loop bails unless remote mode is armed, and fpv
+     has to work from any mode. edge-detected so holding a button fires once. */
+  const fpvMic = useMic(ask);
+  const fpvMicRef = useRef(fpvMic);
+  fpvMicRef.current = fpvMic;
+  /* the transition is the browser's, not ours: view transitions snapshot the cam tile
+     before and its fullscreen self after, then morph between them — no keyframes to keep
+     in sync with the layout. flushSync so react has committed before the "after" snapshot.
+     no support (safari < 18) = the old instant swap, which is still a working fpv mode. */
+  const toggleFpv = useCallback((on) => {
+    const go = () => flushSync(() => setFpv(p => (typeof on === "boolean" ? on : !p)));
+    if (document.startViewTransition) document.startViewTransition(go); else go();
+  }, []);
+  const toggleFpvRef = useRef(toggleFpv);
+  toggleFpvRef.current = toggleFpv;
+  useEffect(() => {
+    let was = [false, false];
+    const id = setInterval(() => {
+      const pad = [...navigator.getGamepads()].find(Boolean);
+      if (!pad) return;
+      const now = [!!pad.buttons[3]?.pressed, !!pad.buttons[1]?.pressed];
+      if (now[0] && !was[0]) toggleFpvRef.current();
+      if (now[1] && !was[1]) fpvMicRef.current.toggle();
+      was = now;
+    }, 80);
+    return () => clearInterval(id);
+  }, []);
+  // esc is the way out without a controller — never trap the operator in fpv.
+  useEffect(() => {
+    if (!fpv) return;
+    const onKey = (e) => { if (e.key === "Escape") toggleFpv(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fpv, toggleFpv]);
+
   const toggleTts = useCallback(() => setTts(p => {
     const n = !p; ttsRef.current = n; localStorage.setItem("tts", n);
     if (!n) { stopSpeech(); setSpeaking(false); }
@@ -1940,7 +2073,18 @@ function App() {
 
   return html`
     <${React.Fragment}>
-      <div class="shell">
+      <div class=${"shell" + (fpv ? " is-fpv" : "")}>
+        ${fpv && html`
+          <${React.Fragment}>
+            <${FpvOverlay} packet=${packet} />
+            <div class="fpv-hud">
+              <button type="button" class=${"hud-btn" + (fpvMic.listening ? " is-active" : "")}
+                disabled=${!fpvMic.supported} onClick=${fpvMic.toggle} aria-pressed=${fpvMic.listening}>
+                ○ ${fpvMic.listening ? t("ask.listening") : t("ask.mic")}
+              </button>
+              <button type="button" class="hud-btn" onClick=${() => toggleFpv(false)}>△ / ESC</button>
+            </div>
+          <//>`}
         <${Topbar} connected=${connected} ports=${ports} currentPort=${currentPort}
           bridge=${bridge} onBridge=${toggleBridge} connMode=${connMode} onConnMode=${setConnMode}
           ping=${ping} packets=${packets} uptime=${uptime} onPort=${switchPort}
@@ -1952,7 +2096,7 @@ function App() {
           <div class="col-main">
             <div class="stage-row">
               <${ThreeDeeBox} packet=${packet} onLog=${addLog} />
-              <${CamBox} packet=${packet} />
+              <${CamBox} packet=${packet} onFpv=${() => toggleFpv(true)} />
             </div>
             <${SensorStrip} packet=${view} />
           </div>

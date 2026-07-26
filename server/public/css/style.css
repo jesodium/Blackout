@@ -175,7 +175,7 @@ body {
 }
 .zone-head {
   flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  min-height: 42px; padding: 6px 14px; border-bottom: 1px solid var(--line);
+  min-height: clamp(34px, 4.6dvh, 42px); padding: 5px 14px; border-bottom: 1px solid var(--line);
 }
 .zone-title {
   font: 700 11.5px/1 var(--grotesk); letter-spacing: 0.15em; text-transform: uppercase;
@@ -460,6 +460,12 @@ input[type="range"]:focus { box-shadow: none; }
   animation: pop-in 0.2s cubic-bezier(0.2, 0.9, 0.25, 1.1) both;
 }
 @keyframes pop-in { from { opacity: 0; transform: translateY(6px) scale(0.97); } }
+.cam-pick { display: flex; align-items: center; justify-content: space-between; gap: 10px; font: 500 10.5px/1 var(--mono); color: var(--ink-2); }
+.cam-pick select {
+  flex: 1; min-width: 0; max-width: 60%;
+  font: 500 10.5px/1 var(--mono); color: var(--ink);
+  background: var(--glass); border: 1px solid var(--line); border-radius: 3px; padding: 4px 6px;
+}
 .cam-slider { display: flex; flex-direction: column; gap: 4px; }
 .cam-slider-row { display: flex; justify-content: space-between; font: 500 10.5px/1 var(--mono); color: var(--ink-2); }
 .cam-slider-row b { color: var(--ink); }
@@ -508,17 +514,18 @@ input[type="range"]:focus { box-shadow: none; }
    agent — sage
    ============================================================ */
 .agent { flex: 1; min-height: 0; }
-.agent-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* never scrolls — the stage below absorbs/releases the slack instead */
+.agent-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 
-.agent-topbar { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px 0; }
+.agent-topbar { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 14px 0; }
 .agent-topbar-spacer { flex: 1; }
 .agent-back { margin: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-voice { flex-shrink: 0; }
 
 .agent-stage {
-  position: relative; flex-shrink: 0; min-height: 168px; overflow: hidden;
+  position: relative; flex: 1 1 auto; min-height: 44px; container-type: size; overflow: hidden;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
-  padding: 18px; margin: 12px 14px 0; border-radius: 10px;
+  padding: 14px; margin: 10px 14px 0; border-radius: 10px;
   background: var(--inset); border: 1px solid var(--line);
   color: var(--agent-c, var(--ink-2));            /* glyph color follows intent */
   transition: color 0.45s ease;
@@ -532,7 +539,8 @@ input[type="range"]:focus { box-shadow: none; }
 }
 
 /* halo rings pulsing behind glyph */
-.agent-orb { position: relative; z-index: 1; width: 118px; height: 118px; display: grid; place-items: center; }
+.agent-orb { position: relative; z-index: 1; display: grid; place-items: center;
+  width: min(clamp(64px, 10dvh, 118px), 64cqh); height: min(clamp(64px, 10dvh, 118px), 64cqh); }
 .agent-orb::before, .agent-orb::after {
   content: ""; position: absolute; inset: 14px; border: 1px solid currentColor; border-radius: 50%;
   opacity: 0; animation: orb-halo 3.2s ease-out infinite;
@@ -542,7 +550,9 @@ input[type="range"]:focus { box-shadow: none; }
 .agent.is-alert .agent-orb::before, .agent.is-alert .agent-orb::after { animation-duration: 1.4s; }
 
 /* the glyph */
-.ai-glyph { position: relative; z-index: 1; width: 68px; height: 68px; display: block; overflow: visible; }
+.ai-glyph { position: relative; z-index: 1; display: block; overflow: visible;
+  width: min(clamp(40px, 6dvh, 68px), 40cqh); height: min(clamp(40px, 6dvh, 68px), 40cqh); }
+@container (max-height: 108px) { .agent-state-label, .agent-eq { display: none; } }
 .ai-glyph * {
   fill: none; stroke: currentColor; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round;
   transform-box: fill-box; transform-origin: center;
@@ -607,11 +617,11 @@ input[type="range"]:focus { box-shadow: none; }
 @keyframes eq { 0%, 100% { transform: scaleY(0.28); } 50% { transform: scaleY(1); } }
 
 /* what the agent says */
-.agent-speech { padding: 12px 16px 0; }
+.agent-speech { padding: 8px 16px 0; }
 .agent-text {
   margin: 0; padding-left: 13px; border-left: 2px solid var(--agent-c, var(--accent)); color: var(--ink);
   font: 400 13.5px/1.55 var(--grotesk);
-  min-height: 3.1em; animation: agent-text-in 0.4s ease;
+  min-height: 1.6em; animation: agent-text-in 0.4s ease;
   transition: border-color 0.45s ease;
 }
 .agent.is-analyzing .agent-text { color: var(--ink-2); }
@@ -621,7 +631,7 @@ input[type="range"]:focus { box-shadow: none; }
 @keyframes agent-text-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 .agent-timing {
-  margin-top: 7px; padding-left: 13px;
+  margin-top: 5px; padding-left: 13px;
   font: 500 9.5px/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-3);
 }
 .agent-timing b { color: var(--ink-2); font-weight: 700; }
@@ -630,21 +640,21 @@ input[type="range"]:focus { box-shadow: none; }
 
 /* go/no-go verdict */
 .verdict {
-  margin: 12px 16px 0; padding: 10px 13px; display: flex; flex-direction: column; gap: 2px;
+  margin: 8px 16px 0; padding: 7px 12px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px;
   border: 1px solid var(--line); border-left: 3px solid var(--ink-3); border-radius: 8px;
   background: rgba(236, 229, 214, 0.03);
   transition: border-color 0.3s ease, background 0.3s ease;
 }
 .verdict-k { font: 700 9px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
 .verdict-label { font: 800 15px/1.2 var(--grotesk); letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink); }
-.verdict-cause { font: 500 10.5px/1.35 var(--mono); letter-spacing: 0.03em; text-transform: uppercase; color: var(--ink-2); }
+.verdict-cause { flex-basis: 100%; font: 500 10.5px/1.35 var(--mono); letter-spacing: 0.03em; text-transform: uppercase; color: var(--ink-2); }
 .verdict.is-go    { border-left-color: var(--go);     background: var(--go-bg);    } .verdict.is-go    .verdict-label { color: var(--go); }
 .verdict.is-warn  { border-left-color: var(--warn);   background: var(--warn-bg);  } .verdict.is-warn  .verdict-label { color: var(--warn); }
 .verdict.is-abort { border-left-color: var(--accent); background: var(--abort-bg); } .verdict.is-abort .verdict-label { color: var(--accent); }
 
-.agent-foot { flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 12px 16px; }
+.agent-foot { flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 8px 16px 6px; }
 .agent-foot .btn--primary { flex: 1; }
-.agent-hist { padding: 0 16px 14px; }
+.agent-hist { padding: 0 16px 8px; position: relative; }
 
 .is-analyzing .zone-title { animation: pulse 0.9s ease-in-out infinite; }
 
@@ -656,7 +666,13 @@ input[type="range"]:focus { box-shadow: none; }
 .ai-hist > summary:hover { color: var(--ink); }
 .ai-hist > summary::before { content: "▸ "; color: var(--accent); }
 .ai-hist[open] > summary::before { content: "▾ "; }
-.ai-hist-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: 168px; overflow-y: auto; }
+.ai-hist-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: min(168px, 26dvh); overflow-y: auto; }
+/* open history floats over the panel — expanding in flow would grow the box past the viewport */
+.agent-hist[open] .ai-hist-list {
+  position: absolute; z-index: 5; left: 16px; right: 16px; bottom: calc(100% - 4px);
+  padding: 8px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px;
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.45);
+}
 .ai-hist-item {
   display: flex; gap: 10px; padding: 8px 10px; background: var(--inset); border-radius: 8px;
   border: 1px solid transparent; cursor: pointer; font: 400 12px/1.45 var(--grotesk); color: var(--ink-2);
@@ -666,9 +682,9 @@ input[type="range"]:focus { box-shadow: none; }
 .ai-hist-time { font: 500 10px/1.45 var(--mono); color: var(--accent); flex-shrink: 0; }
 
 /* ask sage (mic + chips) */
-.agent-ask { padding: 0 16px 14px; display: flex; flex-direction: column; gap: 8px; }
+.agent-ask { padding: 0 16px 10px; display: flex; flex-direction: column; gap: 6px; }
 .ask-mic {
-  width: 100%; min-height: 40px; cursor: pointer; border-radius: var(--r-s);
+  width: 100%; min-height: clamp(38px, 5dvh, 40px); cursor: pointer; border-radius: var(--r-s);
   background: var(--inset); border: 1px solid var(--line-2); color: var(--ink);
   font: 600 12px var(--mono); letter-spacing: 0.04em;
   transition: color 0.14s, background 0.14s, border-color 0.14s, transform 0.14s ease;
@@ -677,7 +693,8 @@ input[type="range"]:focus { box-shadow: none; }
 .ask-mic:disabled { opacity: 0.4; cursor: not-allowed; }
 .ask-mic.is-live { color: var(--bg); background: var(--accent); border-color: var(--accent); animation: chat-rec 1s steps(2) infinite; }
 @keyframes chat-rec { 50% { opacity: 0.55; } }
-.ask-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.ask-chip { flex-shrink: 0; }
 .ask-chip {
   cursor: pointer; padding: 7px 10px; background: transparent; border-radius: 99px;
   border: 1px solid var(--line); color: var(--ink-2);
@@ -690,12 +707,13 @@ input[type="range"]:focus { box-shadow: none; }
 /* shared mission bits */
 .mission-k { font: 700 9px/1 var(--grotesk); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
 .mission-input { width: 100%; resize: vertical; }
+.briefing .mission-input { height: clamp(52px, 8dvh, 84px); }
 
 /* chat sessions */
-.chat-select { padding: 10px 16px 16px; display: flex; flex-direction: column; gap: 12px; min-height: 220px; flex: 1; }
+.chat-select { padding: 10px 16px 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
 .mission-head { display: flex; align-items: center; justify-content: space-between; }
 .chat-empty { margin: auto 0; text-align: center; color: var(--ink-3); font: 400 13px var(--grotesk); }
-.chat-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
+.chat-list { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; overflow-y: auto; }
 .chat-item { display: flex; align-items: stretch; gap: 6px; }
 .chat-item-main {
   flex: 1; text-align: left; cursor: pointer; padding: 9px 11px; border-radius: var(--r-s);
@@ -715,7 +733,7 @@ input[type="range"]:focus { box-shadow: none; }
 .chat-new { margin-top: auto; }
 
 /* briefing wizard */
-.briefing { padding: 10px 16px 16px; display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
+.briefing { padding: 8px 16px 12px; display: flex; flex-direction: column; gap: clamp(7px, 1.2dvh, 12px); align-items: stretch; min-height: 0; }
 .brief-back, .agent-back {
   align-self: flex-start; cursor: pointer; padding: 6px 10px; background: transparent; border-radius: 99px;
   border: 1px solid var(--line-2); color: var(--ink-2); font: 600 10px var(--mono); letter-spacing: 0.04em;
@@ -770,7 +788,7 @@ input[type="range"]:focus { box-shadow: none; }
    drive
    ============================================================ */
 .drive { flex-shrink: 0; }
-.drive-body { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 14px; }
+.drive-body { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; }
 
 
 .pad {
@@ -780,7 +798,7 @@ input[type="range"]:focus { box-shadow: none; }
 }
 .pad.is-off { opacity: 0.45; }
 .pad-btn {
-  position: relative; min-height: 56px; border-radius: 10px; cursor: pointer;
+  position: relative; min-height: clamp(44px, 5.2dvh, 56px); border-radius: 10px; cursor: pointer;
   display: grid; place-items: center;
   color: var(--ink-2); background: var(--inset); border: 1px solid var(--line-2);
   transition: color 0.12s, background 0.12s, border-color 0.12s, transform 0.1s ease;
@@ -800,8 +818,8 @@ input[type="range"]:focus { box-shadow: none; }
 
 .drive-hint { font: 500 10.5px/1.5 var(--mono); color: var(--ink-3); letter-spacing: 0.02em; min-height: 1.2em; }
 
-.routines { display: flex; flex-direction: column; gap: 7px; padding-top: 2px; border-top: 1px solid var(--line); margin-top: 2px; }
-.routines .label { padding-top: 8px; }
+.routines { display: flex; flex-direction: column; gap: 6px; padding-top: 2px; border-top: 1px solid var(--line); margin-top: 2px; }
+.routines .label { padding-top: 4px; }
 .routine-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip {
   cursor: pointer; min-height: 34px; padding: 0 12px; border-radius: 99px;
@@ -813,7 +831,7 @@ input[type="range"]:focus { box-shadow: none; }
 .chip:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .stop-bar {
-  width: 100%; min-height: 50px; cursor: pointer; border-radius: 10px;
+  width: 100%; min-height: clamp(44px, 5dvh, 50px); cursor: pointer; border-radius: 10px;
   font: 800 14px/1 var(--grotesk); letter-spacing: 0.24em; text-transform: uppercase;
   color: var(--abort); background: var(--abort-bg); border: 1px solid rgba(255, 59, 47, 0.55);
   transition: color 0.12s, background 0.12s, transform 0.1s ease, box-shadow 0.15s ease;
@@ -1101,6 +1119,39 @@ input[type="range"]:focus { box-shadow: none; }
   .top-stats { display: none; }
 }
 
+@media (max-height: 1000px) and (min-width: 1025px) {
+  .drive-hint { display: none; }
+  .briefing .brief-orb { display: none; }   /* decorative only — the panel must fit without scrolling */
+}
+
+/* short desktop screens: shed the optional rows so the rail still fits without scrolling.
+   IMPORTANT NOTE: below ~780px tall the rail runs out of room anyway — the console
+   drawer / a taller window is the answer there, not more shaving. */
+@media (max-height: 899px) and (min-width: 1025px) {
+  .ask-chips { display: none; }
+  .verdict-cause { display: none; }
+  .agent-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+  .blk-ctl { gap: 6px; }
+  .blk-ctl small { display: none; }
+}
+
+@media (max-height: 840px) and (min-width: 1025px) {
+  .agent-text { -webkit-line-clamp: 2; }
+  .brief-greeting { display: none; }        /* spoken aloud anyway */
+  .briefing .mission-input { height: clamp(44px, 6dvh, 84px); }
+  .routines .label { display: none; }
+  .ai-hist > summary { padding: 4px 0; }
+}
+
+@media (max-height: 800px) and (min-width: 1025px) {
+  .agent-stage { min-height: 32px; }
+  .agent-speech { padding-top: 6px; }
+  .agent-timing { margin-top: 4px; }
+  .verdict { padding: 5px 12px; }
+  .agent-foot { padding: 6px 16px 4px; }
+  .ask-mic { min-height: 36px; }
+}
+
 /* portrait tablet & below: cockpit stacks, page scrolls, drive jumps above sage */
 @media (max-width: 1024px) {
   .shell { height: auto; min-height: 100dvh; overflow: visible; }
@@ -1112,7 +1163,8 @@ input[type="range"]:focus { box-shadow: none; }
   .stage-cam { flex: none; }
   .stage-cam .stage-body { height: min(28dvh, 220px); flex: none; }
   .agent { flex: none; }
-  .agent-body { overflow-y: visible; }
+  .agent-body { overflow: visible; }
+  .agent-stage { flex: none; min-height: 168px; }
   .col-rail .drive { order: -1; }
   .drawer { height: min(60dvh, 480px); }
 }
@@ -1152,4 +1204,192 @@ input[type="range"]:focus { box-shadow: none; }
    is a lot of wasted room, and the editor has its own drawers for the panels */
 @media (max-width: 900px) {
   .blk-modal-frame { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
+}
+
+/* ============================================================
+   fpv mode — camera goes fullscreen, the sensor strip and the
+   agent become translucent rails pinned to the edges. nothing is
+   re-rendered: it's the same panels, re-placed and re-skinned.
+   ============================================================ */
+
+/* --- the open/close morph ---
+   view transitions do the heavy lifting. only the cam tile is tagged, so the browser
+   tweens its box into the fullscreen one while everything else cross-fades as
+   ::view-transition-*(root). the rails are deliberately NOT tagged: they go from a
+   horizontal row of tiles to a vertical column, and morphing that just smears two
+   layouts through each other — they fade out and deal back in (fpv-deal) instead. */
+.stage-cam { view-transition-name: fpv-cam; }
+::view-transition-group(fpv-cam) { animation-duration: 520ms; animation-timing-function: cubic-bezier(0.66, 0, 0.15, 1); }
+/* old fades out fast, new arrives late, so the two layouts overlap as little as possible */
+::view-transition-old(root) { animation: fpv-fade 180ms ease both reverse; }
+::view-transition-new(root) { animation: fpv-fade 320ms 150ms ease both; }
+/* the cam feed itself must not cross-fade against a scaled copy of itself — it's a
+   live stream, the two snapshots never match and it strobes. morph the box only. */
+::view-transition-old(fpv-cam) { animation: none; opacity: 0; }
+::view-transition-new(fpv-cam) { animation: fpv-fade 300ms ease both; }
+@keyframes fpv-fade { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+}
+
+/* --- layout --- */
+.is-fpv .topbar, .is-fpv .update-bar, .is-fpv .stage-3d, .is-fpv .drive, .is-fpv .drawer { display: none; }
+.is-fpv .cockpit { display: block; padding: 0; overflow: hidden; }
+.is-fpv .stage-cam { position: fixed; inset: 0; z-index: 0; border: none; border-radius: 0; background: #000; }
+.is-fpv .stage-cam .zone-head { display: none; }
+.is-fpv .stage-cam .stage-body { height: auto; flex: 1; }
+/* telemetry ribbon would run under both rails at full width — centre it instead */
+.is-fpv .hud-tele {
+  left: 50%; right: auto; bottom: 18px; transform: translateX(-50%);
+  width: max-content; max-width: 44vw; border-radius: 3px;
+  animation: fpv-rise 420ms 120ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+/* both of these live in the cam's corners, which fullscreen puts under the rails and
+   the corner brackets — pull them inboard of the right rail instead of on top of it */
+.is-fpv .stage-chip { top: 18px; right: 52px; z-index: 12; border-radius: 3px; }
+.is-fpv .cam-tools { right: calc(clamp(206px, 21vw, 282px) + 14px); bottom: 18px; z-index: 12; }
+
+/* the feed is 4:3 shot through a camera mounted on its side, so un-rotating it
+   leaves a 3:4 portrait frame — see .cam-feed. in the tile that's fine (whole
+   frame visible); fullscreen it reads as a phone video, so cover the viewport
+   instead and crop the top/bottom of the scene. 133.34cqw = the frame width
+   needed for the rotated image to span the full container width.
+   important note: this crop costs ~58% of the vertical field on a 16:9 stage —
+   deliberate, fullscreen framing beats FOV here. remount the cam upright and the
+   rotation goes away, dropping the crop to ~25% with the same edge-to-edge look. */
+.is-fpv .cam-feed { width: max(100cqh, 133.34cqw); }
+
+.is-fpv .strip, .is-fpv .col-rail {
+  position: fixed; top: 58px; bottom: 58px; z-index: 10;
+  width: clamp(206px, 21vw, 282px);
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 0 14px; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.is-fpv .strip::-webkit-scrollbar, .is-fpv .col-rail::-webkit-scrollbar { width: 0; }
+.is-fpv .strip { left: 0; }
+.is-fpv .col-rail { right: 0; }
+/* rails deal themselves in, near edge first */
+.is-fpv .strip .reading, .is-fpv .agent { animation: fpv-deal 380ms cubic-bezier(0.2, 0.9, 0.2, 1) both; }
+.is-fpv .strip .reading { animation-delay: calc(var(--i, 0) * 45ms + 120ms); }
+.is-fpv .agent { animation-delay: 150ms; --dir: 1; }
+.is-fpv .strip .reading:nth-child(1) { --i: 0; } .is-fpv .strip .reading:nth-child(2) { --i: 1; }
+.is-fpv .strip .reading:nth-child(3) { --i: 2; } .is-fpv .strip .reading:nth-child(4) { --i: 3; }
+.is-fpv .strip .reading:nth-child(5) { --i: 4; }
+@keyframes fpv-deal { from { opacity: 0; transform: translateX(calc(var(--dir, -1) * 26px)); } to { opacity: 1; transform: none; } }
+@keyframes fpv-rise { from { opacity: 0; transform: translate(-50%, 16px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* --- hud skin: square corners, hairline rules, glass --- */
+.is-fpv .strip .reading, .is-fpv .agent {
+  background: color-mix(in srgb, var(--panel) 38%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 3px;
+  backdrop-filter: blur(12px) saturate(1.2); -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  box-shadow: inset 0 0 0 1px rgba(9, 9, 10, 0.5);
+}
+.is-fpv .strip .reading { padding: 7px 11px 9px; gap: 5px; }
+.is-fpv .agent { flex: 1; min-height: 0; }
+.is-fpv .agent .zone-head { border-bottom-color: color-mix(in srgb, var(--accent) 20%, transparent); }
+.is-fpv .trend-cell { display: none; }  /* sparkline is unreadable at rail width */
+.fpv-enter { cursor: pointer; background: none; }
+.fpv-enter:hover { color: var(--ink); border-color: var(--ink-2); }
+
+.fpv-hud {
+  position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 20;
+  display: flex; gap: 8px;
+  animation: fpv-rise 380ms 80ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+.fpv-hud .hud-btn { border-radius: 3px; border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* ============================================================
+   fpv glass — reticle, attitude line, heading tape. decoration
+   over the feed; never takes a pointer event.
+   ============================================================ */
+.fpv-glass {
+  position: fixed; inset: 0; z-index: 5; pointer-events: none;
+  color: var(--accent); font-family: var(--mono);
+  animation: fpv-glass-in 520ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+@keyframes fpv-glass-in { from { opacity: 0; transform: scale(1.035); } to { opacity: 1; transform: none; } }
+
+/* corner brackets */
+.fpv-brackets i {
+  position: absolute; width: 26px; height: 26px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.fpv-brackets i:nth-child(1) { top: 12px; left: 12px; border-right: 0; border-bottom: 0; }
+.fpv-brackets i:nth-child(2) { top: 12px; right: 12px; border-left: 0; border-bottom: 0; }
+.fpv-brackets i:nth-child(3) { bottom: 12px; left: 12px; border-right: 0; border-top: 0; }
+.fpv-brackets i:nth-child(4) { bottom: 12px; right: 12px; border-left: 0; border-top: 0; }
+
+/* heading tape */
+.fpv-tape {
+  position: absolute; top: 58px; left: 50%; transform: translateX(-50%);
+  width: min(460px, 40vw); height: 26px;
+  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+}
+.fpv-tick {
+  position: absolute; top: 8px; transform: translateX(-50%);
+  font: 500 8.5px/1 var(--mono); letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+}
+.fpv-tick::before {
+  content: ""; position: absolute; top: -7px; left: 50%; width: 1px; height: 4px;
+  background: currentColor; transform: translateX(-50%);
+}
+.fpv-tick.is-major { color: var(--accent); font-weight: 700; font-size: 9.5px; }
+.fpv-tick.is-major::before { height: 7px; top: -10px; }
+.fpv-tape-now {
+  position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
+  font: 700 10px/1 var(--mono); color: var(--accent);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+/* attitude line — roll rotates it, pitch slides it */
+.fpv-attitude {
+  position: absolute; top: 50%; left: 50%; width: 62vw; height: 0;
+  margin: -1px 0 0 -31vw;
+  transition: transform 140ms linear;  /* smooth over the ~10hz packet rate */
+}
+.fpv-horizon {
+  position: absolute; left: 0; right: 0; top: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 70%, transparent) 16%,
+    color-mix(in srgb, var(--accent) 70%, transparent) 38%, transparent 42%,
+    transparent 58%, color-mix(in srgb, var(--accent) 70%, transparent) 62%,
+    color-mix(in srgb, var(--accent) 70%, transparent) 84%, transparent);
+}
+
+/* reticle */
+.fpv-reticle {
+  position: absolute; top: 50%; left: 50%; width: 96px; height: 96px;
+  transform: translate(-50%, -50%);
+  transition: color 200ms;
+}
+.fpv-reticle svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.2; opacity: 0.7; }
+.fpv-reticle .fpv-pip { fill: currentColor; stroke: none; }
+.fpv-reticle-num {
+  position: absolute; top: calc(50% + 34px); left: 50%; transform: translateX(-50%);
+  font: 700 15px/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap;
+  text-shadow: 0 0 12px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.fpv-reticle-num i { font: 500 8.5px/1 var(--mono); letter-spacing: 0.14em; opacity: 0.7; font-style: normal; margin-left: 3px; }
+.fpv-reticle.is-near { color: var(--abort); animation: fpv-alert 0.7s ease-in-out infinite; }
+@keyframes fpv-alert { 50% { opacity: 0.45; } }
+
+/* scanlines + vignette — the two cheapest things that read as "this is a feed" */
+.fpv-scan {
+  position: absolute; inset: 0; opacity: 0.16;
+  background: repeating-linear-gradient(180deg, rgba(236, 229, 214, 0.5) 0 1px, transparent 1px 3px);
+  mix-blend-mode: overlay;
+}
+.fpv-vignette {
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse at center, transparent 46%, rgba(0, 0, 0, 0.55) 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fpv-glass, .fpv-hud, .is-fpv .hud-tele, .is-fpv .strip .reading, .is-fpv .agent { animation: none; }
+  .fpv-reticle.is-near { animation: none; }
 }

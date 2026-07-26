@@ -8,7 +8,9 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node test-blk.mjs",
-    "test:editor": "node test-blk-editor.mjs"
+    "test:editor": "node test-blk-editor.mjs",
+    "test:fpv": "node test-fpv.mjs",
+    "test:layout": "node test-layout.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

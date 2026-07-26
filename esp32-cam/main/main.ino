@@ -120,7 +120,12 @@ static esp_err_t control_handler(httpd_req_t* req) {
   if (!s) { httpd_resp_send_500(req); return ESP_FAIL; }
   int v = atoi(val);
   int ok = -1;
-  if      (!strcmp(var, "brightness"))   ok = s->set_brightness(s, v);
+  // framesize is the only one that reallocates the frame buffer. it can't go above
+  // whatever c.frame_size was at init (that sized the psram allocation) — SVGA here,
+  // so 0..FRAMESIZE_SVGA(8). higher res = fewer fps over wifi; svga is the fps/detail
+  // pick for driving. bump c.frame_size below if you want the ceiling raised (uxga max).
+  if      (!strcmp(var, "framesize"))    ok = s->set_framesize(s, (framesize_t)v);
+  else if (!strcmp(var, "brightness"))   ok = s->set_brightness(s, v);
   else if (!strcmp(var, "contrast"))     ok = s->set_contrast(s, v);
   else if (!strcmp(var, "saturation"))   ok = s->set_saturation(s, v);
   else if (!strcmp(var, "sharpness"))    ok = s->set_sharpness(s, v);
@@ -199,6 +204,10 @@ void setup() {
   // frame_size doesn't change field of view — that's the lens
   if (psramFound()) { c.frame_size = FRAMESIZE_SVGA; c.jpeg_quality = 10; c.fb_count = 2; }
   else              { c.frame_size = FRAMESIZE_QVGA; c.jpeg_quality = 15; c.fb_count = 1; }
+  // with fb_count=2 the default (grab_when_empty) hands out the *older* buffered
+  // frame, so fpv runs a whole frame behind reality. grab_latest drops the stale
+  // one — you see now, not 100ms ago. costs nothing but the skipped frame.
+  c.grab_mode = CAMERA_GRAB_LATEST;
 
   // don't bail on camera failure — bring wifi up first so the board is
   // always reachable and can report why it's broken
@@ -213,8 +222,18 @@ void setup() {
     sensor_t* s = esp_camera_sensor_get();
     s->set_vflip(s, 1);
     s->set_hmirror(s, 1);
-    s->set_brightness(s, -1);  // tone down — too bright / purple wash
+    s->set_brightness(s, -1);  // tone down — too bright
     s->set_contrast(s, -1);    // less harsh
+    // the pink/magenta wash is white balance, not brightness. force the full awb
+    // chain on explicitly — mode 0 = auto. all three matter: whitebal alone leaves
+    // the gains frozen at whatever the sensor booted with, which is the pink.
+    s->set_whitebal(s, 1);
+    s->set_awb_gain(s, 1);
+    s->set_wb_mode(s, 0);
+    // important note: if it's still pink with awb on, it's the module — cheap
+    // ai-thinker clones ship with no ir-cut filter, so infrared bleeds in and reads
+    // as magenta. no register fixes that. sweep wb_mode 1-4 over /control to
+    // compensate, or swap the module. see docs for the live-tuning curl.
   }
 
   // join the chosen network (cam_network define above). static ip for hotspot,
