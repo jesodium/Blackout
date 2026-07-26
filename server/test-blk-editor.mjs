@@ -227,6 +227,7 @@ await evaluate("document.getElementById('menu-btn').click(); return 1");
 check("files sheet opens", (await evaluate("return document.getElementById('files-sheet').hidden")) === false);
 await evaluate("const s=document.getElementById('tpl'); s.value='Cave survey'; s.dispatchEvent(new Event('change')); return 1");
 check("template loaded", (await count()) > 6, `${await count()} nodes`);
+await sleep(260);  // sheet fades out
 check("sheet closed after loading", (await evaluate("return document.getElementById('files-sheet').hidden")) === true);
 check("ai blocks present", (await evaluate("return document.querySelectorAll('#canvas .cat-ai').length")) >= 2);
 check("proc blocks present", (await evaluate("return document.querySelectorAll('#canvas .cat-proc').length")) >= 2);

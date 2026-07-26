@@ -339,6 +339,8 @@
       animation: pop 0.22s cubic-bezier(0.2,0.9,0.25,1.1) both;
     }
     .sheet[hidden] { display: none; }
+    .sheet.is-closing { animation: popOut 0.18s ease both; pointer-events: none; }
+    .scrim.is-closing { animation: scrimOut 0.18s ease both; pointer-events: none; }
     .sheet h2 { font: 800 12px/1 var(--grotesk); letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 12px; }
     .sheet .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
     .sheet .field > span { font: 600 9.5px/1 var(--grotesk); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
@@ -351,6 +353,8 @@
     .sheet .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px; }
     .sheet-btn { width: 100%; }
     @keyframes pop { from { opacity: 0; transform: translate(-50%, calc(-50% + 16px)) scale(0.97); } }
+    @keyframes popOut { to { opacity: 0; transform: translate(-50%, calc(-50% + 10px)) scale(0.97); } }
+    @keyframes scrimOut { to { opacity: 0; } }
 
     /* ───────────── responsive: tablets and small consoles ─────────────
        one rule for both sizes: the body class means "visible". on a wide
@@ -458,7 +462,7 @@
       <span class="spacer"></span>
       <button class="icon-btn" id="undo" aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
       <button class="icon-btn" id="redo" aria-label="Redo" title="Redo (Ctrl+Shift+Z)">↷</button>
-      <button class="btn-t" id="ask-sage" title="Describe a behaviour and Sage writes it">✦ Ask Sage</button>
+      <button class="btn-t" id="ask-sage" title="Describe a behaviour and Sage writes it">※ Ask Sage</button>
       <button class="icon-btn" id="palette-toggle" aria-label="Show blocks" title="Blocks">▦</button>
       <button class="icon-btn is-on" id="rail-toggle" aria-label="Show simulator" title="Simulator">◧</button>
     </header>
@@ -565,9 +569,9 @@
       <button class="sheet-btn btn-t is-danger" id="delete">Delete</button>
     </div>
     <div class="grid" style="margin-top:8px">
-      <button class="sheet-btn btn-t is-ghost" id="sage-explain">✦ Explain this</button>
-      <button class="sheet-btn btn-t is-ghost" id="sage-fix">✦ Find mistakes</button>
-      <button class="sheet-btn btn-t is-ghost" id="sage-improve">✦ Improve it</button>
+      <button class="sheet-btn btn-t is-ghost" id="sage-explain">※ Explain this</button>
+      <button class="sheet-btn btn-t is-ghost" id="sage-fix">※ Find mistakes</button>
+      <button class="sheet-btn btn-t is-ghost" id="sage-improve">※ Improve it</button>
       <button class="sheet-btn btn-t" id="files-close">Close</button>
     </div>
     <input type="file" id="file" accept=".blk,.txt" hidden>
@@ -576,7 +580,7 @@
   <div class="sage-modal" id="sage-modal" hidden>
     <div class="sage-panel" role="dialog" aria-label="Ask Sage">
       <div class="sage-head">
-        <span class="label">✦ Sage</span>
+        <span class="label">※ Sage</span>
         <select id="sage-mode" aria-label="Sage mode">
           <option value="write">write</option>
           <option value="explain">explain</option>
