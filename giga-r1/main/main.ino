@@ -36,7 +36,7 @@ BLEService sensorService("19b10000-e8f2-537e-4f6c-d104768a1214");
 BLEStringCharacteristic sensorChar("19b10001-e8f2-537e-4f6c-d104768a1214", BLERead | BLENotify, 100);
 // command channel: server (via the browser's web bluetooth) writes here to
 // trigger actions. "go,<routine>" starts a motion routine, "stop" cuts motors.
-BLEStringCharacteristic cmdChar("19b10002-e8f2-537e-4f6c-d104768a1214", BLEWrite, 20);
+BLEStringCharacteristic cmdChar("19b10002-e8f2-537e-4f6c-d104768a1214", BLEWrite | BLEWriteWithoutResponse, 20);
 
 // the routine tables live in routines.h — edit that file to change what
 // the robot does. everything here is the machinery that runs them: the board plays
@@ -74,6 +74,10 @@ void setup() {
   // honor it in the ad packet, only in the post-connect gatt device-name
   // characteristic). so the browser filters by this service uuid instead.
   BLE.setLocalName("BLACKOUT-V1");
+  // 7.5-15ms connection interval (units of 1.25ms). the default negotiates out to
+  // 30ms+, and every drive burst waits a whole interval before the radio sends it.
+  // faster interval = more radio wakeups = more battery, worth it for manual drive.
+  BLE.setConnectionInterval(6, 12);
   BLE.setAdvertisedService(sensorService);
   sensorService.addCharacteristic(sensorChar);
   sensorService.addCharacteristic(cmdChar);
@@ -246,12 +250,12 @@ void loop() {
   if (now - lastSend < SEND_INTERVAL) return;
   lastSend = now;
 
-  // median-of-3 blocks ~180-250ms (60ms forced between pings), which would cap
-  // the routine stepper's resolution — a 400ms turn could overshoot 60%.
-  // during a routine take a single ~25ms ping instead: noisier distance, but steps
-  // land on time and telemetry keeps flowing. consecutive pings still land
-  // send_interval (100ms) apart, clear of the 60ms ring-down.
-  float raw = routine ? pingCm() : medianPingCm();
+  // median-of-3 blocks ~180-250ms (60ms forced between pings). nothing else runs
+  // in that window — no ble.poll(), so an inbound drive/stop command just waits.
+  // so while anything is moving (routine *or* live drive) take a single ~25ms ping:
+  // noisier distance, but steps land on time and remote control stays responsive.
+  // consecutive pings still land send_interval (100ms) apart, clear of the 60ms ring-down.
+  float raw = (routine || drvEnd) ? pingCm() : medianPingCm();
   if (raw >= 0) {
     distF = (distF < 0) ? raw : distF + DIST_ALPHA * (raw - distF);
   } else {
