@@ -742,7 +742,7 @@ const PALETTE = [
     () => ({ op: "led", arg: 180 }),
     () => ({ op: "comment", text: "note" }),
   ]],
-  ["AI", "ai", "✦", [
+  ["AI", "ai", "※", [
     () => ({ op: "analyze", text: "" }),
     () => ({ op: "ask", text: "is it safe to keep going" }),
     () => ({ op: "find", text: "cave painting" }),
@@ -821,14 +821,26 @@ function setDrawer(which, open) {
   if (which === "rail" && open) drawSim();
   syncScrim();
 }
+// hide after the .is-closing animation. reopening clears the class, which makes
+// the pending timeout a no-op — no need to track timers.
+function fadeOut(el) {
+  if (el.hidden || el.classList.contains("is-closing")) return;
+  el.classList.add("is-closing");
+  setTimeout(() => {
+    if (!el.classList.contains("is-closing")) return;
+    el.classList.remove("is-closing");
+    el.hidden = true;
+  }, 180);
+}
+function show(el) { el.classList.remove("is-closing"); el.hidden = false; }
 function syncScrim() {
   const open = (document.body.classList.contains("rail-open") && narrow(1280))
     || (document.body.classList.contains("palette-open") && narrow(900));
-  $("scrim").hidden = !open;
+  if (open) show($("scrim")); else fadeOut($("scrim"));
 }
-function openSheet(id) { $(id).hidden = false; $("scrim").hidden = false; }
+function openSheet(id) { show($(id)); show($("scrim")); }
 function closeSheets() {
-  $("files-sheet").hidden = true;
+  fadeOut($("files-sheet"));
   if (narrow(1280)) setDrawer("rail", false);
   if (narrow(900)) setDrawer("palette", false);
   syncScrim();
