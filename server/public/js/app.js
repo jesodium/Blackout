@@ -1022,7 +1022,7 @@ function AgentTiming({ ai }) {
   return null;
 }
 
-function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, chats, activeChat, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onToggleTtsProvider, onPick, onMock, onAsk }) {
+function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, chats, activeChat, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onToggleTtsProvider, onPick, onMock, onAsk, onReport }) {
   const intent = deriveIntent(ai, packet, connected);
   const v = assess(packet);
   const briefed = activeChat && activeChat.mission;
@@ -1084,6 +1084,9 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
           <button class="btn" type="button" onClick=${onMock} disabled=${ai.analyzing} title=${t("agent.mockTitle")}>
             ${t("agent.mock")}
           </button>
+          <button class="btn" type="button" onClick=${onReport} title=${t("agent.reportTitle")}>
+            ${t("agent.report")}
+          </button>
         </div>
         <${Ask} onAsk=${onAsk} busy=${ai.analyzing} />
         <details class="ai-hist agent-hist">
@@ -1099,6 +1102,106 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
           </${React.Fragment}>`}
       </div>
     </section>`;
+}
+
+/* ---- session report ----
+   one object holding everything the session knows: mission, link, verdict,
+   telemetry, findings, conversation, analysis, events. the modal renders it and
+   the same object is what downloads as .json — the document and the export can
+   never disagree because there is only one of them. */
+function buildReport({ chat, packet, logs, ai, connected, ping, packets, uptime }) {
+  const v = assess(packet);
+  return {
+    kind: "blackout.session-report",
+    version: 1,
+    generated: new Date().toISOString(),
+    session: {
+      id: chat?.id || null,
+      title: chat?.title || null,
+      mission: chat?.mission || null,
+      started: chat?.created ? new Date(chat.created).toISOString() : null,
+    },
+    link: { connected, ping, packets, uptime },
+    verdict: { kind: v.kind, label: v.label, cause: v.cause },
+    environment: SENSORS.map(s => {
+      const value = packet?.[s.key];
+      const ok = value != null && !isNaN(value);
+      const [lblKey, kind] = ok ? s.st(value) : [null, null];
+      return { key: s.key, label: t("sensor." + s.key), value: ok ? Number(value) : null, unit: s.unit, status: lblKey ? t(lblKey) : null, kind };
+    }),
+    // raw packet too: attitude, co, bumps and anything the csv grows later that
+    // has no tile yet still lands in the export.
+    telemetry: packet || null,
+    findings: (chat?.findings || []).map(f => ({ time: f.time, kind: f.kind, text: f.text, hasImage: !!f.img })),
+    conversation: (chat?.messages || []).map(m => ({ role: m.role, content: m.content })),
+    analysis: (ai?.history || []).map(h => ({ time: h.time, text: h.text })),
+    events: logs.map(l => ({ time: l.time, type: l.type, text: l.text })),
+  };
+}
+
+function downloadReport(rep) {
+  const stamp = rep.generated.slice(0, 19).replace(/[:T]/g, "-");
+  const slug = (rep.session.title || "session").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "session";
+  const url = URL.createObjectURL(new Blob([JSON.stringify(rep, null, 2)], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `blackout-${slug}-${stamp}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000); // revoking in the same tick cancels the download
+}
+
+function ReportRow({ k, v, kind }) {
+  return html`<div class=${"report-row" + (kind ? " is-" + kind : "")}>
+    <span class="report-k">${k}</span><span class="report-v">${v}</span></div>`;
+}
+
+function ReportModal({ report, onClose }) {
+  const s = report.session;
+  const empty = html`<p class="report-empty">${t("report.none")}</p>`;
+  return html`
+    <div class="blk-modal" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div class="blk-modal-frame report-frame" role="dialog" aria-label=${t("report.title")}>
+        <div class="blk-modal-head">
+          <span class="label">${t("report.title")}</span>
+          <div class="report-actions">
+            <button type="button" class="blk-modal-x" onClick=${() => downloadReport(report)}>${t("report.export")}</button>
+            <button type="button" class="blk-modal-x" onClick=${onClose}>${t("report.close")}</button>
+          </div>
+        </div>
+        <div class="report-body">
+          <h2 class="report-title">${s.title || t("chat.untitled")}</h2>
+          <p class="report-sub">${new Date(report.generated).toLocaleString()}</p>
+
+          <h3 class="report-h">${t("report.mission")}</h3>
+          ${s.mission ? html`<p class="report-p">${s.mission}</p>` : empty}
+
+          <h3 class="report-h">${t("report.status")}</h3>
+          <${ReportRow} k=${t("verdict.entryStatus")} v=${report.verdict.label + " · " + report.verdict.cause} kind=${report.verdict.kind} />
+          <${ReportRow} k=${t("report.link")} v=${(report.link.connected ? t("report.online") : t("report.offline"))
+            + ` · ${report.link.packets} pkt · ${report.link.ping} · ${report.link.uptime}`} />
+
+          <h3 class="report-h">${t("report.environment")}</h3>
+          ${report.environment.map(e => html`<${ReportRow} key=${e.key} k=${e.label}
+            v=${e.value == null ? "—" : `${e.value} ${e.unit}${e.status ? " · " + e.status : ""}`} kind=${e.kind} />`)}
+
+          <h3 class="report-h">${t("report.findings")} · ${report.findings.length}</h3>
+          ${report.findings.length ? report.findings.map((f, i) => html`
+            <${ReportRow} key=${i} k=${f.time} v=${f.text + (f.hasImage ? " 📷" : "")} kind=${f.kind === "danger" ? "abort" : f.kind === "warn" ? "warn" : null} />`) : empty}
+
+          <h3 class="report-h">${t("report.analysis")} · ${report.analysis.length}</h3>
+          ${report.analysis.length ? report.analysis.map((h, i) => html`
+            <div key=${i} class="report-note"><span class="report-k">${h.time}</span><p class="report-p">${h.text}</p></div>`) : empty}
+
+          <h3 class="report-h">${t("report.conversation")} · ${report.conversation.length}</h3>
+          ${report.conversation.length ? report.conversation.map((m, i) => html`
+            <div key=${i} class=${"report-msg is-" + m.role}><span class="report-k">${m.role}</span><p class="report-p">${m.content}</p></div>`) : empty}
+
+          <h3 class="report-h">${t("report.events")} · ${report.events.length}</h3>
+          ${report.events.length ? report.events.slice(-40).map((l, i) => html`
+            <${ReportRow} key=${i} k=${l.time} v=${l.text} kind=${l.type === "danger" ? "abort" : l.type === "warn" ? "warn" : null} />`) : empty}
+        </div>
+      </div>
+    </div>`;
 }
 
 /* chat sessions (in agent box) */
@@ -1516,6 +1619,7 @@ function App() {
   const [flashCode, setFlashCode] = useState(null);
   const [speaking, setSpeaking] = useState(false);
   const [fpv, setFpv] = useState(false);      // △/Y — fullscreen camera + hud overlay
+  const [report, setReport] = useState(null); // frozen session report, or null when closed
   // chats = briefed recon sessions. each holds its own mission + conversation.
   const [chats, setChats] = useState(() => { try { return JSON.parse(localStorage.getItem("chats") || "[]"); } catch { return []; } });
   const [activeId, setActiveId] = useState(() => localStorage.getItem("activeChat") || "");
@@ -2066,6 +2170,12 @@ function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [closeDrawer, openDrawer]);
+  // snapshot on open, so the document you read is exactly the json you export —
+  // telemetry keeps arriving behind it either way.
+  const openReport = useCallback(() => {
+    setReport(buildReport({ chat: activeRef.current, packet: packetRef.current, logs, ai, connected, ping, packets, uptime }));
+  }, [logs, ai, connected, ping, packets, uptime]);
+
   const drawerTabRef = useRef(drawerTab);
   drawerTabRef.current = drawerTab;
   const drawerRef = useRef(drawer);
@@ -2104,7 +2214,8 @@ function App() {
             <${Agent} ai=${ai} tts=${tts} ttsProv=${ttsProv} hasDeepgram=${hasDeepgram} packet=${packet} connected=${connected} speaking=${speaking}
               chats=${chats} activeChat=${activeChat} onNewChat=${newChat} onSelectChat=${selectChat}
               onDeleteChat=${deleteChat} onBrief=${briefMission} onSpeak=${speakBrief}
-              onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onPick=${pickHistory} onMock=${mockData} onAsk=${ask} />
+              onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onPick=${pickHistory} onMock=${mockData} onAsk=${ask}
+              onReport=${openReport} />
             <${Drive} onCmd=${sendCmd} onAnalyze=${analyze} enabled=${bridge.running} busyRef=${analyzingRef} packetRef=${packetRef} />
           </aside>
         </main>
@@ -2120,6 +2231,9 @@ function App() {
         <${UpdateModal} open=${updateOpen} phase=${flashPhase} boards=${flashBoards}
           log=${flashLog} code=${flashCode}
           onFlash=${startFlash} onClose=${closeUpdate} />`, document.body)}
+
+      ${report && createPortal(html`
+        <${ReportModal} report=${report} onClose=${() => setReport(null)} />`, document.body)}
 
       ${warn && createPortal(html`
         <div class="blk-modal" onClick=${(e) => { if (e.target === e.currentTarget) setWarn(false); }}>
