@@ -4,26 +4,27 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark">
-  <title>BLACKOUT DASHBOAARD</title>
+  <title>BLACKOUT DASHBOARD</title>
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;500;600;700;800;900&family=Caesar+Dressing&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- IMPORTANT NOTE: everything below is self-hosted on purpose — the venue wifi
+       is not a dependency we get to have. no cdn, no google fonts, no esm.sh.
+       re-vendor with `node cmds/vendor.mjs` if a version ever needs bumping. -->
+  <link rel="stylesheet" href="vendor/fonts.css">
 
   <link rel="stylesheet" href="css/style.css">
 
   <!-- globals used by react -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.8.1/socket.io.min.js"></script>
+  <script src="vendor/three.min.js"></script>
+  <script src="vendor/GLTFLoader.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
 
   <script type="importmap">
   {
     "imports": {
-      "react": "https://esm.sh/react@18.3.1",
-      "react-dom": "https://esm.sh/react-dom@18.3.1?external=react",
-      "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?external=react",
-      "htm": "https://esm.sh/htm@3.1.1"
+      "react": "/vendor/react.js",
+      "react-dom": "/vendor/react-dom.js",
+      "react-dom/client": "/vendor/react-dom.js",
+      "htm": "/vendor/htm.js"
     }
   }
   </script>

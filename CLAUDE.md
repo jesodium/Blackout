@@ -20,7 +20,7 @@ Node.js PC server/dashboard.
   - **Flash LED (GPIO 4) debug:** boot = slow blink (500ms), error (camera/WiFi
     fail) = rapid blink (100ms), connected = steady dim (PWM 32). Handled by
     `ledUpdate()` in `main.ino`, called from `loop()` every 50ms.
-- `server/public/js/blk.js` — the BLK language (parser, serializer, evaluator,
+- `server/public/js/blk.mjs` — the BLK language (parser, serializer, evaluator,
   linter, interpreter). Text is the file format; `blkedit.js` + `blk.html` are
   the editor, `blksim.js` the offline rover simulator. See "BLK" below.
 - `server/` — Node.js dashboard + "Sage" AI agent (Cerebras). BLE is read
@@ -29,6 +29,12 @@ Node.js PC server/dashboard.
   drive commands. `sage.js` parses the model's JSON replies; `vision.js`
   grabs ESP32-CAM stills for Sage to see; TTS is Deepgram (if keyed) falling
   back to Edge neural voices; prompts live in `prompts/*.md`.
+  - **Mirror mode:** the dashboard opened over the LAN (the judges' tablet) is
+    telemetry only — no link controls, no firmware updater, no drive — until the
+    host grants it from CONNECTED DEVICES in the topbar. The host is whoever
+    loaded it over loopback, and the server decides that from the socket's
+    address, so a granted client is enforced server-side too (`stop` is never
+    gated). `npm run test:mirror` covers grant + revoke.
 - `OUTDATED/` — retired Mega 2560 + Uno R3 two-board setup, kept only for
   porting reference. Not part of the current build.
 - `cad/`, `step/` — mechanical

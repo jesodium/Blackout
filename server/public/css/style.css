@@ -114,12 +114,6 @@ body {
 @keyframes pulse { 50% { opacity: 0.45; } }
 
 .top-conn { display: flex; align-items: center; gap: 10px; }
-.conn-panel { min-height: 36px; display: flex; align-items: center; animation: connSwap 0.3s cubic-bezier(0.2, 0.75, 0.2, 1) both; }
-@keyframes connSwap {
-  from { opacity: 0; transform: translateY(-4px); filter: blur(1.5px); }
-  to   { opacity: 1; transform: none;             filter: none; }
-}
-
 .port-select { max-width: 210px; }
 .port-select option { background: var(--panel); }
 
@@ -146,6 +140,14 @@ body {
 .stat { display: flex; flex-direction: column; gap: 3px; min-width: 52px; }
 .stat dt { font: 700 8.5px/1 var(--grotesk); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
 .stat dd { font: 500 13px/1 var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* the tablet's url sits in the mast blurred: readable when the operator leans in or tabs to it,
+   not to a phone camera across the room. obscurity only — anyone on the hotspot can still find the server. */
+.lan-btn {
+  font: 500 13px/1 var(--mono); color: var(--ink); background: none; border: 0; padding: 0; cursor: copy;
+  filter: blur(4px); opacity: 0.55; transition: filter 0.15s, opacity 0.15s;
+}
+.stat-lan:hover .lan-btn, .lan-btn:focus-visible { filter: none; opacity: 1; }
 
 .top-lang { max-width: 110px; }
 
@@ -229,7 +231,6 @@ body {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   transition: transform 0.36s cubic-bezier(0.34, 1.4, 0.5, 1);
 }
-.conn-seg[data-mode="bt"] .conn-seg-thumb { transform: translateX(100%); }
 
 /* 3-way control-mode pill: reuses conn-seg look, one thumb-width per slot */
 .mode-seg { display: grid; grid-template-columns: 1fr 1fr 1fr; width: 100%; }
@@ -237,25 +238,6 @@ body {
 .mode-seg .conn-seg-thumb { width: calc(33.333% - 2px); }
 .mode-seg[data-mode="blk"]  .conn-seg-thumb { transform: translateX(100%); }
 .mode-seg[data-mode="auto"] .conn-seg-thumb { transform: translateX(200%); }
-
-/* toggle switch */
-.switch {
-  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
-  font: 700 9.5px/1 var(--grotesk); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3);
-}
-.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
-.switch-track {
-  width: 36px; height: 20px; background: var(--inset); border: 1px solid var(--line-2);
-  border-radius: 99px; position: relative; transition: background 0.15s, border-color 0.15s;
-}
-.switch-knob {
-  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
-  background: var(--ink-3); transition: transform 0.18s cubic-bezier(0.34, 1.4, 0.5, 1), background 0.15s;
-}
-.switch input:checked + .switch-track { background: var(--accent); border-color: var(--accent); }
-.switch input:checked + .switch-track .switch-knob { transform: translateX(16px); background: #fff; }
-.switch:has(input:checked) { color: var(--ink); }
-.switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ============================================================
    custom form elements — no default browser garbage
@@ -362,14 +344,6 @@ input[type="range"]::-moz-range-thumb {
 input[type="range"]:focus { box-shadow: none; }
 
 
-.tts-provider-toggle { display: flex; gap: 0; flex-shrink: 0; border: 1px solid var(--line-2); border-radius: 99px; overflow: hidden; }
-.tts-prov-btn {
-  font: 700 9px/1 var(--grotesk); letter-spacing: 0.1em; text-transform: uppercase;
-  padding: 5px 9px; color: var(--ink-3); background: none; border: none; cursor: pointer;
-  transition: color 0.12s, background 0.12s;
-}
-.tts-prov-btn.is-active { color: var(--bg); background: var(--ink); }
-.tts-prov-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 /* status pill */
 .pill {
@@ -520,7 +494,7 @@ input[type="range"]:focus { box-shadow: none; }
 .agent-topbar { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 14px 0; }
 .agent-topbar-spacer { flex: 1; }
 .agent-back { margin: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-voice { flex-shrink: 0; }
+.agent-voice-sel { flex-shrink: 0; min-height: 30px; font-size: 11px; padding: 0 24px 0 8px; background-color: transparent; }
 
 .agent-stage {
   position: relative; flex: 1 1 auto; min-height: 44px; container-type: size; overflow: hidden;
@@ -652,8 +626,29 @@ input[type="range"]:focus { box-shadow: none; }
 .verdict.is-warn  { border-left-color: var(--warn);   background: var(--warn-bg);  } .verdict.is-warn  .verdict-label { color: var(--warn); }
 .verdict.is-abort { border-left-color: var(--accent); background: var(--abort-bg); } .verdict.is-abort .verdict-label { color: var(--accent); }
 
-.agent-foot { flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 8px 16px 6px; }
+.agent-foot { flex-shrink: 0; display: flex; align-items: stretch; gap: 6px; padding: 8px 16px 6px; }
 .agent-foot .btn--primary { flex: 1; }
+.foot-icon { flex: none; width: 42px; padding: 0; display: grid; place-items: center; font-size: 14px; }
+
+/* secondary actions live behind ⋯ so the foot is one primary button wide */
+.foot-menu { position: relative; flex-shrink: 0; }
+.foot-menu > summary { list-style: none; letter-spacing: 0.1em; }
+.foot-menu > summary::-webkit-details-marker { display: none; }
+.foot-menu-pop {
+  position: absolute; z-index: 6; right: 0; bottom: calc(100% + 6px); min-width: 190px;
+  display: flex; flex-direction: column; padding: 5px; gap: 2px;
+  background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px;
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.45);
+}
+.menu-item {
+  text-align: left; cursor: pointer; padding: 8px 10px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--ink-2); font: 500 12px var(--grotesk);
+  transition: color 0.14s, background 0.14s;
+}
+.menu-item:hover:not(:disabled) { color: var(--ink); background: var(--inset); }
+.menu-item:disabled { opacity: 0.4; cursor: not-allowed; }
+.menu-label { padding: 5px 10px 3px; font: 700 8.5px/1 var(--grotesk); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
+.menu-sep { height: 0; margin: 4px 6px; border: 0; border-top: 1px solid var(--line); }
 .agent-hist { padding: 0 16px 8px; position: relative; }
 
 .is-analyzing .zone-title { animation: pulse 0.9s ease-in-out infinite; }
@@ -681,28 +676,9 @@ input[type="range"]:focus { box-shadow: none; }
 .ai-hist-item:hover { border-color: var(--line-2); background: var(--panel-2); color: var(--ink); transform: translateX(3px); }
 .ai-hist-time { font: 500 10px/1.45 var(--mono); color: var(--accent); flex-shrink: 0; }
 
-/* ask sage (mic + chips) */
-.agent-ask { padding: 0 16px 10px; display: flex; flex-direction: column; gap: 6px; }
-.ask-mic {
-  width: 100%; min-height: clamp(38px, 5dvh, 40px); cursor: pointer; border-radius: var(--r-s);
-  background: var(--inset); border: 1px solid var(--line-2); color: var(--ink);
-  font: 600 12px var(--mono); letter-spacing: 0.04em;
-  transition: color 0.14s, background 0.14s, border-color 0.14s, transform 0.14s ease;
-}
-.ask-mic:hover:not(:disabled) { border-color: var(--ink-2); transform: translateY(-1px); }
-.ask-mic:disabled { opacity: 0.4; cursor: not-allowed; }
+/* ask sage — mic button in the foot row */
 .ask-mic.is-live { color: var(--bg); background: var(--accent); border-color: var(--accent); animation: chat-rec 1s steps(2) infinite; }
 @keyframes chat-rec { 50% { opacity: 0.55; } }
-.ask-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
-.ask-chip { flex-shrink: 0; }
-.ask-chip {
-  cursor: pointer; padding: 7px 10px; background: transparent; border-radius: 99px;
-  border: 1px solid var(--line); color: var(--ink-2);
-  font: 500 11px var(--grotesk);
-  transition: color 0.14s, background 0.14s, border-color 0.14s, transform 0.14s ease;
-}
-.ask-chip:hover:not(:disabled) { color: var(--ink); border-color: var(--line-2); background: var(--panel-2); transform: translateY(-2px); }
-.ask-chip:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* shared mission bits */
 .mission-k { font: 700 9px/1 var(--grotesk); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
@@ -781,14 +757,17 @@ input[type="range"]:focus { box-shadow: none; }
 .agent-speech { animation: view-in 0.5s 0.1s ease both; }
 .verdict { animation: view-in 0.5s 0.16s ease both; }
 .agent-foot { animation: view-in 0.5s 0.22s ease both; }
-.agent-ask { animation: view-in 0.5s 0.28s ease both; }
 .agent-hist { animation: view-in 0.5s 0.34s ease both; }
 
 /* ============================================================
    drive
    ============================================================ */
 .drive { flex-shrink: 0; }
-.drive-body { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; }
+/* .drive-body is the box that gets height-animated on a mode switch; .drive-inner holds
+   the actual layout so its height stays the *natural* one while the parent is mid-tween
+   (that's what the resize observer in DriveZone reads to retarget). */
+.drive-body { display: flow-root; }
+.drive-inner { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; }
 
 
 .pad {
@@ -838,6 +817,9 @@ input[type="range"]:focus { box-shadow: none; }
 }
 .stop-bar:hover { color: var(--bg); background: var(--accent); box-shadow: 0 6px 22px -8px var(--accent); }
 .stop-bar:active { transform: scale(0.985); }
+/* IMPORTANT NOTE: dimmed, never disabled — stop is the one command that bypasses
+   the mirror gate, so it must stay clickable even with no link showing. */
+.stop-bar.is-off { opacity: 0.45; }
 
 /* blk workflow panel (inside drive) */
 .blk-ctl { display: grid; gap: 8px; }
@@ -1024,8 +1006,11 @@ input[type="range"]:focus { box-shadow: none; }
 .warn-title { font: 800 12px/1 var(--grotesk); letter-spacing: 0.16em; color: var(--warn); }
 .warn-frame p { font: 500 13px/1.6 var(--grotesk); color: var(--ink-2); margin: 0; }
 .warn-actions { display: flex; gap: 8px; align-self: flex-end; }
-.warn-go { color: var(--warn); border-color: var(--warn); }
+.warn-go { color: var(--warn); border-color: var(--warn); transition: color 0.12s, background 0.12s, border-color 0.12s, opacity 0.45s ease; }
 .warn-go:disabled { opacity: 0.4; cursor: not-allowed; }
+/* countdown collapses instead of popping the button's width when it hits 0 */
+.warn-count { display: inline-block; overflow: hidden; white-space: pre; max-width: 3em; transition: max-width 0.35s ease, opacity 0.25s ease; }
+.warn-count.is-done { max-width: 0; opacity: 0; }
 
 /* usb-board strip under the topbar — the only entry point to the updater */
 .update-bar {
@@ -1047,6 +1032,20 @@ input[type="range"]:focus { box-shadow: none; }
   width: min(560px, 92vw); height: auto; max-height: 88dvh;
   gap: 16px; padding: 24px; align-items: stretch;
 }
+
+/* connected devices — host-only roster, one control switch per dashboard */
+.devices-frame { width: min(520px, 92vw); height: auto; max-height: 88dvh; }
+.device-list { list-style: none; margin: 0; padding: 8px 12px 14px; overflow-y: auto; }
+.device-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 2px; border-bottom: 1px solid color-mix(in srgb, var(--line-2) 45%, transparent);
+}
+.device-name { display: flex; align-items: center; gap: 8px; font: 500 13px/1 var(--mono); color: var(--ink); }
+.device-empty { font: 500 12px/1 var(--mono); color: var(--ink-3); padding: 10px 2px; }
+.device-row .serial-btn { min-height: 36px; min-width: 116px; }
+.device-row .serial-btn.is-on { color: var(--go); border-color: var(--go); }
+/* grant confirm sits on top of the devices sheet — don't stack a second full blur */
+.blk-modal .blk-modal { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(6, 6, 7, 0.6); }
 .update-frame p { font: 500 13px/1.6 var(--grotesk); color: var(--ink-2); margin: 0; }
 .update-title { font: 800 12px/1 var(--grotesk); letter-spacing: 0.16em; color: var(--ink); }
 .update-actions { display: flex; gap: 8px; justify-content: flex-end; }
@@ -1128,12 +1127,15 @@ input[type="range"]:focus { box-shadow: none; }
    entrance
    ============================================================ */
 .reveal { opacity: 0; transform: translateY(10px); animation: reveal 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) forwards; }
+/* mirror lost control: mirror of .reveal, then react unmounts it (see driveMounted) */
+.is-leaving { animation: leave 0.24s cubic-bezier(0.5, 0, 0.75, 0.4) both; pointer-events: none; }
 .col-main .stage-3d { animation-delay: 0.04s; }
 .col-main .stage-cam { animation-delay: 0.08s; }
 .col-main .strip  { animation-delay: 0.12s; }
 .col-rail .agent  { animation-delay: 0.18s; }
 .col-rail .drive  { animation-delay: 0.26s; }
 @keyframes reveal { to { opacity: 1; transform: none; } }
+@keyframes leave { to { opacity: 0; transform: translateY(10px); } }
 
 /* ============================================================
    laptop / tablet breakpoints
@@ -1151,7 +1153,6 @@ input[type="range"]:focus { box-shadow: none; }
    IMPORTANT NOTE: below ~780px tall the rail runs out of room anyway — the console
    drawer / a taller window is the answer there, not more shaving. */
 @media (max-height: 899px) and (min-width: 1025px) {
-  .ask-chips { display: none; }
   .verdict-cause { display: none; }
   .agent-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
   .blk-ctl { gap: 6px; }
@@ -1172,7 +1173,6 @@ input[type="range"]:focus { box-shadow: none; }
   .agent-timing { margin-top: 4px; }
   .verdict { padding: 5px 12px; }
   .agent-foot { padding: 6px 16px 4px; }
-  .ask-mic { min-height: 36px; }
 }
 
 /* portrait tablet & below: cockpit stacks, page scrolls, drive jumps above sage */

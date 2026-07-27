@@ -14,7 +14,7 @@ import {
   NODE_META, SENSORS, CMPS, FLAGS, LIMITS, DEFAULT_PWM,
   parse, serialize, parseCond, parseExpr, condStr, exprStr,
   clampArg, lint, estimate, fmtMs, run,
-} from "./blk.js";
+} from "./blk.mjs";
 import { Sim, LAYOUTS, ARENA } from "./blksim.js";
 
 const $ = (id) => document.getElementById(id);

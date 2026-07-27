@@ -1,5 +1,6 @@
 require("dotenv").config();
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { Readable } = require("stream");
 const { execFile, execFileSync, spawn } = require("child_process");
@@ -32,8 +33,8 @@ const PORT = process.env.PORT || 3000;
 const SERIAL_BAUD = parseInt(process.env.SERIAL_BAUD || "9600", 10);
 
 async function listSerialPorts() {
-  const { glob } = await import("glob");
-  return await glob("/dev/cu.*");
+  const names = await fs.promises.readdir("/dev");
+  return names.filter((n) => n.startsWith("cu.")).map((n) => "/dev/" + n);
 }
 
 app.get("/api/ports", async (req, res) => {
@@ -223,6 +224,14 @@ let bleActive = false;
 
 app.get("/api/bridge", (req, res) => res.json({ running: bleActive, last: "" }));
 
+// the laptop's lan address, so the judges' tablet can be pointed at this dashboard
+// without anyone opening a terminal. first non-internal ipv4 — on a hotspot that's the only one.
+app.get("/api/lan", (req, res) => {
+  const ip = Object.values(os.networkInterfaces()).flat()
+    .find(i => i.family === "IPv4" && !i.internal)?.address;
+  res.json({ url: ip ? `http://${ip}:${PORT}` : null });
+});
+
 app.post("/api/bridge/start", (req, res) => {
   disconnectSerial(); // close usb when bt takes over
   bleActive = true;
@@ -232,34 +241,6 @@ app.post("/api/bridge/start", (req, res) => {
 app.post("/api/bridge/stop", (req, res) => {
   bleActive = false;
   res.json({ ok: true });
-});
-
-// connmode: mutually exclusive bt/usb switch. callers should only use this
-// instead of manually calling bridge/start + ports/switch.
-app.post("/api/connMode", async (req, res) => {
-  const { mode } = req.body;
-  if (!mode || !["usb", "bt"].includes(mode))
-    return res.status(400).json({ error: "mode must be 'usb' or 'bt'" });
-
-  if (mode === "bt") {
-    disconnectSerial(); // close usb, block reconnect — actual ble connect happens client-side via /api/bridge/start
-  } else {
-    bleActive = false;
-    connectSerial(selectedPortPath);
-  }
-
-  res.json({ ok: true, mode });
-});
-
-app.post("/api/ports/switch", (req, res) => {
-  const { path } = req.body;
-  if (!path) return res.status(400).json({ error: "path required" });
-  if (bleActive) return res.status(409).json({ error: "BT mode active — switch link to USB first" });
-  connectSerial(path, (err) => {
-    if (err) return res.status(500).json({ error: err.message });
-    console.log(`Switched to ${path}`);
-    res.json({ ok: true, path });
-  });
 });
 
 // --- blk workflows: plain .blk text files in ./workflows, name comes from url ---
@@ -863,8 +844,42 @@ else console.log("USB serial auto-connect off — select a port in the dashboard
 
 // analysis is on-demand only (request-analysis below) — no auto interval.
 
+// connected dashboards. the host is whoever loaded this over loopback — the operator's
+// own laptop. everything else is a tablet: telemetry only until the host grants it drive.
+const clients = new Map(); // socket.id -> { ip, kind, host, granted }
+// grants are held by ip, not socket.id: a tablet that drops wifi for two seconds
+// reconnects as a new socket, and re-granting it blind mid-run is worse than
+// remembering. IMPORTANT NOTE: ip is the identity — dhcp handing that lease to
+// another device would inherit the grant. fine for a match-length competition lan.
+const grants = new Set();
+const isHost = (s) => ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(s.handshake.address);
+const kindOf = (ua = "") => /iPad|Tablet/.test(ua) ? "iPad" : /iPhone/.test(ua) ? "iPhone"
+  : /Android/.test(ua) ? "Android" : /Macintosh/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "device";
+const pushClients = () => io.emit("clients", [...clients].map(([id, c]) => ({ id, ...c })));
+
 io.on("connection", (socket) => {
   console.log("Client connected");
+  const host = isHost(socket);
+  const ip = String(socket.handshake.address).replace("::ffff:", "");
+  clients.set(socket.id, {
+    ip,
+    kind: kindOf(socket.handshake.headers["user-agent"]),
+    host, granted: host || grants.has(ip),
+  });
+  pushClients();
+  socket.on("disconnect", () => { clients.delete(socket.id); pushClients(); });
+  // only the host hands out control, and its own row can't be revoked.
+  socket.on("grant", (d) => {
+    if (!isHost(socket)) return;
+    const c = clients.get(d?.id);
+    if (!c || c.host) return;
+    c.granted = !!d?.on;
+    if (c.granted) grants.add(c.ip); else grants.delete(c.ip);
+    // the grant belongs to the device, so a revoke has to catch its other tabs too.
+    for (const o of clients.values()) if (!o.host && o.ip === c.ip) o.granted = c.granted;
+    console.log(`Control ${c.granted ? "granted to" : "revoked from"} ${c.ip} (${c.kind})`);
+    pushClients();
+  });
   if (latestData) socket.emit("sensor-data", latestData);
   socket.on("request-analysis", (opts) => {
     const mode = opts?.mode;
@@ -879,6 +894,11 @@ io.on("connection", (socket) => {
     console.log("Mission set:", currentMission || "(cleared)");
     io.emit("mission-set", { mission: currentMission });
     if (currentMission) ackMission(currentMission);
+  });
+  // tablet clients have no web bluetooth — hand their drive commands to whichever client holds the ble link.
+  // stop is never gated — an e-stop from the judges' tablet must always land.
+  socket.on("cmd", (w) => {
+    if (w === "stop" || clients.get(socket.id)?.granted) socket.broadcast.emit("cmd", w);
   });
   socket.on("set-language", (code) => {
     currentLanguage = (code === "es") ? "es" : "en";
