@@ -1,6 +1,6 @@
 // self-check for the blk parser + interpreter: node test-blk.mjs
 import assert from "node:assert";
-import { parse, serialize, evalCond, evalExpr, parseExpr, parseCond, condStr, exprStr, interp, lint, estimate, run } from "./public/js/blk.js";
+import { parse, serialize, evalCond, evalExpr, parseExpr, parseCond, condStr, exprStr, interp, lint, estimate, run } from "./public/js/blk.mjs";
 
 /* parse + roundtrip */
 const src = `# demo

@@ -1,12 +1,22 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import { createPortal, flushSync } from "react-dom";
 import htm from "htm";
 import { createRoverScene } from "./scene.js";
 import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./i18n.js";
-import { parse as blkParse, run as blkRun, lint as blkLint, estimate as blkEstimate, fmtMs } from "./blk.js";
+import { parse as blkParse, run as blkRun, lint as blkLint, estimate as blkEstimate, fmtMs } from "./blk.mjs";
 
 const html = htm.bind(React.createElement);
+
+// mirror mode: the judges' tablet reaches this dashboard over the lan, the operator's
+// laptop over localhost. anything not local is a read-only copy — same telemetry, no
+// link/firmware/drive controls (stop still works, an e-stop should never be gated).
+// ?operator on the url unlocks a second machine for good.
+const VIEWER = (() => {
+  if (new URLSearchParams(location.search).has("operator")) localStorage.setItem("operator", "1");
+  return !localStorage.getItem("operator") &&
+    !["localhost", "127.0.0.1", "[::1]", "::1"].includes(location.hostname);
+})();
 
 // cam mjpeg stream. known homes: tp-link, iphone hotspot, school
 // camera walks this list on failure until one loads. offline panel field overrides (localStorage).
@@ -551,10 +561,8 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
 }
 
 /* drive — manual control hub: on-screen pad (hold-to-drive), wasd/arrows, gamepad, routines, stop.
-   drive is sent as short timed bursts re-sent every 60ms while held: firmware auto-halts 200ms
+   drive is sent as short timed bursts re-sent every 150ms while held: firmware auto-halts 300ms
    after the last burst, so a dropped link or stuck ui never leaves wheels spinning.
-   the poll interval is the floor on input latency (press → radio), so it stays well under
-   the burst duration; the burst duration is the ceiling on how long a lost link keeps rolling.
    autopilot on = all manual input ignored. control mode: remote + blk live; autonomous placeholder. */
 const MODES = [["remote", "REMOTE"], ["blk", "BLK"], ["auto", "AUTO"]];
 const KEYMAP = {
@@ -562,9 +570,11 @@ const KEYMAP = {
   a: "left", arrowleft: "left", d: "right", arrowright: "right",
 };
 
-function Drive({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
+function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
   const [mode, setMode] = useState("remote");
   const [padName, setPadName] = useState(null);
+  const bodyRef = useRef(null);   // .drive-body — the box that gets height-animated
+  const innerRef = useRef(null);  // .drive-inner — its natural height, read by the observer
   const [verb, setVerb] = useState(null); // live verb for ui readout + pad highlight
   const armed = mode === "remote" && enabled;
   const armedRef = useRef(armed);
@@ -635,8 +645,8 @@ function Drive({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
         return;
       }
       moving.current = true; setVerb(v);
-      onCmd(`drv,${v},${MANUAL_PWM},200`);
-    }, 60);
+      onCmd(`drv,${v},${MANUAL_PWM},300`);
+    }, 150);
     return () => clearInterval(id);
   }, [onCmd]);
 
@@ -646,6 +656,33 @@ function Drive({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     if (mode === "remote") { heldRef.current = null; moving.current = false; setVerb(null); onCmd("stop"); }
     setMode(m);
   };
+
+  /* the body is a different height per mode (pad / blk panel / bare) and sage takes the
+     slack, so a raw swap jump-cuts both boxes. animate the real height — not a view
+     transition: that snapshots the whole page and freezes the cam feed and 3d view.
+     the observer watches .drive-inner (natural height) and animates .drive-body, so a
+     late arrival — blk's workflow list and preview each land a fetch after the switch —
+     retargets the running tween from wherever it is instead of queueing a second resize. */
+  useLayoutEffect(() => {
+    const el = bodyRef.current, inner = innerRef.current;
+    if (!el || !inner || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    let prev = inner.offsetHeight, anim = null;
+    const ro = new ResizeObserver(() => {
+      const h = inner.offsetHeight;
+      if (h === prev) return;
+      // start from the last natural height, not el's — by the time the observer runs, layout
+      // already moved. only mid-tween is el's own height the honest starting point.
+      const from = anim?.playState === "running" ? el.offsetHeight : prev;
+      prev = h;
+      anim?.cancel();
+      el.style.overflow = "hidden"; // only while it moves, or the stop bar's hover glow gets clipped
+      anim = el.animate([{ height: from + "px" }, { height: h + "px" }],
+        { duration: 340, easing: "cubic-bezier(0.32, 0.72, 0, 1)" });
+      anim.finished.then(() => { el.style.overflow = ""; }, () => {}); // cancel rejects — ignore
+    });
+    ro.observe(inner);
+    return () => { ro.disconnect(); anim?.cancel(); };
+  }, []);
 
   const stopAll = () => { heldRef.current = null; keysRef.current.clear(); moving.current = false; setVerb(null); onCmd("stop"); };
 
@@ -665,12 +702,13 @@ function Drive({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     : t("drive.hold");
 
   return html`
-    <section class="zone drive reveal" aria-labelledby="drive-h">
+    <section class=${"zone drive " + (leaving ? "is-leaving" : "reveal")} aria-labelledby="drive-h">
       <div class="zone-head">
         <h2 class="zone-title" id="drive-h">${t("zone.drive")}</h2>
         <span class=${"pill " + (padName ? "is-go" : "")}>${padName ? "PAD OK" : "NO PAD"}</span>
       </div>
-      <div class="drive-body">
+      <div class="drive-body" ref=${bodyRef}>
+       <div class="drive-inner" ref=${innerRef}>
         <div class="conn-seg mode-seg" data-mode=${mode} role="tablist">
           <span class="conn-seg-thumb"></span>
           ${MODES.map(([m, label]) => html`
@@ -687,6 +725,7 @@ function Drive({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
           <${BlkCtl} onCmd=${onCmd} onAnalyze=${onAnalyze} enabled=${enabled} busyRef=${busyRef} packetRef=${packetRef} />`
         : html`
           <small class="drive-hint">${t("drive.auto")}</small>`}
+        ${mode !== "remote" && html`
         <div class="routines">
           <span class="label">${t("drive.routines")}</span>
           <div class="routine-row">
@@ -696,11 +735,12 @@ function Drive({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
               <button type="button" key=${r} class="chip" title=${t(titleKey)}
                 disabled=${!enabled} onClick=${() => onCmd("go," + r)}>${label}</button>`)}
           </div>
-        </div>
-        ${mode !== "blk" && html`
-          <button type="button" class="stop-bar" onClick=${stopAll} title=${t("mast.routineStopTitle")}>
+        </div>`}
+        ${mode === "auto" && html`
+          <button type="button" class=${"stop-bar" + (enabled ? "" : " is-off")} onClick=${stopAll} title=${t("mast.routineStopTitle")}>
             ■ ${t("drive.stop")}
           </button>`}
+       </div>
       </div>
     </section>`;
 }
@@ -766,12 +806,23 @@ function CamView() {
     setSliders(p => ({ ...p, [varName]: val }));
     fetch(`http://${host}/control?var=${varName}&val=${val}`).catch(() => {});
   };
+  // the pink wash is white balance, and it comes back two ways: a board still on
+  // pre-awb firmware boots with frozen gains, and set_framesize re-runs the sensor
+  // init on *any* firmware, dropping the awb chain with it. so re-assert it whenever
+  // the stream goes live or the resolution changes, rather than trusting it to stick.
+  // all three matter — whitebal alone leaves the gains where the sensor left them.
+  const forceAwb = () => {
+    for (const [k, v] of [["whitebal", 1], ["awb_gain", 1], ["wb_mode", picks.wb_mode]])
+      fetch(`http://${host}/control?var=${k}&val=${v}`).catch(() => {});
+  };
   // enum settings — same endpoint, but a slider can't label "cloudy" vs "office".
   // framesize reallocates the frame buffer, so the stream stutters for a frame on
   // change; it can't exceed the init size (SVGA=8) — see the control handler.
   const pick = (varName, val) => {
     setPicks(p => ({ ...p, [varName]: val }));
-    fetch(`http://${host}/control?var=${varName}&val=${val}`).catch(() => {});
+    fetch(`http://${host}/control?var=${varName}&val=${val}`)
+      .then(() => { if (varName === "framesize") forceAwb(); }) // reinit dropped it
+      .catch(() => {});
   };
 
   return html`
@@ -780,7 +831,7 @@ function CamView() {
         ? html`<div class="viewport-fallback">${t("cam.scanning")}</div>`
         : state !== "offline"
         ? html`<img ref=${imgRef} src=${src} alt=${t("zone.camera")} class="cam-feed"
-            onLoad=${() => { setState("live"); localStorage.setItem("camHost", host); }}
+            onLoad=${() => { setState("live"); localStorage.setItem("camHost", host); forceAwb(); }}
             onError=${fail} />`
         : html`<div class="viewport-fallback">${t("cam.offline")}<br/>
             <small>${base}</small><br/>
@@ -1035,24 +1086,18 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
           ${briefed
             ? html`<button type="button" class="brief-back agent-back" onClick=${() => onSelectChat("")}>${t("brief.sessions")} · ${activeChat.title}</button>`
             : html`<span class="agent-topbar-spacer"></span>`}
-          <label class="switch agent-voice" title=${t("agent.voiceTitle")}>
-            <input type="checkbox" checked=${tts} onChange=${onToggleTts} />
-            <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
-            ${t("agent.voice")}
-          </label>
-          ${hasDeepgram ? html`
-            <div class="tts-provider-toggle" role="radiogroup" aria-label=${t("agent.ttsProvider")}>
-              <button type="button" role="radio" aria-checked=${ttsProv === "edge"}
-                class=${"tts-prov-btn" + (ttsProv === "edge" ? " is-active" : "")}
-                onClick=${() => ttsProv !== "edge" && onToggleTtsProvider()}>
-                Edge
-              </button>
-              <button type="button" role="radio" aria-checked=${ttsProv === "deepgram"}
-                class=${"tts-prov-btn" + (ttsProv === "deepgram" ? " is-active" : "")}
-                onClick=${() => ttsProv !== "deepgram" && onToggleTtsProvider()}>
-                DG
-              </button>
-            </div>` : null}
+          <select class="agent-voice-sel" title=${t("agent.voiceTitle")} aria-label=${t("agent.voiceTitle")}
+            value=${!tts ? "off" : (hasDeepgram && ttsProv === "deepgram" ? "deepgram" : "edge")}
+            onChange=${e => {
+              const v = e.target.value;
+              if (v === "off") { if (tts) onToggleTts(); return; }
+              if (!tts) onToggleTts();
+              if (hasDeepgram && v !== ttsProv) onToggleTtsProvider();
+            }}>
+            <option value="off">${t("agent.voiceOff")}</option>
+            <option value="edge">${t("agent.voiceEdge")}</option>
+            ${hasDeepgram ? html`<option value="deepgram">${t("agent.voiceDg")}</option>` : null}
+          </select>
         </div>
         ${!activeChat
           ? html`<${ChatSelect} chats=${chats} onNew=${onNewChat} onSelect=${onSelectChat} onDelete=${onDeleteChat} />`
@@ -1078,17 +1123,26 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
           <span class="verdict-cause">${v.cause}</span>
         </div>
         <div class="agent-foot">
+          <${Ask} onAsk=${onAsk} busy=${ai.analyzing} />
           <button class="btn btn--primary" type="button" onClick=${() => onAnalyze()} disabled=${ai.analyzing}>
             ${ai.analyzing ? t("agent.analyzing") : t("agent.runAnalysis")}
           </button>
-          <button class="btn" type="button" onClick=${onMock} disabled=${ai.analyzing} title=${t("agent.mockTitle")}>
-            ${t("agent.mock")}
-          </button>
-          <button class="btn" type="button" onClick=${onReport} title=${t("agent.reportTitle")}>
-            ${t("agent.report")}
-          </button>
+          <details class="foot-menu" onBlur=${e => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.open = false; }}>
+            <summary class="btn foot-icon" title=${t("agent.more")} aria-label=${t("agent.more")}>⋯</summary>
+            <div class="foot-menu-pop" onClick=${e => { e.currentTarget.closest("details").open = false; }}>
+              <span class="menu-label">${t("ask.pick")}</span>
+              ${ASK_SUGGESTIONS.map(q => html`<button key=${q} class="menu-item" type="button"
+                onClick=${() => onAsk(t(q))} disabled=${ai.analyzing}>${t(q)}</button>`)}
+              <hr class="menu-sep" />
+              <button class="menu-item" type="button" onClick=${onMock} disabled=${ai.analyzing} title=${t("agent.mockTitle")}>
+                ${t("agent.mock")}
+              </button>
+              <button class="menu-item" type="button" onClick=${onReport} title=${t("agent.reportTitle")}>
+                ${t("agent.report")}
+              </button>
+            </div>
+          </details>
         </div>
-        <${Ask} onAsk=${onAsk} busy=${ai.analyzing} />
         <details class="ai-hist agent-hist">
           <summary>${t("agent.history", { n: ai.history.length })}</summary>
           <div class="ai-hist-list">
@@ -1333,18 +1387,14 @@ function Briefing({ onBrief, onBack, onSpeak, busy }) {
 
 /* ask sage (voice, in agent box) */
 // predetermined prompts — give operator ideas and keep questions on-telemetry.
+// they live in the ⋯ menu; only the mic gets a permanent button.
 const ASK_SUGGESTIONS = ["ask.s0", "ask.s1", "ask.s2", "ask.s3", "ask.s4"];
 function Ask({ onAsk, busy }) {
   const mic = useMic(onAsk);
-  return html`
-    <div class="agent-ask">
-      ${mic.supported ? html`<button type="button" class=${"ask-mic" + (mic.listening ? " is-live" : "")} onClick=${mic.toggle}
-        disabled=${busy} aria-pressed=${mic.listening}>${mic.listening ? t("ask.listening") : t("ask.mic")}</button>` : null}
-      <div class="ask-chips">
-        ${ASK_SUGGESTIONS.map(q => html`<button key=${q} type="button" class="ask-chip"
-          onClick=${() => onAsk(t(q))} disabled=${busy}>${t(q)}</button>`)}
-      </div>
-    </div>`;
+  if (!mic.supported) return null;
+  return html`<button type="button" class=${"btn foot-icon ask-mic" + (mic.listening ? " is-live" : "")} onClick=${mic.toggle}
+    disabled=${busy} aria-pressed=${mic.listening} title=${t("ask.mic")} aria-label=${t("ask.mic")}>
+    ${mic.listening ? "●" : "🎤"}</button>`;
 }
 
 /* logs */
@@ -1397,7 +1447,7 @@ function SerialMonitor({ lines, onClear }) {
 }
 
 /* topbar — slim command strip: identity, link, connection, vitals, lang, console */
-function Topbar({ connected, ports, currentPort, bridge, onBridge, connMode, onConnMode, ping, packets, uptime, onPort, lang, onLang, onConsole, consoleOpen }) {
+function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, lang, onLang, onConsole, consoleOpen, clients, onDevices, granted }) {
   return html`
     <header class="topbar">
       <div class="brand">
@@ -1407,41 +1457,36 @@ function Topbar({ connected, ports, currentPort, bridge, onBridge, connMode, onC
       <p class="lamp visually-hidden" role="status" aria-live="polite">
         ${connected ? t("mast.linkLive") : t("mast.noSignal")}
       </p>
+      ${VIEWER ? html`<span class=${"pill top-mirror" + (granted ? " is-go" : "")}>
+        ◉ ${t(granted ? "mast.control" : "mast.mirror")}</span>` : html`
       <div class="top-conn">
-        <div class="conn-seg" data-mode=${connMode} role="tablist" aria-label=${t("mast.link")}>
-          <button type="button" role="tab" aria-selected=${connMode === "usb"}
-            class=${connMode === "usb" ? "is-active" : ""} onClick=${() => onConnMode("usb")}>${t("mast.usb")}</button>
-          <button type="button" role="tab" aria-selected=${connMode === "bt"}
-            class=${connMode === "bt" ? "is-active" : ""} onClick=${() => onConnMode("bt")}>${t("mast.bt")}</button>
-          <span class="conn-seg-thumb" aria-hidden="true"></span>
+        <div class="bridge-ctl">
+          <button type="button" class=${"bridge-btn " + (bridge.running ? "is-on" : "")}
+            disabled=${bridge.busy} onClick=${() => onBridge("toggle")}>
+            <span class=${"lamp-dot " + (bridge.running ? "is-go" : "is-abort")}></span>
+            ${bridge.busy ? t("mast.bridgeBusy") : bridge.running ? t("mast.linked") : t("mast.connect")}
+          </button>
+          <button type="button" class="bridge-repair" title=${t("mast.bridgeRepairTitle")}
+            disabled=${bridge.busy} onClick=${() => onBridge("reconnect")}>⟳</button>
         </div>
-        <div class="conn-panel" key=${connMode}>
-          ${connMode === "usb" ? html`
-            <select class="port-select" value=${currentPort || ""} onChange=${e => onPort(e.target.value)}>
-              ${ports.length === 0 && html`<option value="">${t("mast.noPorts")}</option>`}
-              ${ports.map(p => html`<option key=${p} value=${p}>${p}</option>`)}
-            </select>
-          ` : html`
-            <div class="bridge-ctl">
-              <button type="button" class=${"bridge-btn " + (bridge.running ? "is-on" : "")}
-                disabled=${bridge.busy} onClick=${() => onBridge("toggle")}>
-                <span class=${"lamp-dot " + (bridge.running ? "is-go" : "is-abort")}></span>
-                ${bridge.busy ? t("mast.bridgeBusy") : bridge.running ? t("mast.linked") : t("mast.connect")}
-              </button>
-              <button type="button" class="bridge-repair" title=${t("mast.bridgeRepairTitle")}
-                disabled=${bridge.busy} onClick=${() => onBridge("reconnect")}>⟳</button>
-            </div>
-          `}
-        </div>
-      </div>
+      </div>`}
       <div class="top-stats">
         <dl class="stat"><dt>${t("mast.ping")}</dt><dd>${ping}</dd></dl>
         <dl class="stat"><dt>${t("mast.packets")}</dt><dd>${packets}</dd></dl>
         <dl class="stat"><dt>${t("mast.uptime")}</dt><dd>${uptime}</dd></dl>
+        ${lanUrl && html`
+          <dl class="stat stat-lan"><dt>${t("mast.tablet")}</dt>
+            <dd><button type="button" class="lan-btn" title=${t("mast.tabletTitle")}
+              onClick=${() => navigator.clipboard?.writeText(lanUrl)}>${lanUrl.replace("http://", "")}</button></dd>
+          </dl>`}
       </div>
       <select class="port-select top-lang" value=${lang} onChange=${e => onLang(e.target.value)} aria-label=${t("mast.lang")}>
         ${LANGS.map(l => html`<option key=${l.code} value=${l.code}>${l.label}</option>`)}
       </select>
+      ${!VIEWER && html`
+        <button type="button" class="console-btn" onClick=${onDevices} title=${t("devices.title")}>
+          ◈ ${t("devices.button")} ${clients.length}
+        </button>`}
       <button type="button" class=${"console-btn" + (consoleOpen ? " is-active" : "")}
         onClick=${onConsole} aria-pressed=${consoleOpen} title=${t("serial.toggleTitle")}>
         ▤ ${t("drawer.console")}
@@ -1585,6 +1630,63 @@ function Toasts({ items }) {
   return html`<div class="toasts">${items.map(t => html`<div key=${t.id} class=${"toast k-" + t.kind}>${t.msg}</div>`)}</div>`;
 }
 
+/* connected devices — the host's roster of every dashboard on the lan, with the
+   control switch for each. the server decides who's host (loopback) and enforces it. */
+function DevicesModal({ open, clients, selfId, onGrant, onClose }) {
+  // granting is one-way dangerous, so it goes through a confirm with a 3s arm timer.
+  // revoking never asks. { c, closing } — `closing` keeps it mounted for the exit animation.
+  const [ask, setAsk] = useState(null);
+  const [count, setCount] = useState(3);
+  useEffect(() => {
+    if (!ask || ask.closing) return;
+    setCount(3);
+    const iv = setInterval(() => setCount(n => Math.max(0, n - 1)), 1000);
+    return () => clearInterval(iv);
+  }, [ask?.c.id, ask?.closing]);
+  const closeAsk = () => { setAsk(a => a && { ...a, closing: true }); setTimeout(() => setAsk(null), 220); };
+  return html`
+    <div class=${"blk-modal" + (open === "closing" ? " is-closing" : "")}
+      onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div class="blk-modal-frame devices-frame">
+        <div class="blk-modal-head">
+          <span class="label">${t("devices.title")}</span>
+          <button type="button" class="blk-modal-x" onClick=${onClose} aria-label=${t("update.close")}>✕</button>
+        </div>
+        <ul class="device-list">
+          ${clients.length === 0 && html`<li class="device-empty">${t("devices.none")}</li>`}
+          ${clients.map(c => html`
+            <li key=${c.id} class="device-row">
+              <span class="device-name">
+                ${c.kind} · ${c.ip}
+                ${c.id === selfId ? html`<span class="pill">${t("devices.this")}</span>` : null}
+              </span>
+              ${c.host
+                ? html`<span class="pill is-go">${t("devices.host")}</span>`
+                : html`<button type="button" class=${"serial-btn" + (c.granted ? " is-on" : "")}
+                    onClick=${() => (c.granted ? onGrant(c.id, false) : setAsk({ c }))}>
+                    ${c.granted ? t("devices.full") : t("devices.view")}
+                  </button>`}
+            </li>`)}
+        </ul>
+      </div>
+      ${ask && html`
+        <div class=${"blk-modal" + (ask.closing ? " is-closing" : "")}
+          onClick=${(e) => { if (e.target === e.currentTarget) closeAsk(); }}>
+          <div class="blk-modal-frame warn-frame" role="alertdialog" aria-label=${t("devices.confirmTitle")}>
+            <span class="warn-title">${t("devices.confirmTitle")}</span>
+            <p>${t("devices.confirmBody", { name: `${ask.c.kind} · ${ask.c.ip}` })}</p>
+            <div class="warn-actions">
+              <button type="button" class="serial-btn" onClick=${closeAsk}>${t("devices.confirmCancel")}</button>
+              <button type="button" class="serial-btn warn-go" disabled=${count > 0}
+                onClick=${() => { onGrant(ask.c.id, true); closeAsk(); }}>
+                ${t("devices.confirmGo")}<span class=${"warn-count" + (count > 0 ? "" : " is-done")}> (${count || 1})</span>
+              </button>
+            </div>
+          </div>
+        </div>`}
+    </div>`;
+}
+
 /* root */
 function App() {
   const [connected, setConnected] = useState(false);
@@ -1601,12 +1703,10 @@ function App() {
   const [ttsProv, setTtsProv] = useState(() => localStorage.getItem("ttsProvider") || "edge");
   const [hasDeepgram, setHasDeepgram] = useState(false);
   const [lang, setLangState] = useState(getLang());
-  const [ports, setPorts] = useState([]);
-  const [currentPort, setCurrentPort] = useState(null);
   const [bridge, setBridge] = useState({ running: false, busy: false });
-  const [connMode, setConnModeState] = useState(() => localStorage.getItem("connMode") || "usb");
   const [toasts, setToasts] = useState([]);
   const [uptime, setUptime] = useState("00:00:00");
+  const [lanUrl, setLanUrl] = useState(null); // this laptop's lan address, for pointing the judges' tablet at it
   const [serialLines, setSerialLines] = useState([]);
   const [drawer, setDrawer] = useState(false); // false | "open" | "closing"
   const [drawerTab, setDrawerTab] = useState("logs");
@@ -1620,6 +1720,20 @@ function App() {
   const [speaking, setSpeaking] = useState(false);
   const [fpv, setFpv] = useState(false);      // △/Y — fullscreen camera + hud overlay
   const [report, setReport] = useState(null); // frozen session report, or null when closed
+  const [clients, setClients] = useState([]); // every dashboard on the lan (host's roster)
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  // a mirror drives only while the host has granted it; the host is always granted.
+  const [granted, setGranted] = useState(!VIEWER);
+  const grantedRef = useRef(!VIEWER);
+  grantedRef.current = granted;
+  const canDrive = granted && !!bridge.running;
+  // outlives `granted` by one animation so a revoke can play out instead of vanishing
+  const [driveMounted, setDriveMounted] = useState(!VIEWER);
+  useEffect(() => {
+    if (granted) { setDriveMounted(true); return; }
+    const id = setTimeout(() => setDriveMounted(false), 260);
+    return () => clearTimeout(id);
+  }, [granted]);
   // chats = briefed recon sessions. each holds its own mission + conversation.
   const [chats, setChats] = useState(() => { try { return JSON.parse(localStorage.getItem("chats") || "[]"); } catch { return []; } });
   const [activeId, setActiveId] = useState(() => localStorage.getItem("activeChat") || "");
@@ -1677,8 +1791,9 @@ function App() {
 
   // socket
   useEffect(() => {
-    const url = window.location.port !== "3000" ? "http://localhost:3000" : undefined;
-    const socket = window.io(url);
+    // same origin: this page is served by that server. hardcoding localhost:3000 pointed
+    // a tablet at its own machine, and broke every test that runs the server off 3000.
+    const socket = window.io();
     socketRef.current = socket;
 
     // log a discovery to active session whenever a metric newly worsens.
@@ -1703,6 +1818,25 @@ function App() {
       socket.emit("set-mission", activeRef.current?.mission || ""); // sync server to active session
     });
     socket.on("disconnect", () => { setConnected(false); setPing("—"); addLog(t("log.linkLost"), "danger"); });
+    socket.on("clients", list => {
+      // the host logs every control change on the roster, not just its own: who was
+      // driving when is the first thing asked after a bad run, and log.events is what
+      // the session report exports.
+      setClients(prev => {
+        if (!VIEWER) for (const c of list || []) {
+          if (c.host) continue;
+          const was = prev.find(p => p.id === c.id)?.granted ?? false;
+          if (was !== c.granted)
+            addLog(t(c.granted ? "log.grantGiven" : "log.grantTaken", { device: `${c.kind} ${c.ip}` }), c.granted ? "warn" : "system");
+        }
+        return list || [];
+      });
+      const me = (list || []).find(c => c.id === socket.id);
+      if (me) setGranted(g => {
+        if (me.granted !== g) addLog(t(me.granted ? "log.controlGranted" : "log.controlRevoked"), me.granted ? "system" : "warn");
+        return me.granted;
+      });
+    });
     socket.on("sensor-data", d => {
       if (!d) return;
       const lat = d.timestamp ? Math.max(0, Date.now() - d.timestamp) : NaN;
@@ -1771,6 +1905,8 @@ function App() {
     socket.on("cam-yield", () => window.dispatchEvent(new Event("cam:yield")));
     socket.on("cam-resume", () => window.dispatchEvent(new Event("cam:resume")));
     socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, t("log.missionAck"), "ai", d.status); });
+    // drive command relayed from a client with no ble. only the link holder acts, so it can't bounce.
+    socket.on("cmd", w => { if (bleRef.current.device?.gatt?.connected) sendCmdRef.current?.(w); });
     addLog(t("log.booted"), "system");
     return () => socket.close();
   }, [addLog, speakTimed]);
@@ -1782,6 +1918,8 @@ function App() {
     if (sk) sk.textContent = t("skip");
   }, [lang]);
 
+  useEffect(() => { fetch("/api/lan").then(r => r.json()).then(d => setLanUrl(d.url)).catch(() => {}); }, []);
+
   // uptime
   useEffect(() => {
     const t0 = Date.now();
@@ -1792,58 +1930,11 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
-  // ports
-  const loadPorts = useCallback(async () => {
-    try {
-      const r = await fetch("/api/ports"); const { ports, current } = await r.json();
-      setPorts(ports); setCurrentPort(current);
-    } catch { /* offline */ }
-  }, []);
-  useEffect(() => { loadPorts(); const id = setInterval(loadPorts, 10000); return () => clearInterval(id); }, [loadPorts]);
-
-  const setConnMode = useCallback(async (m) => {
-    setConnModeState(m);
-    localStorage.setItem("connMode", m);
-    addLog(t("log.connMode", { mode: m.toUpperCase() }), "system");
-    try {
-      const r = await fetch("/api/connMode", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: m }),
-      });
-      const d = await r.json();
-      if (d.ok) {
-        toast(t("toast.connMode", { mode: m.toUpperCase() }), "ok");
-        const br = await fetch("/api/bridge");
-        const bd = await br.json();
-        setBridge(b => ({ ...b, running: bd.running }));
-        if (m === "usb") loadPorts();
-      } else {
-        addLog(t("log.failed", { error: d.error }), "danger");
-        toast(d.error, "danger");
-      }
-    } catch (e) {
-      addLog(t("log.error", { msg: e.message }), "danger");
-      toast(t("toast.error", { msg: e.message }), "danger");
-    }
-  }, [addLog, toast, loadPorts]);
-
-  const switchPort = useCallback(async (path) => {
-    if (!path) return;
-    addLog(t("log.switching", { path }), "system");
-    try {
-      const r = await fetch("/api/ports/switch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
-      const data = await r.json();
-      if (data.ok) { addLog(t("log.switched", { path }), "system"); toast(t("toast.connected", { path }), "ok"); setCurrentPort(path); }
-      else { addLog(t("log.failed", { error: data.error }), "danger"); toast(t("toast.failed", { error: data.error }), "danger"); loadPorts(); }
-    } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); toast(t("toast.error", { msg: e.message }), "danger"); }
-  }, [addLog, toast, loadPorts]);
-
   // bluetooth bridge: r4 advertises ble (no classic spp), so browser's web bluetooth talks to it directly — no server-side native bt library needed.
   const BLE_SERVICE = "19b10000-e8f2-537e-4f6c-d104768a1214";
   const BLE_CHAR = "19b10001-e8f2-537e-4f6c-d104768a1214";
   const BLE_CMD = "19b10002-e8f2-537e-4f6c-d104768a1214"; // write = motion routine verbs
   const bleRef = useRef({ device: null, char: null, cmd: null });
-  const gattTail = useRef(Promise.resolve()); // serialises cmd writes, see sendcmd
 
   // defined above onblenotify because that handler calls it — deps are evaluated during render, so later `const` would be in temporal dead zone.
   // `focus` comes from a workflow's `analyze <what to look at>` step — it steers
@@ -1883,25 +1974,24 @@ function App() {
   // one verb to firmware over ble cmd char: "go,<name>" starts a motion routine, "stop" cuts motors.
   // routines run standalone on board — this only fires starting gun, so dropped link mid-run doesn't strand robot.
   const sendCmd = useCallback(async (word) => {
+    if (!grantedRef.current && word !== "stop") { toast(t("toast.mirrorOnly"), "warn"); return false; }
     if (word.startsWith("go,")) presentingRef.current = word === "go,presentation";
     const { device, cmd } = bleRef.current;
-    if (!device?.gatt?.connected) { toast(t("toast.cmdNoLink"), "danger"); return false; }
+    // no local ble (judges' tablet, second browser): hand off over the socket to the client that holds the link.
+    if (!device?.gatt?.connected) {
+      if (socketRef.current?.connected) { socketRef.current.emit("cmd", word); return true; }
+      toast(t("toast.cmdNoLink"), "danger"); return false;
+    }
     if (!cmd) { toast(t("toast.cmdNoChar"), "danger"); return false; } // linked but firmware lacks cmd char
-    // drive bursts go unacked: a write-with-response costs a full round trip, and at the
-    // 60ms hold cadence that round trip *is* the lag. a dropped burst self-heals 60ms later.
-    // stop/go stay acked — those must land, and they're one-shot so the cost doesn't repeat.
-    const burst = word.startsWith("drv,");
-    // chrome allows one gatt op at a time — overlapping writes throw. queue them on a
-    // single tail promise instead of dropping, so a "stop" can never lose a race with a burst.
-    const send = gattTail.current.then(async () => {
-      await (burst ? cmd.writeValueWithoutResponse(new TextEncoder().encode(word))
-                   : cmd.writeValue(new TextEncoder().encode(word)));
-      if (!burst) addLog(t("log.cmdSent", { cmd: word }), "system"); // bursts would flood the log
+    try {
+      await cmd.writeValue(new TextEncoder().encode(word));
+      addLog(t("log.cmdSent", { cmd: word }), "system");
       return true;
-    }).catch((e) => { addLog(t("log.error", { msg: e.message }), "danger"); return false; });
-    gattTail.current = send;
-    return send;
+    } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); return false; }
   }, [addLog, toast]);
+  // the socket effect above relays commands through this — sendCmd is defined below it, so it can't reference it directly
+  const sendCmdRef = useRef(sendCmd);
+  sendCmdRef.current = sendCmd;
 
   const loadBridge = useCallback(async () => {
     try { const r = await fetch("/api/bridge"); const d = await r.json();
@@ -2136,6 +2226,10 @@ function App() {
     setUpdateOpen(o => o === "open" ? "closing" : o);
     setTimeout(() => setUpdateOpen(false), 240);
   }, []);
+  const closeDevices = useCallback(() => {
+    setDevicesOpen(o => o === "open" ? "closing" : o);
+    setTimeout(() => setDevicesOpen(false), 240);
+  }, []);
   const startFlash = useCallback(() => {
     setFlashLog(""); setFlashCode(null); setFlashPhase("flashing");
     fetch("/api/flash/start", { method: "POST" }).then(r => {
@@ -2149,7 +2243,7 @@ function App() {
   // what reveals the updater. tightens up while the modal is open, and backs off
   // entirely mid-flash so board list doesn't poke the port arduino-cli is using.
   useEffect(() => {
-    if (flashPhase === "flashing") return;
+    if (VIEWER || flashPhase === "flashing") return;
     const poll = () => fetch("/api/flash/boards").then(r => r.json()).then(setFlashBoards).catch(() => {});
     poll();
     const id = setInterval(poll, updateOpen === "open" ? 1200 : 5000);
@@ -2195,12 +2289,12 @@ function App() {
               <button type="button" class="hud-btn" onClick=${() => toggleFpv(false)}>△ / ESC</button>
             </div>
           <//>`}
-        <${Topbar} connected=${connected} ports=${ports} currentPort=${currentPort}
-          bridge=${bridge} onBridge=${toggleBridge} connMode=${connMode} onConnMode=${setConnMode}
-          ping=${ping} packets=${packets} uptime=${uptime} onPort=${switchPort}
-          lang=${lang} onLang=${changeLang} onConsole=${toggleDrawer} consoleOpen=${drawer === "open"} />
+        <${Topbar} connected=${connected} bridge=${bridge} onBridge=${toggleBridge}
+          ping=${ping} packets=${packets} uptime=${uptime} lanUrl=${lanUrl}
+          lang=${lang} onLang=${changeLang} onConsole=${toggleDrawer} consoleOpen=${drawer === "open"}
+          clients=${clients} onDevices=${() => setDevicesOpen("open")} granted=${granted} />
 
-        ${flashBoards.status !== "none" && html`<${UpdateBar} boards=${flashBoards} onUpdate=${openUpdate} />`}
+        ${!VIEWER && flashBoards.status !== "none" && html`<${UpdateBar} boards=${flashBoards} onUpdate=${openUpdate} />`}
 
         <main class="cockpit" id="sensors">
           <div class="col-main">
@@ -2216,13 +2310,17 @@ function App() {
               onDeleteChat=${deleteChat} onBrief=${briefMission} onSpeak=${speakBrief}
               onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onPick=${pickHistory} onMock=${mockData} onAsk=${ask}
               onReport=${openReport} />
-            <${Drive} onCmd=${sendCmd} onAnalyze=${analyze} enabled=${bridge.running} busyRef=${analyzingRef} packetRef=${packetRef} />
+            ${/* mirror sees no drive zone at all until the host grants it — .reveal animates the
+                 mount, and driveMounted holds it one beat past a revoke so it can animate out */
+              driveMounted && html`
+              <${Drive} onCmd=${sendCmd} onAnalyze=${analyze} enabled=${canDrive} leaving=${!granted}
+                busyRef=${analyzingRef} packetRef=${packetRef} />`}
           </aside>
         </main>
 
         <${Drawer} open=${drawer} tab=${drawerTab} onTab=${setDrawerTab} onClose=${closeDrawer}
           logs=${logs} serialLines=${serialLines} onClearSerial=${clearSerial}
-          chat=${activeChat} onCmd=${sendCmd} enabled=${bridge.running} />
+          chat=${activeChat} onCmd=${sendCmd} enabled=${canDrive} />
       </div>
 
       <${Toasts} items=${toasts} />
@@ -2231,6 +2329,11 @@ function App() {
         <${UpdateModal} open=${updateOpen} phase=${flashPhase} boards=${flashBoards}
           log=${flashLog} code=${flashCode}
           onFlash=${startFlash} onClose=${closeUpdate} />`, document.body)}
+
+      ${devicesOpen && createPortal(html`
+        <${DevicesModal} open=${devicesOpen} clients=${clients} selfId=${socketRef.current?.id}
+          onGrant=${(id, on) => socketRef.current?.emit("grant", { id, on })}
+          onClose=${closeDevices} />`, document.body)}
 
       ${report && createPortal(html`
         <${ReportModal} report=${report} onClose=${() => setReport(null)} />`, document.body)}
@@ -2244,7 +2347,7 @@ function App() {
               <button type="button" class="serial-btn" onClick=${() => setWarn(false)}>Turn back</button>
               <button type="button" class="serial-btn warn-go" disabled=${warnCount > 0}
                 onClick=${() => { localStorage.setItem("debugAck", "1"); setWarn(false); setDrawer("open"); }}>
-                ${warnCount > 0 ? `Proceed (${warnCount})` : "Proceed"}
+                Proceed<span class=${"warn-count" + (warnCount > 0 ? "" : " is-done")}> (${warnCount || 1})</span>
               </button>
             </div>
           </div>
