@@ -293,7 +293,7 @@ const BLK_MODES = {
 
 app.post("/api/blk-sage", async (req, res) => {
   if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
-  const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-10) : [];
+  const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-20) : [];
   if (!msgs.length) return res.status(400).json({ error: "messages required" });
   const mode = BLK_MODES[req.body?.mode] ? req.body.mode : "write";
   const program = String(req.body?.program || "").slice(0, 8000);

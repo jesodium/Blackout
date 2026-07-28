@@ -621,13 +621,17 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
   }, [onCmd]);
 
   // one drive loop for every input source. gamepad wins over held pad/keys.
-  // dpad up/down drives, right stick x rotates, □/X analyzes. fixed slow pwm — manual is precision, not speed.
+  // dpad up/down drives, right stick x rotates, □/X analyzes. slow pwm by default — manual is
+  // precision, not speed — with R2 held as turbo. IMPORTANT NOTE: turbo is pad-only, no key binding.
   const MANUAL_PWM = 110;
+  const TURBO_PWM = 200;
   useEffect(() => {
     const id = setInterval(() => {
       if (!armedRef.current) { if (moving.current) { moving.current = false; setVerb(null); onCmd("stop"); } return; }
       const pad = [...navigator.getGamepads()].find(Boolean);
       let v = null;
+      // R2 = button 7. analog on ds4/xbox, so read .value too — .pressed only trips past the deadzone.
+      const turbo = !!pad && (pad.buttons[7]?.pressed || (pad.buttons[7]?.value ?? 0) > 0.35);
       if (pad) {
         // square (x on xbox) = button 2. press edge only, so holding doesn't queue analyses.
         const sq = !!pad.buttons[2]?.pressed;
@@ -645,7 +649,7 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
         return;
       }
       moving.current = true; setVerb(v);
-      onCmd(`drv,${v},${MANUAL_PWM},300`);
+      onCmd(`drv,${v},${turbo ? TURBO_PWM : MANUAL_PWM},300`);
     }, 150);
     return () => clearInterval(id);
   }, [onCmd]);
@@ -865,6 +869,16 @@ function CamView() {
         </div>` : null}
     </div>`;
 }
+
+/* fpv frame sizes, cycled by OPTIONS (or the hud button). "fill" crops the rotated frame to
+   the viewport — see .fpv-fill in the css — the rest scale the whole frame, letterboxed.
+   fill stays first so fpv still opens the way it always has. */
+const FPV_ZOOMS = [
+  { id: "fill", label: "FILL" },
+  { id: "fit", label: "FIT", z: 1 },
+  { id: "z125", label: "125%", z: 1.25 },
+  { id: "z160", label: "160%", z: 1.6 },
+];
 
 /* ---- fpv hud ----
    glass drawn over the fullscreen feed: corner brackets, reticle, an attitude
@@ -1719,6 +1733,7 @@ function App() {
   const [flashCode, setFlashCode] = useState(null);
   const [speaking, setSpeaking] = useState(false);
   const [fpv, setFpv] = useState(false);      // △/Y — fullscreen camera + hud overlay
+  const [fpvZoom, setFpvZoom] = useState(0);  // index into FPV_ZOOMS — OPTIONS cycles it
   const [report, setReport] = useState(null); // frozen session report, or null when closed
   const [clients, setClients] = useState([]); // every dashboard on the lan (host's roster)
   const [devicesOpen, setDevicesOpen] = useState(false);
@@ -2128,14 +2143,18 @@ function App() {
   }, []);
   const toggleFpvRef = useRef(toggleFpv);
   toggleFpvRef.current = toggleFpv;
+  const cycleZoomRef = useRef(null);
+  cycleZoomRef.current = () => setFpvZoom(i => (i + 1) % FPV_ZOOMS.length);
   useEffect(() => {
-    let was = [false, false];
+    let was = [false, false, false];
     const id = setInterval(() => {
       const pad = [...navigator.getGamepads()].find(Boolean);
       if (!pad) return;
-      const now = [!!pad.buttons[3]?.pressed, !!pad.buttons[1]?.pressed];
+      // △ = 3, ○ = 1, OPTIONS/start = 9.
+      const now = [!!pad.buttons[3]?.pressed, !!pad.buttons[1]?.pressed, !!pad.buttons[9]?.pressed];
       if (now[0] && !was[0]) toggleFpvRef.current();
       if (now[1] && !was[1]) fpvMicRef.current.toggle();
+      if (now[2] && !was[2]) cycleZoomRef.current?.();
       was = now;
     }, 80);
     return () => clearInterval(id);
@@ -2277,7 +2296,8 @@ function App() {
 
   return html`
     <${React.Fragment}>
-      <div class=${"shell" + (fpv ? " is-fpv" : "")}>
+      <div class=${"shell" + (fpv ? " is-fpv" : "") + (FPV_ZOOMS[fpvZoom].z ? "" : " fpv-fill")}
+        style=${{ "--fpv-zoom": FPV_ZOOMS[fpvZoom].z || 1 }}>
         ${fpv && html`
           <${React.Fragment}>
             <${FpvOverlay} packet=${packet} />
@@ -2285,6 +2305,9 @@ function App() {
               <button type="button" class=${"hud-btn" + (fpvMic.listening ? " is-active" : "")}
                 disabled=${!fpvMic.supported} onClick=${fpvMic.toggle} aria-pressed=${fpvMic.listening}>
                 ○ ${fpvMic.listening ? t("ask.listening") : t("ask.mic")}
+              </button>
+              <button type="button" class="hud-btn" onClick=${() => cycleZoomRef.current()}>
+                ⚙ ${FPV_ZOOMS[fpvZoom].label}
               </button>
               <button type="button" class="hud-btn" onClick=${() => toggleFpv(false)}>△ / ESC</button>
             </div>
