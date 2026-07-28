@@ -1281,7 +1281,10 @@ input[type="range"]:focus { box-shadow: none; }
    important note: this crop costs ~58% of the vertical field on a 16:9 stage —
    deliberate, fullscreen framing beats FOV here. remount the cam upright and the
    rotation goes away, dropping the crop to ~25% with the same edge-to-edge look. */
-.is-fpv .cam-feed { width: max(100cqh, 133.34cqw); }
+.is-fpv.fpv-fill .cam-feed { width: max(100cqh, 133.34cqw); }
+/* the other sizes scale the whole frame instead of cropping it — 1 = whole 3:4 frame visible,
+   above 1 zooms in on the centre. set from FPV_ZOOMS, cycled with OPTIONS. */
+.is-fpv .cam-feed { width: calc(100cqh * var(--fpv-zoom, 1)); }
 
 .is-fpv .strip, .is-fpv .col-rail {
   position: fixed; top: 58px; bottom: 58px; z-index: 10;

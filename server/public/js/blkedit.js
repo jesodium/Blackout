@@ -1088,6 +1088,77 @@ const sageHist = [];
 let sagePending = false;
 const CODE_RE = /```(?:blk)?\s*\n([\s\S]*?)```/;
 
+/* saved chats. a chat belongs to the operator, not to a workflow, so it lives in
+   localStorage — no server round trip, and it survives a reload or a second tab.
+   the live chat rewrites its own entry after every exchange; picking an old one
+   restores its history, which is what gets sent back to Sage, so it continues.
+   IMPORTANT NOTE: browser-local and capped. move to ./workflows-style files if
+   chats ever need to follow the operator to another machine. */
+const CHATS = "blk.sage.chats";
+const CHAT_MAX = 20;   // chats kept, newest first
+const CHAT_MSGS = 40;  // messages kept per chat
+let chatId = null;
+
+const readChats = () => { try { return JSON.parse(localStorage.getItem(CHATS)) || []; } catch { return []; } };
+const writeChats = (l) => { try { localStorage.setItem(CHATS, JSON.stringify(l.slice(0, CHAT_MAX))); } catch { /* full/private mode — chats just don't persist */ } };
+
+function saveChat() {
+  if (!sageHist.length) return;
+  chatId ||= String(Date.now());
+  const title = sageHist.find(m => m.role === "user")?.content || "chat";
+  writeChats([
+    { id: chatId, ts: Date.now(), title: title.slice(0, 70), hist: sageHist.slice(-CHAT_MSGS) },
+    ...readChats().filter(c => c.id !== chatId),
+  ]);
+}
+
+function newChat() {
+  chatId = null;
+  sageHist.length = 0;
+  showChats(false);
+  $("sage-input").focus();
+}
+
+function showChats(on) {
+  $("sage-list").hidden = !on;
+  $("sage-msgs").hidden = on;
+  $("sage-chats").classList.toggle("is-on", on);
+  on ? renderChats() : renderSage();
+}
+
+function renderChats() {
+  const box = $("sage-list");
+  box.innerHTML = "";
+  const list = readChats();
+  if (!list.length) {
+    box.appendChild(el("div", "sage-empty", "No saved chats yet — send Sage a message and this conversation saves itself."));
+    return;
+  }
+  for (const c of list) {
+    const row = el("div", "sage-row" + (c.id === chatId ? " is-on" : ""));
+    const open = el("button", "btn-t sage-open");
+    open.type = "button";
+    open.appendChild(el("span", "t", c.title));
+    open.appendChild(el("span", "when", `${new Date(c.ts).toLocaleString()} · ${c.hist.length} messages`));
+    open.onclick = () => {
+      chatId = c.id;
+      sageHist.length = 0;
+      sageHist.push(...c.hist);
+      showChats(false);
+    };
+    const del = el("button", "icon-btn", "✕");
+    del.type = "button";
+    del.title = "Delete chat";
+    del.onclick = () => {
+      writeChats(readChats().filter(x => x.id !== c.id));
+      if (c.id === chatId) chatId = null;
+      renderChats();
+    };
+    row.append(open, del);
+    box.appendChild(row);
+  }
+}
+
 // crude line diff (common prefix/suffix) — enough to see what Sage changed
 function diffLines(a, b) {
   const A = a.split("\n"), B = b.split("\n");
@@ -1163,11 +1234,11 @@ async function sendSage(text) {
   sageHist.push({ role: "user", content: text });
   sagePending = true;
   $("sage-send").disabled = true;
-  renderSage();
+  showChats(false);   // sending from the chat list snaps back to the conversation
   try {
     const r = await fetch("/api/blk-sage", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: sageHist.slice(-10), mode, program: serialize(program) }),
+      body: JSON.stringify({ messages: sageHist.slice(-20), mode, program: serialize(program) }),
     });
     const d = await r.json();
     sageHist.push({ role: "assistant", content: d.reply || d.error || "No reply." });
@@ -1176,6 +1247,7 @@ async function sendSage(text) {
   }
   sagePending = false;
   $("sage-send").disabled = false;
+  saveChat();
   renderSage();
   $("sage-input").focus();
 }
@@ -1183,7 +1255,7 @@ async function sendSage(text) {
 function openSage(seed) {
   closeSheets();
   $("sage-modal").hidden = false;
-  renderSage();
+  showChats(false);
   if (seed) sendSage(seed);
   else $("sage-input").focus();
 }
@@ -1348,6 +1420,8 @@ $("palette-toggle").onclick = () => setDrawer("palette", !document.body.classLis
 
 $("ask-sage").onclick = () => openSage();
 $("sage-close").onclick = closeSage;
+$("sage-chats").onclick = () => showChats($("sage-list").hidden);
+$("sage-new").onclick = newChat;
 $("sage-modal").addEventListener("click", (e) => { if (e.target === $("sage-modal")) closeSage(); });
 $("sage-form").onsubmit = (e) => {
   e.preventDefault();

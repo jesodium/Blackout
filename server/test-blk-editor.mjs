@@ -278,6 +278,26 @@ const saved = await (await fetch(`${ORIGIN}/api/blk/cdp-test`)).text();
 check("saved to the server", saved.includes("forward"), JSON.stringify(saved.split("\n")[0]));
 await fetch(`${ORIGIN}/api/blk/cdp-test`, { method: "DELETE" });
 
+/* 18. sage chats save themselves and can be reopened. no AI key needed — a 503
+   still lands as a reply, which is exactly what has to survive the round trip. */
+await evaluate("document.getElementById('ask-sage').click(); return 1");
+await evaluate("document.getElementById('sage-input').value='patrol the room'; document.getElementById('sage-form').dispatchEvent(new Event('submit',{cancelable:true})); return 1");
+await sleep(1200);
+const chats = () => evaluate(`return JSON.parse(localStorage.getItem('blk.sage.chats')||'[]')`);
+check("chat saved itself", (await chats())[0]?.title === "patrol the room", JSON.stringify(await chats()));
+await evaluate("document.getElementById('sage-new').click(); return 1");
+check("new chat clears the thread", (await evaluate("return document.querySelectorAll('#sage-msgs .sage-msg').length")) === 0);
+await evaluate("document.getElementById('sage-chats').click(); return 1");
+check("chat list lists it", (await evaluate("return document.querySelectorAll('#sage-list .sage-open').length")) === 1);
+await evaluate("document.querySelector('#sage-list .sage-open').click(); return 1");
+check("reopening restores the messages", (await evaluate("return document.querySelectorAll('#sage-msgs .sage-msg').length")) >= 2,
+  await evaluate("return document.getElementById('sage-msgs').textContent.slice(0,80)"));
+await evaluate("document.getElementById('sage-chats').click(); return 1");
+await evaluate("document.querySelector('#sage-list .icon-btn').click(); return 1");
+check("delete removes the chat", (await chats()).length === 0);
+await evaluate("document.getElementById('sage-close').click(); return 1");
+await sleep(250);
+
 console.log("\nconsole errors:", errors.length ? errors : "none");
 console.log(`\n${pass} passed, ${fail} failed`);
 ws.close();
