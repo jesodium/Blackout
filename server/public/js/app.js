@@ -560,6 +560,10 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     </div>`;
 }
 
+/* true while the first-run tour owns the screen. `inert` + the tour's own key capture
+   cover pointer and keyboard; the gamepad is polled, not evented, so it checks this. */
+let tourOpen = false;
+
 /* drive — manual control hub: on-screen pad (hold-to-drive), wasd/arrows, gamepad, routines, stop.
    drive is sent as short timed bursts re-sent every 150ms while held: firmware auto-halts 300ms
    after the last burst, so a dropped link or stuck ui never leaves wheels spinning.
@@ -627,7 +631,7 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
   const TURBO_PWM = 200;
   useEffect(() => {
     const id = setInterval(() => {
-      if (!armedRef.current) { if (moving.current) { moving.current = false; setVerb(null); onCmd("stop"); } return; }
+      if (!armedRef.current || tourOpen) { if (moving.current) { moving.current = false; setVerb(null); onCmd("stop"); } return; }
       const pad = [...navigator.getGamepads()].find(Boolean);
       let v = null;
       // R2 = button 7. analog on ds4/xbox, so read .value too — .pressed only trips past the deadzone.
@@ -1465,8 +1469,8 @@ function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, la
   return html`
     <header class="topbar">
       <div class="brand">
-        <span class="brand-tick" aria-hidden="true"></span>
-        <span class="brand-name">Blackout</span>
+        ${/* htm has no void-element rule — an unclosed <img> swallows the rest of the header */""}
+        <img src="brand.svg" alt="" width="24" height="24" />
       </div>
       <p class="lamp visually-hidden" role="status" aria-live="polite">
         ${connected ? t("mast.linkLive") : t("mast.noSignal")}
@@ -1509,7 +1513,7 @@ function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, la
 }
 
 /* console drawer — logs, findings, serial, motor bench. slides over the cockpit */
-function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, enabled }) {
+function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, enabled, onTutorial }) {
   if (!open) return null;
   const tabs = [["logs", t("zone.logs")], ["findings", t("zone.analysis")], ["serial", t("zone.serial")], ["motor", t("colo.motor")]];
   return html`
@@ -1519,6 +1523,7 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
           ${tabs.map(([k, lbl]) => html`<button key=${k} type="button" role="tab" aria-selected=${tab === k}
             class=${"drawer-tab" + (tab === k ? " is-active" : "")} onClick=${() => onTab(k)}>${lbl}</button>`)}
         </div>
+        <button type="button" class="serial-btn drawer-tour" onClick=${onTutorial}>${t("tour.restart")}</button>
         <button type="button" class="drawer-x" onClick=${onClose} aria-label="Close">✕</button>
       </div>
       <div class="drawer-body">
@@ -1701,6 +1706,88 @@ function DevicesModal({ open, clients, selfId, onGrant, onClose }) {
     </div>`;
 }
 
+/* first-run tour — one spotlight box + a card, walked with Next. anchors that
+   aren't on the page (mirror mode has no link/drive zone) drop out of the walk. */
+const TOUR = [
+  [".brand", "brand"],
+  [".bridge-ctl, .top-mirror", "link"],
+  [".stage-3d", "stage"],
+  [".stage-cam", "cam"],
+  [".strip", "strip"],
+  [".agent", "agent"],
+  [".drive", "drive"],
+  [".console-btn:last-of-type", "console"],
+];
+
+function Tour({ onDone }) {
+  const steps = useRef(TOUR.filter(([sel]) => document.querySelector(sel))).current;
+  const [i, setI] = useState(0);
+  const [box, setBox] = useState(null);
+  const step = steps[i];
+  const last = i >= steps.length - 1;
+
+  useLayoutEffect(() => {
+    if (!step) { onDone(); return; }
+    // IMPORTANT NOTE: re-measure on a timer — panels animate in, telemetry resizes
+    // them, and the spotlight has to stay glued. cheap enough for a 30s walkthrough.
+    const measure = () => {
+      const el = document.querySelector(step[0]);
+      if (!el) return setBox(null);
+      const r = el.getBoundingClientRect();
+      setBox(b => (b && b.x === r.left - 6 && b.y === r.top - 6 && b.w === r.width + 12 && b.h === r.height + 12)
+        ? b : { x: r.left - 6, y: r.top - 6, w: r.width + 12, h: r.height + 12 });
+    };
+    measure();
+    const id = setInterval(measure, 250);
+    window.addEventListener("resize", measure);
+    return () => { clearInterval(id); window.removeEventListener("resize", measure); };
+  }, [i, step, onDone]);
+
+  // lock the app behind the walkthrough. `inert` takes clicks and tab-focus away from
+  // everything under #root (the tour is portaled outside it), and a capture-phase key
+  // listener swallows the window-level shortcuts inert can't touch — wasd drive, ` for
+  // the console, esc out of fpv. buttons still activate on Enter: that's a native click.
+  useEffect(() => {
+    const root = document.getElementById("root");
+    root.inert = true;
+    tourOpen = true;
+    const onKey = (e) => {
+      e.stopPropagation();
+      if (e.type === "keydown" && e.key === "Escape") onDone();
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", onKey, true);
+    return () => {
+      root.inert = false;
+      tourOpen = false;
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onKey, true);
+    };
+  }, [onDone]);
+
+  if (!step || !box) return null;
+  const below = box.y + box.h + 190 < window.innerHeight;
+  const card = {
+    left: Math.max(8, Math.min(box.x, window.innerWidth - 340)) + "px",
+    top: (below ? box.y + box.h + 12 : Math.max(8, box.y - 12)) + "px",
+    transform: below ? "none" : "translateY(-100%)",
+  };
+  return html`
+    <div class="tour" role="dialog" aria-modal="true" aria-label=${t("tour." + step[1] + ".t")}>
+      <div class="tour-hole" style=${{ left: box.x + "px", top: box.y + "px", width: box.w + "px", height: box.h + "px" }}></div>
+      <div class="tour-card" style=${card}>
+        <span class="tour-count">${i + 1} / ${steps.length}</span>
+        <h3 class="tour-title">${t("tour." + step[1] + ".t")}</h3>
+        <p class="tour-text">${t("tour." + step[1] + ".b")}</p>
+        <div class="tour-actions">
+          <button type="button" class="serial-btn" onClick=${onDone}>${t("tour.skip")}</button>
+          <button type="button" class="serial-btn warn-go" autoFocus
+            onClick=${() => last ? onDone() : setI(n => n + 1)}>${last ? t("tour.done") : t("tour.next")}</button>
+        </div>
+      </div>
+    </div>`;
+}
+
 /* root */
 function App() {
   const [connected, setConnected] = useState(false);
@@ -1722,6 +1809,7 @@ function App() {
   const [uptime, setUptime] = useState("00:00:00");
   const [lanUrl, setLanUrl] = useState(null); // this laptop's lan address, for pointing the judges' tablet at it
   const [serialLines, setSerialLines] = useState([]);
+  const [tour, setTour] = useState(false);     // first-run walkthrough (once per browser)
   const [drawer, setDrawer] = useState(false); // false | "open" | "closing"
   const [drawerTab, setDrawerTab] = useState("logs");
   const [warn, setWarn] = useState(false);     // first-open debug warning gate
@@ -2149,7 +2237,7 @@ function App() {
     let was = [false, false, false];
     const id = setInterval(() => {
       const pad = [...navigator.getGamepads()].find(Boolean);
-      if (!pad) return;
+      if (!pad || tourOpen) return;
       // △ = 3, ○ = 1, OPTIONS/start = 9.
       const now = [!!pad.buttons[3]?.pressed, !!pad.buttons[1]?.pressed, !!pad.buttons[9]?.pressed];
       if (now[0] && !was[0]) toggleFpvRef.current();
@@ -2227,6 +2315,19 @@ function App() {
   const toggleDrawer = useCallback(() => {
     if (drawerRef.current === "open") closeDrawer(); else openDrawer();
   }, [closeDrawer, openDrawer]);
+
+  // tutorial runs once per browser; the console's restart button clears the flag
+  useEffect(() => {
+    if (localStorage.getItem("tourDone")) return;
+    const id = setTimeout(() => setTour(true), 900); // let the zones finish revealing
+    return () => clearTimeout(id);
+  }, []);
+  const endTour = useCallback(() => { localStorage.setItem("tourDone", "1"); setTour(false); }, []);
+  const restartTour = useCallback(() => {
+    localStorage.removeItem("tourDone");
+    closeDrawer();
+    setTimeout(() => setTour(true), 260); // after the drawer slides out
+  }, [closeDrawer]);
 
   // warning's 3s cooldown before PROCEED unlocks
   useEffect(() => {
@@ -2343,7 +2444,7 @@ function App() {
 
         <${Drawer} open=${drawer} tab=${drawerTab} onTab=${setDrawerTab} onClose=${closeDrawer}
           logs=${logs} serialLines=${serialLines} onClearSerial=${clearSerial}
-          chat=${activeChat} onCmd=${sendCmd} enabled=${canDrive} />
+          chat=${activeChat} onCmd=${sendCmd} enabled=${canDrive} onTutorial=${restartTour} />
       </div>
 
       <${Toasts} items=${toasts} />
@@ -2360,6 +2461,8 @@ function App() {
 
       ${report && createPortal(html`
         <${ReportModal} report=${report} onClose=${() => setReport(null)} />`, document.body)}
+
+      ${tour && createPortal(html`<${Tour} onDone=${endTour} />`, document.body)}
 
       ${warn && createPortal(html`
         <div class="blk-modal" onClick=${(e) => { if (e.target === e.currentTarget) setWarn(false); }}>

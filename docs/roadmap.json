@@ -1,54 +1,106 @@
 [
   {
     "version": "V1",
-    "state": "Retired",
     "now": false,
-    "desc": "Two boards and a relay. A Mega read the sensors, an Uno drove the motors, an ESP32 carried Bluetooth between them.",
-    "image": "assets/placeholder.png",
-    "features": [
-      { "label": "Several boards", "has": false },
-      { "label": "Camera", "has": false },
-      { "label": "Advanced AI Features", "has": false },
-      { "label": "Functional Motor Control", "has": false }
-    ]
+    "image": "assets/v1-rover.jpg",
+    "en": {
+      "state": "Retired",
+      "desc": "Two boards and a relay. A Mega read the sensors, an Uno drove the motors, an ESP32 carried Bluetooth between them.",
+      "cap": "V1 · the two-board build",
+      "features": [
+        { "label": "Several boards", "has": false },
+        { "label": "Camera", "has": false },
+        { "label": "Advanced AI Features", "has": false },
+        { "label": "Functional Motor Control", "has": false }
+      ]
+    },
+    "es": {
+      "state": "Retirado",
+      "desc": "Dos placas y un relé. Una Mega leía los sensores, una Uno manejaba los motores, y un ESP32 llevaba Bluetooth entre ambas.",
+      "cap": "V1 · la versión de dos placas",
+      "features": [
+        { "label": "Varias placas", "has": false },
+        { "label": "Cámara", "has": false },
+        { "label": "Funciones avanzadas de IA", "has": false },
+        { "label": "Control de motor funcional", "has": false }
+      ]
+    }
   },
   {
     "version": "V2",
-    "state": "Retired",
     "now": false,
-    "desc": "Collapsed to a single Uno R4 WiFi, added the ESP32-CAM on its own network, and introduced Sage as the voice of the robot.",
-    "image": "assets/placeholder.png",
-    "features": [
-      { "label": "One board", "has": true },
-      { "label": "Camera", "has": true },
-      { "label": "Speaks its findings", "has": true },
-      { "label": "Runs without the laptop", "has": false }
-    ]
+    "image": null,
+    "en": {
+      "state": "Retired",
+      "desc": "Collapsed to a single Uno R4 WiFi, added the ESP32-CAM on its own network, and introduced Sage as the voice of the robot.",
+      "features": [
+        { "label": "One board", "has": true },
+        { "label": "Camera", "has": true },
+        { "label": "Speaks its findings", "has": true },
+        { "label": "Runs without the laptop", "has": false }
+      ]
+    },
+    "es": {
+      "state": "Retirado",
+      "desc": "Se redujo a una sola Uno R4 WiFi, se añadió la ESP32-CAM en su propia red, y se presentó a Sage como la voz del robot.",
+      "features": [
+        { "label": "Una sola placa", "has": true },
+        { "label": "Cámara", "has": true },
+        { "label": "Habla sus hallazgos", "has": true },
+        { "label": "Funciona sin la laptop", "has": false }
+      ]
+    }
   },
   {
     "version": "V3",
-    "state": "Shipping now",
     "now": true,
-    "desc": "Giga R1 WiFi, runs became the BLK language, findings log with saved frames, one command flashes both boards. The competition build.",
-    "image": "assets/placeholder.png",
-    "features": [
-      { "label": "One board", "has": true },
-      { "label": "Camera", "has": true },
-      { "label": "Speaks its findings", "has": true },
-      { "label": "Runs without the laptop", "has": true },
-      { "label": "Closed-loop motion", "has": false }
-    ]
+    "image": "assets/shot-console.jpg",
+    "en": {
+      "state": "Shipping now",
+      "desc": "Giga R1 WiFi, runs became the BLK language, findings log with saved frames, one command flashes both boards. The competition build.",
+      "cap": "V3 · the console, mid-run",
+      "features": [
+        { "label": "One board", "has": true },
+        { "label": "Camera", "has": true },
+        { "label": "Speaks its findings", "has": true },
+        { "label": "Runs without the laptop", "has": true },
+        { "label": "Closed-loop motion", "has": false }
+      ]
+    },
+    "es": {
+      "state": "Entregando ahora",
+      "desc": "Giga R1 WiFi, las rutinas se convirtieron en el lenguaje BLK, registro de hallazgos con imágenes guardadas, un solo comando programa ambas placas. La versión de competencia.",
+      "cap": "V3 · la consola, en plena misión",
+      "features": [
+        { "label": "Una sola placa", "has": true },
+        { "label": "Cámara", "has": true },
+        { "label": "Habla sus hallazgos", "has": true },
+        { "label": "Funciona sin la laptop", "has": true },
+        { "label": "Movimiento en lazo cerrado", "has": false }
+      ]
+    }
   },
   {
     "version": "V4",
-    "state": "In design",
     "now": false,
-    "desc": "Not built. Closed-loop motion: wheel encoders for real angles, on-board vision with no laptop in the loop, gas and orientation sensing.",
-    "image": "assets/placeholder.png",
-    "features": [
-      { "label": "Closed-loop motion", "has": true },
-      { "label": "Vision on the board", "has": true },
-      { "label": "Gas and orientation", "has": true }
-    ]
+    "image": null,
+    "en": {
+      "state": "In design",
+      "desc": "Not built. Closed-loop motion: wheel encoders for real angles, on-board vision with no laptop in the loop, gas and orientation sensing.",
+      "features": [
+        { "label": "Closed-loop motion", "has": true },
+        { "label": "Vision on the board", "has": true },
+        { "label": "Gas and orientation", "has": true }
+      ]
+    },
+    "es": {
+      "state": "En diseño",
+      "desc": "Aún no construida. Movimiento en lazo cerrado: encoders de rueda para ángulos reales, visión a bordo sin laptop en el circuito, detección de gas y orientación.",
+      "features": [
+        { "label": "Movimiento en lazo cerrado", "has": true },
+        { "label": "Visión a bordo", "has": true },
+        { "label": "Gas y orientación", "has": true }
+      ]
+    }
   }
 ]

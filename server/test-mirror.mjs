@@ -25,8 +25,10 @@ async function open(origin, query = "") {
   const send = (method, params = {}) => new Promise(res => { const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });
   await send("Runtime.enable");
   await sleep(2000);
-  // ?operator is remembered per origin, so a previous run would poison this one
-  await send("Runtime.evaluate", { expression: "localStorage.clear(); location.reload()" });
+  // ?operator is remembered per origin, so a previous run would poison this one.
+  // tourDone goes straight back in: the first-run tour makes the app inert, and an
+  // inert element swallows .click() — every check below would fail on a fresh profile.
+  await send("Runtime.evaluate", { expression: `localStorage.clear(); localStorage.setItem("tourDone", "1"); location.reload()` });
   await sleep(2500);
   const ev = async (expr) => (await send("Runtime.evaluate", { expression: expr, returnByValue: true })).result.result.value;
   return {

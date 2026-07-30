@@ -705,9 +705,20 @@ function updateMeta() {
 
 /* ───────────────────────── palette ───────────────────────── */
 
+// one inline glyph per category ring — no icon font, no cdn (comp-day rule).
+const ICONS = {
+  all:     '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>',
+  motion:  '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>',
+  control: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 14-5.3M20 4v5h-5"/><path d="M20 12a8 8 0 0 1-14 5.3M4 20v-5h5"/></svg>',
+  data:    '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4c-2 0-3 1-3 3v3c0 1-.5 2-2 2 1.5 0 2 1 2 2v3c0 2 1 3 3 3M16 4c2 0 3 1 3 3v3c0 1 .5 2 2 2-1.5 0-2 1-2 2v3c0 2-1 3-3 3"/></svg>',
+  proc:    '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="1"/><path d="M7 5v14M17 5v14"/></svg>',
+  looks:   '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h13a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-6l-5 4v-4H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/></svg>',
+  ai:      '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="1"/><path d="M9 3v4M12 3v4M15 3v4M9 17v4M12 17v4M15 17v4M3 9h4M3 12h4M3 15h4M17 9h4M17 12h4M17 15h4"/></svg>',
+};
+
 const cond = () => parseCond("dist < 20");
 const PALETTE = [
-  ["Motion", "motion", "➜", [
+  ["Motion", "motion", [
     () => ({ op: "forward", arg: 500 }),
     () => ({ op: "back", arg: 500 }),
     () => ({ op: "left", arg: 400 }),
@@ -715,7 +726,7 @@ const PALETTE = [
     () => ({ op: "forward", until: cond() }),
     () => ({ op: "speed", arg: DEFAULT_PWM }),
   ]],
-  ["Control", "control", "⟳", [
+  ["Control", "control", [
     () => ({ op: "wait", arg: 500 }),
     () => ({ op: "wait_until", cond: cond() }),
     () => ({ op: "repeat", arg: 3, body: [] }),
@@ -728,21 +739,21 @@ const PALETTE = [
     () => ({ op: "continue" }),
     () => ({ op: "stop" }),
   ]],
-  ["Data", "data", "𝑥", [
+  ["Data", "data", [
     () => ({ op: "set", name: "n", expr: parseExpr("0") }),
     () => ({ op: "change", name: "n", expr: parseExpr("1") }),
   ]],
-  ["Routines", "proc", "ƒ", [
+  ["Routines", "proc", [
     () => ({ op: "def", name: "routine", body: [] }),
     () => ({ op: "call", name: "routine" }),
   ]],
-  ["Voice", "looks", "♪", [
+  ["Voice", "looks", [
     () => ({ op: "say", text: "hello" }),
     () => ({ op: "log", text: "checkpoint {step}" }),
     () => ({ op: "led", arg: 180 }),
     () => ({ op: "comment", text: "note" }),
   ]],
-  ["AI", "ai", "※", [
+  ["AI", "ai", [
     () => ({ op: "analyze", text: "" }),
     () => ({ op: "ask", text: "is it safe to keep going" }),
     () => ({ op: "find", text: "cave painting" }),
@@ -761,10 +772,11 @@ function paletteLabel(sample, meta) {
 function buildCats() {
   const box = $("cats");
   box.innerHTML = "";
-  const add = (key, label, icon, color) => {
+  const add = (key, label, color) => {
     const b = el("button", "cat-btn" + (activeCat === key ? " is-on" : ""));
     b.type = "button";
-    const ring = el("span", "ring", icon);
+    const ring = el("span", "ring");
+    ring.innerHTML = ICONS[key]; // trusted, hard-coded markup — not user input
     ring.style.background = color;
     b.appendChild(ring);
     b.appendChild(el("span", null, label));
@@ -777,15 +789,15 @@ function buildCats() {
     };
     box.appendChild(b);
   };
-  add("all", "All", "◎", "var(--ink-3)");
-  for (const [title, cat, icon] of PALETTE) add(cat, title, icon, `var(--c-${cat})`);
+  add("all", "All", "var(--ink-3)");
+  for (const [title, cat] of PALETTE) add(cat, title, `var(--c-${cat})`);
 }
 
 function buildPalette(filter = "") {
   const box = $("palette");
   box.innerHTML = "";
   const f = filter.trim().toLowerCase();
-  for (const [title, cat, , items] of PALETTE) {
+  for (const [title, cat, items] of PALETTE) {
     if (!f && activeCat !== "all" && activeCat !== cat) continue;
     const hits = items.filter(make => {
       if (!f) return true;
@@ -1230,7 +1242,6 @@ function renderSage() {
 
 async function sendSage(text) {
   if (sagePending) return;
-  const mode = $("sage-mode").value;
   sageHist.push({ role: "user", content: text });
   sagePending = true;
   $("sage-send").disabled = true;
@@ -1238,7 +1249,7 @@ async function sendSage(text) {
   try {
     const r = await fetch("/api/blk-sage", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: sageHist.slice(-20), mode, program: serialize(program) }),
+      body: JSON.stringify({ messages: sageHist.slice(-20), program: serialize(program) }),
     });
     const d = await r.json();
     sageHist.push({ role: "assistant", content: d.reply || d.error || "No reply." });
@@ -1430,9 +1441,9 @@ $("sage-form").onsubmit = (e) => {
   $("sage-input").value = "";
   sendSage(q);
 };
-$("sage-explain").onclick = () => { $("sage-mode").value = "explain"; openSage("Explain what this workflow does, step by step."); };
-$("sage-fix").onclick = () => { $("sage-mode").value = "fix"; openSage("Check this workflow for mistakes and safety problems, then give me a corrected version."); };
-$("sage-improve").onclick = () => { $("sage-mode").value = "improve"; openSage("Improve this workflow — make it smarter and safer without changing what it's for."); };
+$("sage-explain").onclick = () => openSage("Explain what this workflow does, step by step.");
+$("sage-fix").onclick = () => openSage("Check this workflow for mistakes and safety problems, then give me a corrected version.");
+$("sage-improve").onclick = () => openSage("Improve this workflow — make it smarter and safer without changing what it's for.");
 
 /* keyboard — accelerators only, everything here is reachable by touch too */
 window.addEventListener("keydown", (e) => {
