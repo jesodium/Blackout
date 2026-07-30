@@ -30,9 +30,9 @@
   --warn: #f3b62b;  --warn-bg:  rgba(243, 182, 43, 0.14);
   --abort: #ff3b2f; --abort-bg: rgba(255, 59, 47, 0.16);
 
-  --display: 'Anton', 'Archivo', sans-serif;
+  --display: 'JetBrains Mono', 'Archivo', sans-serif;
   --grotesk: 'Archivo', system-ui, -apple-system, sans-serif;
-  --mono:    'IBM Plex Mono', ui-monospace, monospace;
+  --mono:    'JetBrains Mono', ui-monospace, monospace;
 
   --gap: 12px;
   --r: 14px;      /* cards */
@@ -99,12 +99,8 @@ body {
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
 
-.brand { display: flex; align-items: baseline; gap: 8px; }
-.brand-tick { width: 9px; height: 9px; background: var(--accent); align-self: center; border-radius: 2px; }
-.brand-name {
-  font-family: 'Caesar Dressing', var(--display); font-weight: 400; font-size: 19px; line-height: 1;
-  letter-spacing: 0.02em; text-transform: uppercase; color: var(--ink);
-}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand img { display: block; height: 22px; width: auto; }
 
 .lamp { display: flex; align-items: center; gap: 8px; }
 .lamp-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex-shrink: 0; }
@@ -1012,6 +1008,30 @@ input[type="range"]:focus { box-shadow: none; }
 .warn-count { display: inline-block; overflow: hidden; white-space: pre; max-width: 3em; transition: max-width 0.35s ease, opacity 0.25s ease; }
 .warn-count.is-done { max-width: 0; opacity: 0; }
 
+/* first-run tour — the dim is one huge box-shadow spilling out of the spotlight */
+.tour { position: fixed; inset: 0; z-index: 400; animation: blkFade 0.22s ease both; }
+.tour-hole {
+  position: fixed; border-radius: var(--r); border: 1px solid var(--accent);
+  box-shadow: 0 0 0 9999px rgba(6, 6, 7, 0.74);
+  transition: left 0.22s ease, top 0.22s ease, width 0.22s ease, height 0.22s ease;
+}
+.tour-card {
+  position: fixed; width: min(330px, 92vw);
+  display: flex; flex-direction: column; gap: 8px; padding: 16px;
+  background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  transition: left 0.22s ease, top 0.22s ease;
+}
+.tour-count { font: 700 9.5px/1 var(--mono); letter-spacing: 0.14em; color: var(--ink-3); }
+.tour-title { font: 800 15px/1.2 var(--grotesk); color: var(--ink); margin: 0; }
+.tour-text { font: 500 12.5px/1.6 var(--grotesk); color: var(--ink-2); margin: 0; }
+.tour-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+.tour-actions .warn-go { color: var(--accent); border-color: var(--accent); }
+.drawer-tour { margin-left: auto; }
+@media (prefers-reduced-motion: reduce) {
+  .tour, .tour-hole, .tour-card { animation: none; transition: none; }
+}
+
 /* usb-board strip under the topbar — the only entry point to the updater */
 .update-bar {
   flex-shrink: 0; display: flex; align-items: center; gap: 12px;
@@ -1194,7 +1214,7 @@ input[type="range"]:focus { box-shadow: none; }
 
 @media (max-width: 640px) {
   :root { --gap: 8px; }
-  .brand-name { font-size: 16px; }
+  .brand img { height: 18px; }
   .lamp-label { display: none; }
   .top-lang { display: none; }
   .stage-3d .stage-body { height: min(36dvh, 340px); }

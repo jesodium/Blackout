@@ -281,24 +281,23 @@ app.delete("/api/blk/:name", (req, res) => {
 // sage as workflow author: editor chats here, sage replies with prose + one
 // fenced blk program. plain text reply — not the json persona used elsewhere.
 // own path (not /api/blk/:name) so it can't collide with a workflow's name.
-// `mode` swaps the job (write/explain/fix/improve) and `program` is whatever is
-// on the editor canvas right now, so "add a turn at the end" has something to
-// add to.
-const BLK_MODES = {
-  write: "The operator wants a workflow written or changed. Reply with one or two sentences, then the complete program.",
-  explain: "Explain the operator's current program in plain language, step by step, and call out anything risky. Do NOT include a code block unless they ask for a change.",
-  fix: "Audit the operator's current program for mistakes, unsafe moves, unreachable blocks and missing obstacle checks. Say what's wrong in a couple of lines, then give the corrected complete program.",
-  improve: "Improve the operator's current program — smarter sensing, safer moves, fewer blind runs — without changing what it is for. Say what you changed, then give the complete improved program.",
-};
+// no client-picked mode — sage reads the operator's message itself and decides
+// whether it's a write/explain/fix/improve job. `program` is whatever is on
+// the editor canvas right now, so "add a turn at the end" has something to add to.
+const BLK_SAGE_JOB =
+  "Read the operator's message and the current program (if any) and figure out what job this is: " +
+  "writing or changing a workflow, explaining one, auditing it for mistakes, or improving it. Then do that job. " +
+  "If they want a program written or changed, reply with one or two sentences then the complete program. " +
+  "If they want an explanation, answer in plain language, step by step, call out anything risky, and do NOT include a code block unless a change was also requested. " +
+  "If they want mistakes found or the program improved, say what's wrong or what you changed in a couple of lines, then give the corrected/improved complete program.";
 
 app.post("/api/blk-sage", async (req, res) => {
   if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
   const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-20) : [];
   if (!msgs.length) return res.status(400).json({ error: "messages required" });
-  const mode = BLK_MODES[req.body?.mode] ? req.body.mode : "write";
   const program = String(req.body?.program || "").slice(0, 8000);
   try {
-    const ctx = [{ role: "system", content: BLK_MODES[mode] }];
+    const ctx = [{ role: "system", content: BLK_SAGE_JOB }];
     if (program.trim()) {
       ctx.push({ role: "system", content: `The program currently on the operator's canvas:\n\n\`\`\`blk\n${program}\n\`\`\`` });
     }

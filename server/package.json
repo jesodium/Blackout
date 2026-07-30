@@ -13,7 +13,8 @@
     "test:relay": "node test-relay.mjs",
     "test:layout": "node test-layout.mjs",
     "test:report": "node test-report.mjs",
-    "test:mirror": "node test-mirror.mjs"
+    "test:mirror": "node test-mirror.mjs",
+    "test:tour": "node test-tour.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
