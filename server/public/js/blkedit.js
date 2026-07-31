@@ -1344,13 +1344,31 @@ $("saved").onchange = async () => {
 };
 $("export").onclick = () => {
   if (view === "text" && !syncFromText()) return;
+  // desktop shell: native save sheet. storage stays /api/blk either way.
+  if (window.blackout) {
+    window.blackout.saveFile({
+      defaultName: ($("name").value.trim() || "workflow") + ".blk",
+      data: serialize(program),
+      filters: [{ name: "BLK workflow", extensions: ["blk"] }],
+    });
+    return;
+  }
   const a = el("a");
   a.href = URL.createObjectURL(new Blob([serialize(program)], { type: "text/plain" }));
   a.download = ($("name").value.trim() || "workflow") + ".blk";
   a.click();
   URL.revokeObjectURL(a.href);
 };
-$("import").onclick = () => $("file").click();
+$("import").onclick = async () => {
+  if (window.blackout) {
+    const f = await window.blackout.openFile({ filters: [{ name: "BLK workflow", extensions: ["blk", "txt"] }] });
+    if (!f) return;
+    loadText(f.text, f.name.replace(/\.(blk|txt)$/i, ""), `imported "${f.name}" — save it to keep it`);
+    closeSheets();
+    return;
+  }
+  $("file").click();
+};
 $("file").onchange = async () => {
   const f = $("file").files[0];
   if (!f) return;
