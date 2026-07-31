@@ -16,7 +16,10 @@ const { parseSage } = require("./sage");
 
 const openai = new OpenAI({
   baseURL: "https://api.cerebras.ai/v1",
-  apiKey: process.env.CEREBRAS_API_KEY,
+  // "unset" keeps the client constructable with no key (fresh desktop install,
+  // no .env yet) — the dashboard must boot; Sage calls just fail with an auth
+  // error until a real key lands in settings.
+  apiKey: process.env.CEREBRAS_API_KEY || "unset",
 });
 
 const app = express();

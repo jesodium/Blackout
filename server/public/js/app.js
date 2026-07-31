@@ -1248,6 +1248,15 @@ function buildReport({ chat, packet, logs, ai, connected, ping, packets, uptime 
 function downloadReport(rep) {
   const stamp = rep.generated.slice(0, 19).replace(/[:T]/g, "-");
   const slug = (rep.session.title || "session").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "session";
+  // desktop shell: native save sheet instead of a silent drop into ~/Downloads
+  if (window.blackout) {
+    window.blackout.saveFile({
+      defaultName: `blackout-${slug}-${stamp}.json`,
+      data: JSON.stringify(rep, null, 2),
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    return;
+  }
   const url = URL.createObjectURL(new Blob([JSON.stringify(rep, null, 2)], { type: "application/json" }));
   const a = document.createElement("a");
   a.href = url;
@@ -1261,11 +1270,11 @@ function ReportRow({ k, v, kind }) {
     <span class="report-k">${k}</span><span class="report-v">${v}</span></div>`;
 }
 
-function ReportModal({ report, onClose }) {
+function ReportModal({ report, closing, onClose }) {
   const s = report.session;
   const empty = html`<p class="report-empty">${t("report.none")}</p>`;
   return html`
-    <div class="blk-modal" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div class=${"blk-modal" + (closing ? " is-closing" : "")} onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div class="blk-modal-frame report-frame" role="dialog" aria-label=${t("report.title")}>
         <div class="blk-modal-head">
           <span class="label">${t("report.title")}</span>
@@ -1499,7 +1508,7 @@ function SerialMonitor({ lines, onClear }) {
 }
 
 /* topbar — slim command strip: identity, link, connection, vitals, lang, console */
-function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, lang, onLang, onConsole, consoleOpen, clients, onDevices, granted }) {
+function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, lang, onLang, onConsole, consoleOpen, clients, onDevices, granted, onSettings }) {
   return html`
     <header class="topbar">
       <div class="brand">
@@ -1535,6 +1544,8 @@ function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, la
       <select class="port-select top-lang" value=${lang} onChange=${e => onLang(e.target.value)} aria-label=${t("mast.lang")}>
         ${LANGS.map(l => html`<option key=${l.code} value=${l.code}>${l.label}</option>`)}
       </select>
+      ${!VIEWER && window.blackout && html`
+        <button type="button" class="console-btn" onClick=${onSettings} title=${t("settings.title")} aria-label=${t("settings.title")}>⚙</button>`}
       ${!VIEWER && html`
         <button type="button" class="console-btn" onClick=${onDevices} title=${t("devices.title")}>
           ◈ ${t("devices.button")} ${clients.length}
@@ -1680,7 +1691,7 @@ function UpdateModal({ open, phase, boards, log, code, onFlash, onClose }) {
 
 /* toasts */
 function Toasts({ items }) {
-  return html`<div class="toasts">${items.map(t => html`<div key=${t.id} class=${"toast k-" + t.kind}>${t.msg}</div>`)}</div>`;
+  return html`<div class="toasts">${items.map(t => html`<div key=${t.id} class=${"toast k-" + t.kind + (t.leaving ? " is-leaving" : "")}>${t.msg}</div>`)}</div>`;
 }
 
 /* connected devices — the host's roster of every dashboard on the lan, with the
@@ -1740,21 +1751,233 @@ function DevicesModal({ open, clients, selfId, onGrant, onClose }) {
     </div>`;
 }
 
+/* operator settings — desktop shell only. Reads/writes <userData>/blackout.env
+   through main.js; the server only picks up changes on relaunch since it's
+   forked once at launch. */
+function SettingsModal({ open, onClose }) {
+  const [values, setValues] = useState({ CEREBRAS_API_KEY: "", DEEPGRAM_API_KEY: "", CEREBRAS_MODEL: "", TTS_VOICE: "" });
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { window.blackout.getSettings().then(setValues); }, []);
+  const set = (k) => (e) => { setSaved(false); setValues(v => ({ ...v, [k]: e.target.value })); };
+  const save = async () => { await window.blackout.saveSettings(values); setSaved(true); };
+  const field = (key, label, placeholder, type = "text") => html`
+    <label class="settings-field">
+      <span>${label}</span>
+      <input type=${type} value=${values[key]} placeholder=${placeholder} onInput=${set(key)} />
+    </label>`;
+  return html`
+    <div class=${"blk-modal" + (open === "closing" ? " is-closing" : "")}
+      onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div class="blk-modal-frame devices-frame settings-frame" role="dialog" aria-label=${t("settings.title")}>
+        <div class="blk-modal-head">
+          <span class="label">${t("settings.title")}</span>
+          <button type="button" class="blk-modal-x" onClick=${onClose} aria-label=${t("update.close")}>✕</button>
+        </div>
+        <div class="settings-body">
+          ${field("CEREBRAS_API_KEY", t("settings.cerebrasKey"), t("settings.unset"), "password")}
+          ${field("DEEPGRAM_API_KEY", t("settings.deepgramKey"), t("settings.optional"), "password")}
+          ${field("CEREBRAS_MODEL", t("settings.cerebrasModel"), "gemma-4-31b")}
+          ${field("TTS_VOICE", t("settings.ttsVoice"), "en-US-AndrewNeural")}
+        </div>
+        <div class="settings-actions">
+          <span class="settings-hint">${saved ? t("settings.saved") : t("settings.hint")}</span>
+          ${saved
+            ? html`<button type="button" class="serial-btn warn-go" onClick=${() => window.blackout.relaunch()}>${t("settings.relaunch")}</button>`
+            : html`<button type="button" class="serial-btn warn-go" onClick=${save}>${t("settings.save")}</button>`}
+        </div>
+      </div>
+    </div>`;
+}
+
+/* in-app BLE pairing — desktop shell only. Chrome's native chooser can't be
+   styled, so in Electron the main process holds the requestDevice() callback and
+   streams discovered devices here; a tap routes the pick back. Browser tabs
+   never render this — they keep the native chooser. */
+function BlePickerModal({ open, devices, onPick, onCancel }) {
+  // IMPORTANT NOTE: electron gives deviceId + deviceName only (no RSSI), and the
+  // giga may advertise every robot as "arduino" (untested — see toggleBridge).
+  // A name renders bare only when non-empty and unique; otherwise it's tagged
+  // with the id tail so three robots never show as three identical rows.
+  const names = devices.map((d) => d.deviceName);
+  const label = (d) => {
+    const name = d.deviceName || t("ble.unnamed");
+    const dup = !d.deviceName || names.filter((n) => n === d.deviceName).length > 1;
+    return dup ? `${name} · ${d.deviceId.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase()}` : name;
+  };
+  return html`
+    <div class=${"blk-modal" + (open === "closing" ? " is-closing" : "")}
+      onClick=${(e) => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div class="blk-modal-frame devices-frame ble-picker" role="dialog" aria-label=${t("ble.title")}>
+        <div class="blk-modal-head">
+          <span class="label">${t("ble.title")}</span>
+          <button type="button" class="blk-modal-x" onClick=${onCancel} aria-label=${t("ble.cancel")}>✕</button>
+        </div>
+        <div class="ble-scanline">
+          <svg class="ble-sweep" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.5" />
+            <circle cx="12" cy="12" r="5.5" fill="none" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.5" />
+            <path class="g-sweep" d="M12 12 L12 2 A10 10 0 0 1 20.6 7 Z" fill="currentColor" fill-opacity="0.55" />
+          </svg>
+          <span class="ble-scanning-label">${t("ble.scanning")}</span>
+        </div>
+        <ul class="device-list">
+          ${devices.length === 0 && html`<li class="device-empty">${t("ble.none")}</li>`}
+          ${devices.map((d) => html`
+            <li key=${d.deviceId} class="device-row ble-row">
+              <button type="button" class="ble-pick" onClick=${() => onPick(d.deviceId)}>
+                <span class="device-name">${label(d)}</span>
+                <span class="pill is-go">${t("ble.inRange")}</span>
+              </button>
+            </li>`)}
+        </ul>
+        <div class="ble-actions">
+          <button type="button" class="serial-btn" onClick=${onCancel}>${t("ble.cancel")}</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* first-run onboard flow — hero → choose model → pair, so first launch reads as
+   a real app opening rather than a webpage that starts poking at itself.
+   full-screen (not a modal over the dashboard): the dashboard hasn't earned its
+   look yet on a first run. viewers (mirror tablets) never see model/pair —
+   pairing is the host's bridge, not theirs — App skips them straight through.
+   each step is its own component keyed by id in ONBOARD_VIEWS below — adding a
+   step means writing a component and adding one line there, nothing else. */
+const ONBOARD_CURRENT = { key: "v3", label: "Blackout V3", descKey: "onboard.v3Desc", photo: "onboard/rover-cave.jpg" };
+const ONBOARD_LEGACY = [{ key: "v2", label: "Blackout V2", descKey: "onboard.v2Desc" }];
+const ONBOARD_MODELS = [ONBOARD_CURRENT, ...ONBOARD_LEGACY];
+
+function OnboardHero({ onStart }) {
+  return html`
+    <div class="onboard-view onboard-hero">
+      <h1 class="onboard-title">${t("onboard.title")}</h1>
+      <p class="onboard-desc">${t("onboard.desc")}</p>
+      <div class="onboard-feats">
+        <span class="onboard-feat">${t("onboard.featDrive")}</span>
+        <span class="onboard-feat">${t("onboard.featSensors")}</span>
+        <span class="onboard-feat">${t("onboard.featSage")}</span>
+      </div>
+      <div class="onboard-photos">
+        <img src="onboard/rover-cave.jpg" alt="" />
+        <img src="onboard/rover.jpg" alt="" />
+        <img src="onboard/shot-console.jpg" alt="" />
+      </div>
+      <button type="button" class="serial-btn warn-go onboard-cta" autoFocus onClick=${onStart}>${t("onboard.startBtn")}</button>
+    </div>`;
+}
+
+/* legacy pick is gated behind its own confirm popup (reuses the debug-warning's
+   3s countdown pattern) since V2 is a retired board, not a peer option to V3. */
+function OnboardModel({ onBack, onPickModel }) {
+  const [legacyOpen, setLegacyOpen] = useState(false);
+  const [confirm, setConfirm] = useState(false); // false | "open" | "closing"
+  const [count, setCount] = useState(3);
+  useEffect(() => {
+    if (confirm !== "open") return;
+    setCount(3);
+    const id = setInterval(() => setCount((c) => Math.max(0, c - 1)), 1000);
+    return () => clearInterval(id);
+  }, [confirm]);
+  const closeConfirm = useCallback(() => {
+    setConfirm((c) => (c === "open" ? "closing" : c));
+    setTimeout(() => setConfirm(false), 220);
+  }, []);
+  const confirmLegacy = useCallback((key) => { closeConfirm(); onPickModel(key); }, [closeConfirm, onPickModel]);
+
+  return html`
+    <${React.Fragment}>
+      <div class="onboard-view">
+        <button type="button" class="onboard-back" onClick=${onBack}>${t("onboard.back")}</button>
+        <h2 class="onboard-h2">${t("onboard.chooseModel")}</h2>
+        <button type="button" class="onboard-model-card onboard-model-featured"
+          style=${{ backgroundImage: `linear-gradient(180deg, rgba(6,6,7,0.1), rgba(6,6,7,0.88)), url(${ONBOARD_CURRENT.photo})` }}
+          onClick=${() => onPickModel(ONBOARD_CURRENT.key)}>
+          <span class="onboard-model-label">${ONBOARD_CURRENT.label}</span>
+          <span class="onboard-model-desc">${t(ONBOARD_CURRENT.descKey)}</span>
+        </button>
+
+        <button type="button" class="onboard-legacy-toggle" aria-expanded=${legacyOpen} onClick=${() => setLegacyOpen((o) => !o)}>
+          ${t("onboard.legacyToggle")}
+          <span class=${"onboard-legacy-caret" + (legacyOpen ? " is-open" : "")} aria-hidden="true">⌄</span>
+        </button>
+        <div class=${"onboard-legacy" + (legacyOpen ? " is-open" : "")}>
+          <div class="onboard-legacy-inner">
+            ${ONBOARD_LEGACY.map((m) => html`
+              <button key=${m.key} type="button" class="onboard-model-card onboard-model-legacy" onClick=${() => setConfirm("open")}>
+                <span class="onboard-legacy-badge">${t("onboard.legacyBadge")}</span>
+                <span class="onboard-model-label">${m.label}</span>
+                <span class="onboard-model-desc">${t(m.descKey)}</span>
+              </button>`)}
+          </div>
+        </div>
+      </div>
+      ${confirm && createPortal(html`
+        <div class=${"blk-modal" + (confirm === "closing" ? " is-closing" : "")}
+          onClick=${(e) => { if (e.target === e.currentTarget) closeConfirm(); }}>
+          <div class="blk-modal-frame warn-frame" role="alertdialog" aria-label=${t("onboard.legacyWarnTitle")}>
+            <span class="warn-title">${t("onboard.legacyWarnTitle")}</span>
+            <p>${t("onboard.legacyWarnBody")}</p>
+            <div class="warn-actions">
+              <button type="button" class="serial-btn" onClick=${closeConfirm}>${t("onboard.legacyCancel")}</button>
+              <button type="button" class="serial-btn warn-go" disabled=${count > 0} onClick=${() => confirmLegacy(ONBOARD_LEGACY[0].key)}>
+                ${t("onboard.legacyContinue")}<span class=${"warn-count" + (count > 0 ? "" : " is-done")}> (${count || 1})</span>
+              </button>
+            </div>
+          </div>
+        </div>`, document.body)}
+    </${React.Fragment}>`;
+}
+
+function OnboardPair({ model, bridge, onBack, onConnect, onSkipConnect }) {
+  const modelLabel = ONBOARD_MODELS.find((m) => m.key === model)?.label || "Blackout";
+  return html`
+    <div class="onboard-view">
+      <button type="button" class="onboard-back" disabled=${bridge.busy} onClick=${onBack}>${t("onboard.back")}</button>
+      <h2 class="onboard-h2">${t("onboard.pairTitle", { model: modelLabel })}</h2>
+      <svg class="onboard-sweep" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.5" />
+        <circle cx="12" cy="12" r="5.5" fill="none" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.5" />
+        <path class="g-sweep" d="M12 12 L12 2 A10 10 0 0 1 20.6 7 Z" fill="currentColor" fill-opacity="0.55" />
+      </svg>
+      <p class="onboard-desc">${t("onboard.pairBody")}</p>
+      <button type="button" class="serial-btn warn-go onboard-cta" disabled=${bridge.busy || bridge.running} onClick=${onConnect}>
+        ${bridge.running ? t("onboard.connected") : bridge.busy ? t("onboard.connecting") : t("onboard.connect")}
+      </button>
+      <button type="button" class="onboard-later" onClick=${onSkipConnect}>${t("onboard.later")}</button>
+    </div>`;
+}
+
+const ONBOARD_VIEWS = { hero: OnboardHero, model: OnboardModel, pair: OnboardPair };
+
+function Onboard({ step, closing, model, bridge, onStart, onPickModel, onBack, onConnect, onSkipConnect, onDone }) {
+  const View = ONBOARD_VIEWS[step];
+  if (!View) return null;
+  return html`
+    <div class=${"onboard" + (closing ? " is-closing" : "")} role="dialog" aria-modal="true" aria-label=${t("onboard.title")}>
+      <button type="button" class="onboard-skip" onClick=${onDone}>${t("onboard.skip")}</button>
+      <${View} model=${model} bridge=${bridge} onStart=${onStart} onPickModel=${onPickModel}
+        onBack=${onBack} onConnect=${onConnect} onSkipConnect=${onSkipConnect} />
+    </div>`;
+}
+
 /* first-run tour — one spotlight box + a card, walked with Next. anchors that
    aren't on the page (mirror mode has no link/drive zone) drop out of the walk. */
 const TOUR = [
   [".brand", "brand"],
   [".bridge-ctl, .top-mirror", "link"],
+  [".bridge-ctl", "pair", () => !!window.blackout], // desktop shell only — in-app robot picker
   [".stage-3d", "stage"],
   [".stage-cam", "cam"],
   [".strip", "strip"],
   [".agent", "agent"],
   [".drive", "drive"],
   [".console-btn:last-of-type", "console"],
+  [".topbar .console-btn", "mirrorShare"], // hand the judges' tablet the mirror view
 ];
 
-function Tour({ onDone }) {
-  const steps = useRef(TOUR.filter(([sel]) => document.querySelector(sel))).current;
+function Tour({ closing, onDone }) {
+  const steps = useRef(TOUR.filter(([sel, , when]) => (!when || when()) && document.querySelector(sel))).current;
   const [i, setI] = useState(0);
   const [box, setBox] = useState(null);
   const step = steps[i];
@@ -1807,7 +2030,7 @@ function Tour({ onDone }) {
     transform: below ? "none" : "translateY(-100%)",
   };
   return html`
-    <div class="tour" role="dialog" aria-modal="true" aria-label=${t("tour." + step[1] + ".t")}>
+    <div class=${"tour" + (closing ? " is-closing" : "")} role="dialog" aria-modal="true" aria-label=${t("tour." + step[1] + ".t")}>
       <div class="tour-hole" style=${{ left: box.x + "px", top: box.y + "px", width: box.w + "px", height: box.h + "px" }}></div>
       <div class="tour-card" style=${card}>
         <span class="tour-count">${i + 1} / ${steps.length}</span>
@@ -1843,10 +2066,10 @@ function App() {
   const [uptime, setUptime] = useState("00:00:00");
   const [lanUrl, setLanUrl] = useState(null); // this laptop's lan address, for pointing the judges' tablet at it
   const [serialLines, setSerialLines] = useState([]);
-  const [tour, setTour] = useState(false);     // first-run walkthrough (once per browser)
+  const [tour, setTour] = useState(false);     // false | "open" | "closing" — first-run walkthrough (once per browser)
   const [drawer, setDrawer] = useState(false); // false | "open" | "closing"
   const [drawerTab, setDrawerTab] = useState("logs");
-  const [warn, setWarn] = useState(false);     // first-open debug warning gate
+  const [warn, setWarn] = useState(false);     // false | "open" | "closing" — first-open debug warning gate
   const [warnCount, setWarnCount] = useState(3);
   const [updateOpen, setUpdateOpen] = useState(false); // false | "open" | "closing"
   const [flashPhase, setFlashPhase] = useState("choose");
@@ -1857,8 +2080,13 @@ function App() {
   const [fpv, setFpv] = useState(false);      // △/Y — fullscreen camera + hud overlay
   const [fpvZoom, setFpvZoom] = useState(0);  // index into FPV_ZOOMS — OPTIONS cycles it
   const [report, setReport] = useState(null); // frozen session report, or null when closed
+  const [reportClosing, setReportClosing] = useState(false); // true while the exit transition plays
   const [clients, setClients] = useState([]); // every dashboard on the lan (host's roster)
   const [devicesOpen, setDevicesOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false); // false | "open" | "closing"
+  const [onboardStep, setOnboardStep] = useState(false); // false | "hero" | "model" | "pair" — first-run, ahead of the spotlight tour
+  const [onboardModel, setOnboardModel] = useState(null); // "v2" | "v3" | null — cosmetic, picked in the onboard flow
+  const [onboardClosing, setOnboardClosing] = useState(false); // true while the exit transition plays
   // a mirror drives only while the host has granted it; the host is always granted.
   const [granted, setGranted] = useState(!VIEWER);
   const grantedRef = useRef(!VIEWER);
@@ -1913,7 +2141,8 @@ function App() {
   const toast = useCallback((msg, kind = "system") => {
     const id = Date.now() + Math.random();
     setToasts(p => [...p, { msg, kind, id }]);
-    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 3600);
+    setTimeout(() => setToasts(p => p.map(t => t.id === id ? { ...t, leaving: true } : t)), 3600);
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 3820);
   }, []);
 
   // speak with timing: clock starts now, stops when first audio plays (tts ms).
@@ -2136,6 +2365,25 @@ function App() {
   }, []);
   useEffect(() => { loadBridge(); const id = setInterval(loadBridge, 5000); return () => clearInterval(id); }, [loadBridge]);
 
+  // in-app ble picker (desktop shell only) — electron's main process holds the
+  // pending requestDevice() callback and streams discovered devices over ipc;
+  // picking a row (or cancelling) resolves it. browsers keep the native chooser.
+  const [blePicker, setBlePicker] = useState(false);
+  const [bleDevs, setBleDevs] = useState([]);
+  const closeBlePicker = useCallback(() => {
+    setBlePicker(o => o === "open" ? "closing" : o);
+    setTimeout(() => { setBlePicker(false); setBleDevs([]); }, 240);
+  }, []);
+  useEffect(() => {
+    if (!window.blackout) return;
+    const offDevs = window.blackout.onBleDevices((list) => {
+      setBleDevs(list);
+      setBlePicker(o => o || "open"); // a scan can start without us (chooser re-fired) — surface it
+    });
+    const offClosed = window.blackout.onBleClosed(closeBlePicker);
+    return () => { offDevs(); offClosed(); };
+  }, [closeBlePicker]);
+
   // mode: "toggle" (connect↔disconnect) or "reconnect" (re-pick device while running).
   const toggleBridge = useCallback(async (mode = "toggle") => {
     const stopping = mode === "toggle" && bridge.running;
@@ -2149,6 +2397,7 @@ function App() {
       } else {
         if (mode === "reconnect") disconnectBle();
         if (!navigator.bluetooth) throw new Error("Web Bluetooth unsupported — use Chrome/Edge");
+        if (window.blackout) setBlePicker("open"); // desktop shell: our picker instead of chrome's chooser
         // filter by service uuid, not name — arduinoble on r4 wifi always advertises name as "arduino" (known upstream bug), so name filter never matches.
         const device = await navigator.bluetooth.requestDevice({
           filters: [{ services: [BLE_SERVICE] }],
@@ -2171,9 +2420,9 @@ function App() {
         if (d.ok) { setBridge({ running: true, busy: false }); toast(t("toast.bridgeOn"), "ok"); }
         else { disconnectBle(); setBridge(b => ({ ...b, busy: false })); addLog(t("log.failed", { error: d.error }), "danger"); toast(d.error, "danger"); }
       }
-    } catch (e) { setBridge(b => ({ ...b, busy: false })); addLog(t("log.error", { msg: e.message }), "danger"); }
+    } catch (e) { setBridge(b => ({ ...b, busy: false })); addLog(t("log.error", { msg: e.message }), "danger"); if (window.blackout) closeBlePicker(); }
     loadBridge();
-  }, [bridge.running, addLog, toast, loadBridge, disconnectBle, onBleNotify]);
+  }, [bridge.running, addLog, toast, loadBridge, disconnectBle, onBleNotify, closeBlePicker]);
 
   const mockData = useCallback(() => {
     setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
@@ -2344,28 +2593,69 @@ function App() {
   // first open ever shows the debug warning instead; ack is remembered
   const openDrawer = useCallback(() => {
     if (localStorage.getItem("debugAck")) setDrawer("open");
-    else setWarn(true);
+    else setWarn("open");
+  }, []);
+  const closeWarn = useCallback(() => {
+    setWarn(w => w === "open" ? "closing" : w);
+    setTimeout(() => setWarn(false), 220);
+  }, []);
+  const closeReport = useCallback(() => {
+    setReportClosing(true);
+    setTimeout(() => { setReport(null); setReportClosing(false); }, 220);
   }, []);
   const toggleDrawer = useCallback(() => {
     if (drawerRef.current === "open") closeDrawer(); else openDrawer();
   }, [closeDrawer, openDrawer]);
 
-  // tutorial runs once per browser; the console's restart button clears the flag
+  // tutorial runs once per browser; the console's restart button clears the flag.
+  // first run leads with the onboard flow (hero → model → pair), then the spotlight tour.
   useEffect(() => {
     if (localStorage.getItem("tourDone")) return;
-    const id = setTimeout(() => setTour(true), 900); // let the zones finish revealing
+    const id = setTimeout(() => setOnboardStep("hero"), 900); // let the zones finish revealing
     return () => clearTimeout(id);
   }, []);
-  const endTour = useCallback(() => { localStorage.setItem("tourDone", "1"); setTour(false); }, []);
+  const endTour = useCallback(() => {
+    localStorage.setItem("tourDone", "1");
+    setTour(s => s === "open" ? "closing" : s);
+    setTimeout(() => setTour(false), 240);
+  }, []);
+  // fades/pops the onboard overlay out, then swaps it for whatever comes next —
+  // the dashboard is already mounted underneath, so this reads as a crossfade.
+  const closeOnboard = useCallback((next) => {
+    if (window.blackout && blePicker) window.blackout.selectBleDevice(""); // don't leave a scan running behind us
+    setOnboardClosing(true);
+    setTimeout(() => { setOnboardStep(false); setOnboardClosing(false); next?.(); }, 300);
+  }, [blePicker]);
+  const finishOnboard = useCallback(() => closeOnboard(() => setTour("open")), [closeOnboard]);
+  const skipOnboard = useCallback(() => { localStorage.setItem("tourDone", "1"); closeOnboard(); }, [closeOnboard]);
+  // pairing is host-only (viewers never own the bridge) — start walks straight into the tour for them.
+  const onboardStart = useCallback(() => { if (VIEWER) finishOnboard(); else setOnboardStep("model"); }, [finishOnboard]);
+  const onboardPickModel = useCallback((m) => { setOnboardModel(m); setOnboardStep("pair"); }, []);
   const restartTour = useCallback(() => {
     localStorage.removeItem("tourDone");
+    setOnboardModel(null);
     closeDrawer();
-    setTimeout(() => setTour(true), 260); // after the drawer slides out
+    setTimeout(() => setOnboardStep("hero"), 260); // after the drawer slides out — full replay, hero first
   }, [closeDrawer]);
+  // a successful pair mid-flow walks straight into the dashboard + tutorial
+  useEffect(() => {
+    if (onboardStep !== "pair" || !bridge.running) return;
+    const id = setTimeout(finishOnboard, 700); // a beat to read "connected"
+    return () => clearTimeout(id);
+  }, [onboardStep, bridge.running, finishOnboard]);
+
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(o => o === "open" ? "closing" : o);
+    setTimeout(() => setSettingsOpen(false), 240);
+  }, []);
+  useEffect(() => {
+    if (!window.blackout) return;
+    return window.blackout.onSettingsOpen(() => setSettingsOpen("open"));
+  }, []);
 
   // warning's 3s cooldown before PROCEED unlocks
   useEffect(() => {
-    if (!warn) return;
+    if (warn !== "open") return;
     setWarnCount(3);
     const id = setInterval(() => setWarnCount(c => Math.max(0, c - 1)), 1000);
     return () => clearInterval(id);
@@ -2451,10 +2741,12 @@ function App() {
               <button type="button" class="hud-btn" onClick=${() => toggleFpv(false)}>△ / ESC</button>
             </div>
           <//>`}
+        ${window.blackout?.platform === "darwin" && html`<div class="mac-titlebar"></div>`}
         <${Topbar} connected=${connected} bridge=${bridge} onBridge=${toggleBridge}
           ping=${ping} packets=${packets} uptime=${uptime} lanUrl=${lanUrl}
           lang=${lang} onLang=${changeLang} onConsole=${toggleDrawer} consoleOpen=${drawer === "open"}
-          clients=${clients} onDevices=${() => setDevicesOpen("open")} granted=${granted} />
+          clients=${clients} onDevices=${() => setDevicesOpen("open")} granted=${granted}
+          onSettings=${() => setSettingsOpen("open")} />
 
         ${!VIEWER && flashBoards.status !== "none" && html`<${UpdateBar} boards=${flashBoards} onUpdate=${openUpdate} />`}
 
@@ -2497,20 +2789,35 @@ function App() {
           onGrant=${(id, on) => socketRef.current?.emit("grant", { id, on })}
           onClose=${closeDevices} />`, document.body)}
 
-      ${report && createPortal(html`
-        <${ReportModal} report=${report} onClose=${() => setReport(null)} />`, document.body)}
+      ${settingsOpen && createPortal(html`
+        <${SettingsModal} open=${settingsOpen} onClose=${closeSettings} />`, document.body)}
 
-      ${tour && createPortal(html`<${Tour} onDone=${endTour} />`, document.body)}
+      ${blePicker && createPortal(html`
+        <${BlePickerModal} open=${blePicker} devices=${bleDevs}
+          onPick=${(id) => window.blackout.selectBleDevice(id)}
+          onCancel=${() => window.blackout.selectBleDevice("")} />`, document.body)}
+
+      ${report && createPortal(html`
+        <${ReportModal} report=${report} closing=${reportClosing} onClose=${closeReport} />`, document.body)}
+
+      ${onboardStep && createPortal(html`
+        <${Onboard} step=${onboardStep} closing=${onboardClosing} model=${onboardModel} bridge=${bridge}
+          onStart=${onboardStart} onPickModel=${onboardPickModel}
+          onBack=${() => setOnboardStep(s => s === "pair" ? "model" : "hero")}
+          onConnect=${() => toggleBridge("toggle")} onSkipConnect=${finishOnboard} onDone=${skipOnboard} />`, document.body)}
+
+      ${tour && createPortal(html`<${Tour} closing=${tour === "closing"} onDone=${endTour} />`, document.body)}
 
       ${warn && createPortal(html`
-        <div class="blk-modal" onClick=${(e) => { if (e.target === e.currentTarget) setWarn(false); }}>
+        <div class=${"blk-modal" + (warn === "closing" ? " is-closing" : "")}
+          onClick=${(e) => { if (e.target === e.currentTarget) closeWarn(); }}>
           <div class="blk-modal-frame warn-frame">
             <span class="warn-title">⚠ DEBUG MENU</span>
             <p>This is a debug menu. If you don't know what you are doing, turn back!</p>
             <div class="warn-actions">
-              <button type="button" class="serial-btn" onClick=${() => setWarn(false)}>Turn back</button>
+              <button type="button" class="serial-btn" onClick=${closeWarn}>Turn back</button>
               <button type="button" class="serial-btn warn-go" disabled=${warnCount > 0}
-                onClick=${() => { localStorage.setItem("debugAck", "1"); setWarn(false); setDrawer("open"); }}>
+                onClick=${() => { localStorage.setItem("debugAck", "1"); closeWarn(); setDrawer("open"); }}>
                 Proceed<span class=${"warn-count" + (warnCount > 0 ? "" : " is-done")}> (${warnCount || 1})</span>
               </button>
             </div>

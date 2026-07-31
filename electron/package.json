@@ -1,0 +1,60 @@
+{
+  "name": "blackout-app",
+  "productName": "Blackout",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "app": "electron .",
+    "dist": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "org.blackout.dashboard",
+    "productName": "Blackout",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "build/icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "../server",
+        "to": "server",
+        "filter": [
+          "**/*",
+          "!test-*.mjs",
+          "!test-*.js",
+          "!.env"
+        ]
+      },
+      {
+        "from": "../server/node_modules",
+        "to": "server/node_modules",
+        "filter": [
+          "**/*",
+          "!.cache/**"
+        ]
+      }
+    ],
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "icon": "build/icon.icns",
+      "identity": null,
+      "hardenedRuntime": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSBluetoothAlwaysUsageDescription": "Blackout pairs with the recon rover over Bluetooth LE."
+      }
+    }
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  }
+}

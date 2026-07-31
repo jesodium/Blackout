@@ -98,6 +98,13 @@ body {
   background: var(--glass);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
+/* macOS hiddenInset traffic lights get their own native-style strip above the
+   topbar (see .mac-titlebar) instead of sharing a row with the brand mark. */
+.mac-titlebar {
+  flex-shrink: 0; height: 32px;
+  background: var(--bg); border-bottom: 1px solid var(--line);
+  -webkit-app-region: drag;
+}
 
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand img { display: block; height: 22px; width: auto; }
@@ -1008,8 +1015,125 @@ input[type="range"]:focus { box-shadow: none; }
 .warn-count { display: inline-block; overflow: hidden; white-space: pre; max-width: 3em; transition: max-width 0.35s ease, opacity 0.25s ease; }
 .warn-count.is-done { max-width: 0; opacity: 0; }
 
+/* operator settings — reuses the devices-frame shell */
+.settings-frame { width: min(420px, 92vw); height: auto; padding: 4px 0 16px; }
+.settings-body { display: flex; flex-direction: column; gap: 12px; padding: 16px 16px 4px; }
+.settings-field { display: flex; flex-direction: column; gap: 5px; }
+.settings-field span { font: 700 10px/1 var(--grotesk); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+.settings-field input {
+  font: 500 13px/1.4 var(--mono); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line-2); border-radius: var(--r-s); padding: 8px 10px;
+}
+.settings-field input:focus { outline: none; border-color: var(--accent); }
+.settings-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px 0; }
+.settings-hint { font: 500 11px/1.4 var(--grotesk); color: var(--ink-3); }
+
+/* first-run onboard flow — hero / choose model / pair. full-screen, own look.
+   IMPORTANT NOTE: z-index sits BELOW .blk-modal (300) on purpose — the pair
+   step's Connect button opens the real BlePickerModal (a .blk-modal), which
+   must stack above this full-screen overlay to be visible/clickable at all. */
+.onboard {
+  position: fixed; inset: 0; z-index: 250;
+  display: flex; justify-content: center;
+  overflow-y: auto; /* a tall step (legacy open) scrolls instead of centering off the top of a short window */
+  background: var(--bg); animation: blkFade 0.28s ease both;
+}
+.onboard.is-closing { animation: blkFadeOut 0.3s ease both; }
+.onboard.is-closing .onboard-view { animation: blkPopOut 0.3s cubic-bezier(0.5, 0, 0.75, 0.4) both; }
+.onboard-skip {
+  position: fixed; top: 20px; right: 20px; /* fixed, not absolute: stays put while .onboard scrolls */
+  font: 600 11px/1 var(--grotesk); letter-spacing: 0.08em; color: var(--ink-3);
+  background: none; border: 0; cursor: pointer; padding: 8px;
+}
+.onboard-skip:hover { color: var(--ink-2); }
+.onboard-view {
+  width: min(560px, 92vw); display: flex; flex-direction: column; align-items: center;
+  text-align: center; gap: 18px; margin: auto 0; padding: 56px 0;
+  animation: blkPop 0.32s cubic-bezier(0.2, 0.9, 0.25, 1.1) both;
+}
+.onboard-title { font: 800 clamp(40px, 9vw, 88px)/1 var(--grotesk); letter-spacing: -0.01em; color: var(--ink); margin: 0; }
+.onboard-h2 { font: 800 24px/1.2 var(--grotesk); color: var(--ink); margin: 0; }
+.onboard-desc { font: 500 14px/1.6 var(--grotesk); color: var(--ink-2); margin: 0; max-width: 46ch; }
+.onboard-feats { display: flex; gap: 10px; }
+.onboard-feat {
+  font: 700 10px/1 var(--grotesk); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 7px 14px;
+}
+.onboard-photos { display: flex; gap: 18px; margin: 6px 0; }
+.onboard-photos img {
+  width: 168px; height: 210px; object-fit: cover; border-radius: var(--r); border: 1px solid var(--line-2);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+}
+.onboard-photos img:nth-child(1) { transform: rotate(-4deg) translateY(6px); }
+.onboard-photos img:nth-child(3) { transform: rotate(4deg) translateY(6px); }
+.onboard-cta { min-height: 44px; padding: 0 28px; font-size: 12px; }
+.onboard-back {
+  align-self: flex-start; font: 600 11px/1 var(--grotesk); letter-spacing: 0.06em; color: var(--ink-3);
+  background: none; border: 0; cursor: pointer; padding: 8px 0;
+}
+.onboard-back:hover { color: var(--ink-2); }
+.onboard-back:disabled { opacity: 0.4; cursor: not-allowed; }
+.onboard-model-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 22px 16px; width: 100%;
+  background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r); cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s; text-align: left;
+}
+.onboard-model-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.onboard-model-label { font: 800 16px/1.2 var(--grotesk); color: var(--ink); }
+.onboard-model-desc { font: 500 11.5px/1.4 var(--grotesk); color: var(--ink-3); }
+/* current build: bigger, background photo (placeholder) stands in for the real render */
+.onboard-model-featured {
+  min-height: 220px; justify-content: flex-end; gap: 4px; padding: 24px;
+  background-size: cover; background-position: center 30%; border-color: var(--line-2);
+}
+.onboard-model-featured .onboard-model-label { font-size: 22px; color: #fff; }
+.onboard-model-featured .onboard-model-desc { color: rgba(255, 255, 255, 0.72); }
+.onboard-model-featured:hover { border-color: var(--accent); }
+.onboard-legacy-toggle {
+  display: flex; align-items: center; gap: 6px; align-self: center; margin-top: 2px;
+  font: 600 11.5px/1 var(--grotesk); color: var(--ink-3); background: none; border: 0; cursor: pointer; padding: 6px;
+}
+.onboard-legacy-toggle:hover { color: var(--ink-2); }
+.onboard-legacy-caret { display: inline-block; transition: transform 0.2s ease; }
+.onboard-legacy-caret.is-open { transform: rotate(180deg); }
+.onboard-legacy {
+  width: 100%; display: grid; grid-template-rows: 0fr; opacity: 0;
+  transition: grid-template-rows 0.24s ease, opacity 0.2s ease;
+}
+.onboard-legacy.is-open { grid-template-rows: 1fr; opacity: 1; }
+.onboard-legacy-inner { overflow: hidden; }
+.onboard-model-legacy {
+  position: relative; padding: 14px 16px; opacity: 0.75; filter: grayscale(0.4);
+}
+/* no lift on hover here: it's wrapped in the accordion's overflow:hidden clip, so the
+   shared card's translateY(-2px) would shave a sliver off the top on hover */
+.onboard-model-legacy:hover { opacity: 1; filter: none; transform: none; }
+.onboard-model-legacy .onboard-model-label { font-size: 14px; }
+.onboard-legacy-badge {
+  align-self: flex-start; font: 700 9px/1 var(--grotesk); letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-3); border: 1px solid var(--line-2); border-radius: 999px; padding: 3px 8px;
+}
+.onboard-sweep { width: 64px; height: 64px; color: var(--accent); }
+.onboard-sweep .g-sweep { animation: spin 2.6s linear infinite; transform-origin: 12px 12px; }
+.onboard-later {
+  font: 600 11.5px/1 var(--grotesk); letter-spacing: 0.04em; color: var(--ink-3);
+  background: none; border: 0; cursor: pointer; padding: 6px;
+}
+.onboard-later:hover { color: var(--ink-2); }
+@media (max-width: 560px) {
+  .onboard-photos img { width: 108px; height: 136px; }
+  .onboard-model-featured { min-height: 170px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .onboard, .onboard-view, .onboard.is-closing, .onboard.is-closing .onboard-view { animation: none; }
+  .onboard-sweep .g-sweep { animation: none; }
+  .onboard-legacy { transition: none; }
+}
+
 /* first-run tour — the dim is one huge box-shadow spilling out of the spotlight */
 .tour { position: fixed; inset: 0; z-index: 400; animation: blkFade 0.22s ease both; }
+.tour.is-closing { animation: blkFadeOut 0.22s ease both; pointer-events: none; }
+.tour.is-closing .tour-card { animation: blkPopOut 0.22s cubic-bezier(0.5, 0, 0.75, 0.4) both; }
 .tour-hole {
   position: fixed; border-radius: var(--r); border: 1px solid var(--accent);
   box-shadow: 0 0 0 9999px rgba(6, 6, 7, 0.74);
@@ -1029,7 +1153,7 @@ input[type="range"]:focus { box-shadow: none; }
 .tour-actions .warn-go { color: var(--accent); border-color: var(--accent); }
 .drawer-tour { margin-left: auto; }
 @media (prefers-reduced-motion: reduce) {
-  .tour, .tour-hole, .tour-card { animation: none; transition: none; }
+  .tour, .tour-hole, .tour-card, .tour.is-closing, .tour.is-closing .tour-card { animation: none; transition: none; }
 }
 
 /* usb-board strip under the topbar — the only entry point to the updater */
@@ -1066,6 +1190,28 @@ input[type="range"]:focus { box-shadow: none; }
 .device-row .serial-btn.is-on { color: var(--go); border-color: var(--go); }
 /* grant confirm sits on top of the devices sheet — don't stack a second full blur */
 .blk-modal .blk-modal { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(6, 6, 7, 0.6); }
+
+/* in-app ble pairing (desktop shell) — same sheet as connected devices, plus a
+   scanning affordance. no signal bars: electron exposes no rssi. */
+.ble-scanline {
+  display: flex; align-items: center; gap: 10px; padding: 4px 14px 0;
+  color: var(--accent);
+}
+.ble-sweep { width: 22px; height: 22px; flex: none; }
+.ble-picker .g-sweep { animation: spin 2.6s linear infinite; transform-origin: 12px 12px; }
+.ble-scanning-label { font: 500 12px/1 var(--mono); color: var(--ink-2); letter-spacing: 0.08em; }
+.ble-scanning-label::after { content: "\2026"; display: inline-block; animation: blink 1.1s ease-in-out infinite; }
+.ble-row { padding: 0; border-bottom: none; }
+.ble-pick {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; min-height: 48px; padding: 10px 12px; margin: 6px 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-s);
+  cursor: pointer; text-align: left;
+  animation: list-in 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+.ble-pick:hover { background: var(--panel-2); border-color: var(--accent); transform: translateY(-1px); }
+.ble-actions { display: flex; justify-content: flex-end; padding: 0 14px 14px; }
 .update-frame p { font: 500 13px/1.6 var(--grotesk); color: var(--ink-2); margin: 0; }
 .update-title { font: 800 12px/1 var(--grotesk); letter-spacing: 0.16em; color: var(--ink); }
 .update-actions { display: flex; gap: 8px; justify-content: flex-end; }
@@ -1141,7 +1287,9 @@ input[type="range"]:focus { box-shadow: none; }
 }
 .toast.k-ok     { color: var(--go);     border-left-color: var(--go); }
 .toast.k-danger { color: var(--accent); border-left-color: var(--accent); }
+.toast.is-leaving { animation: toast-out 0.22s ease both; pointer-events: none; }
 @keyframes toast-in { from { transform: translateX(40px); opacity: 0; } }
+@keyframes toast-out { to { transform: translateX(40px); opacity: 0; } }
 
 /* ============================================================
    entrance
