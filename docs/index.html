@@ -72,11 +72,12 @@ body::after{content:"";position:fixed;inset:0;z-index:60;pointer-events:none;opa
 .nav.tucked{transform:translateY(-110px)}
 .nav .brand{display:flex;align-items:center;margin-right:auto}
 .nav .brand img{height:24px;width:auto;display:block}
-.nav .links{display:flex;gap:4px}
-.nav .links a{font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--muted);padding:8px 12px;border-radius:999px;
-  transition:color 150ms ease,background-color 150ms ease}
-.nav .links a:hover{color:var(--ink);background:rgba(255,255,255,.06)}
-.nav .btn{padding:9px 18px;font-size:12px;border-radius:999px}
+.nav .links{display:flex;flex:1;justify-content:space-around;gap:4px}
+.nav .links a{font-family:var(--mono);font-size:17px;letter-spacing:.06em;color:var(--muted);padding:9px 14px;border-radius:999px;
+  text-shadow:0 0 14px rgba(224,164,92,.35),0 0 3px rgba(224,164,92,.25);
+  transition:color 150ms ease,background-color 150ms ease,text-shadow 150ms ease}
+.nav .links a:hover{color:var(--accent);background:rgba(255,255,255,.06);text-shadow:0 0 18px rgba(224,164,92,.8),0 0 5px rgba(224,164,92,.5)}
+.nav .btn{padding:10px 20px;font-size:16px;border-radius:999px}
 @media (max-width:680px){.nav .links{display:none}}
 
 /* ============ language wipe — full-screen cover that swipes through on a language change ============ */
