@@ -939,6 +939,40 @@ function FpvOverlay({ packet }) {
     </div>`;
 }
 
+/* fpv sage — the agent as one glass card over the feed: who is talking, what it
+   just said, and the four numbers that matter while driving blind. deliberately
+   the same panel as the marketing frame (docs/marketing/template.html #03-telemetry),
+   so what people are shown and what they get are the same object — stats down the
+   right instead of across, because it carries every sensor, not the headline four.
+   the rail agent (voice picker, verdict, history) stays behind in the cockpit —
+   fpv keeps the readout, the hud keeps the buttons. */
+const FPV_STATS = [
+  { k: "sensor.dist",  u: "cm",  v: p => fmt(p?.dist, 0) },
+  { k: "sensor.temp",  u: "°C",  v: p => fmt(p?.temp, 0) },
+  { k: "sensor.humid", u: "%",   v: p => fmt(p?.humid, 0) },
+  { k: "sensor.smoke", u: "ppm", v: p => fmt(p?.smoke, 0) },
+  { k: "sensor.airq",  u: "ppm", v: p => fmt(p?.airq, 0) },
+];
+
+function FpvSage({ ai, packet, speaking, connected }) {
+  const state = ai.analyzing ? t("intent.thinking")
+    : speaking ? t("intent.speaking")
+    : t(deriveIntent(ai, packet, connected).label);
+  return html`
+    <section class=${"fpv-sage" + (speaking ? " is-speaking" : "")} aria-label="Sage">
+      <p class="fpv-sage-bar">
+        <i class="fpv-sage-dot" aria-hidden="true"></i><b>Sage</b><span>${t("zone.agent")}</span>
+        <span class="fpv-sage-state">${state} · ${getLang()}</span>
+      </p>
+      <p class=${"fpv-sage-said" + (ai.status ? " sage-" + ai.status : "")} key=${ai.text}
+        role="status" aria-live="polite">${ai.text}</p>
+      <div class="fpv-sage-row">
+        ${FPV_STATS.map(s => html`
+          <div key=${s.k}><small>${t(s.k)}</small><strong>${s.v(packet)}<i>${s.u}</i></strong></div>`)}
+      </div>
+    </section>`;
+}
+
 /* sensor strip — 5 live tiles + trend sparkline, one row under the stage */
 function SensorStrip({ packet }) {
   return html`
@@ -2402,10 +2436,14 @@ function App() {
         ${fpv && html`
           <${React.Fragment}>
             <${FpvOverlay} packet=${packet} />
+            <${FpvSage} ai=${ai} packet=${packet} speaking=${speaking} connected=${connected} />
             <div class="fpv-hud">
               <button type="button" class=${"hud-btn" + (fpvMic.listening ? " is-active" : "")}
                 disabled=${!fpvMic.supported} onClick=${fpvMic.toggle} aria-pressed=${fpvMic.listening}>
                 ○ ${fpvMic.listening ? t("ask.listening") : t("ask.mic")}
+              </button>
+              <button type="button" class="hud-btn" onClick=${() => analyze()} disabled=${ai.analyzing}>
+                ◎ ${ai.analyzing ? t("agent.analyzing") : t("agent.runAnalysis")}
               </button>
               <button type="button" class="hud-btn" onClick=${() => cycleZoomRef.current()}>
                 ⚙ ${FPV_ZOOMS[fpvZoom].label}

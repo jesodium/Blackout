@@ -34,20 +34,20 @@
       "state": "Retired",
       "desc": "Collapsed to a single Uno R4 WiFi, added the ESP32-CAM on its own network, and introduced Sage as the voice of the robot.",
       "features": [
-        { "label": "One board", "has": true },
+        { "label": "AI Paired with the Camera", "has": true },
         { "label": "Camera", "has": true },
         { "label": "Speaks its findings", "has": true },
-        { "label": "Runs without the laptop", "has": false }
+        { "label": "Runs autonomously", "has": false }
       ]
     },
     "es": {
       "state": "Retirado",
       "desc": "Se redujo a una sola Uno R4 WiFi, se añadió la ESP32-CAM en su propia red, y se presentó a Sage como la voz del robot.",
       "features": [
-        { "label": "Una sola placa", "has": true },
+        { "label": "IA integrada con la cámara", "has": true },
         { "label": "Cámara", "has": true },
         { "label": "Habla sus hallazgos", "has": true },
-        { "label": "Funciona sin la laptop", "has": false }
+        { "label": "Funciona de forma autónoma", "has": false }
       ]
     }
   },
@@ -60,11 +60,12 @@
       "desc": "Giga R1 WiFi, runs became the BLK language, findings log with saved frames, one command flashes both boards. The competition build.",
       "cap": "V3 · the console, mid-run",
       "features": [
-        { "label": "One board", "has": true },
+        { "label": "AI Paired with the Camera", "has": true },
         { "label": "Camera", "has": true },
         { "label": "Speaks its findings", "has": true },
-        { "label": "Runs without the laptop", "has": true },
-        { "label": "Closed-loop motion", "has": false }
+        { "label": "MCP server support", "has": false },
+        { "label": "Redesigned, smarter Sage", "has": false },
+        { "label": "Expansion ports", "has": false }
       ]
     },
     "es": {
@@ -72,11 +73,12 @@
       "desc": "Giga R1 WiFi, las rutinas se convirtieron en el lenguaje BLK, registro de hallazgos con imágenes guardadas, un solo comando programa ambas placas. La versión de competencia.",
       "cap": "V3 · la consola, en plena misión",
       "features": [
-        { "label": "Una sola placa", "has": true },
+        { "label": "IA integrada con la cámara", "has": true },
         { "label": "Cámara", "has": true },
         { "label": "Habla sus hallazgos", "has": true },
-        { "label": "Funciona sin la laptop", "has": true },
-        { "label": "Movimiento en lazo cerrado", "has": false }
+        { "label": "Soporte de servidor MCP", "has": false },
+        { "label": "Sage rediseñada y más lista", "has": false },
+        { "label": "Puertos de expansión", "has": false }
       ]
     }
   },
@@ -86,8 +88,9 @@
     "image": null,
     "en": {
       "state": "In design",
-      "desc": "Not built. Closed-loop motion: wheel encoders for real angles, on-board vision with no laptop in the loop, gas and orientation sensing.",
+      "desc": "Not built. Machine learning on the rover: a trained model calling what it sees, closed-loop motion from wheel encoders, gas and orientation sensing.",
       "features": [
+        { "label": "Machine learning on board", "has": true },
         { "label": "Closed-loop motion", "has": true },
         { "label": "Vision on the board", "has": true },
         { "label": "Gas and orientation", "has": true }
@@ -95,8 +98,9 @@
     },
     "es": {
       "state": "En diseño",
-      "desc": "Aún no construida. Movimiento en lazo cerrado: encoders de rueda para ángulos reales, visión a bordo sin laptop en el circuito, detección de gas y orientación.",
+      "desc": "Aún no construida. Aprendizaje automático a bordo: un modelo entrenado que reconoce lo que ve, movimiento en lazo cerrado con encoders de rueda, detección de gas y orientación.",
       "features": [
+        { "label": "Aprendizaje automático a bordo", "has": true },
         { "label": "Movimiento en lazo cerrado", "has": true },
         { "label": "Visión a bordo", "has": true },
         { "label": "Gas y orientación", "has": true }

@@ -1282,16 +1282,13 @@ input[type="range"]:focus { box-shadow: none; }
 .is-fpv .stage-cam { position: fixed; inset: 0; z-index: 0; border: none; border-radius: 0; background: #000; }
 .is-fpv .stage-cam .zone-head { display: none; }
 .is-fpv .stage-cam .stage-body { height: auto; flex: 1; }
-/* telemetry ribbon would run under both rails at full width — centre it instead */
-.is-fpv .hud-tele {
-  left: 50%; right: auto; bottom: 18px; transform: translateX(-50%);
-  width: max-content; max-width: 44vw; border-radius: 3px;
-  animation: fpv-rise 420ms 120ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
-}
-/* both of these live in the cam's corners, which fullscreen puts under the rails and
-   the corner brackets — pull them inboard of the right rail instead of on top of it */
+/* dist/roll/pitch/yaw ribbon: the sage card carries dist + heading now, and the
+   attitude line already draws roll/pitch. two of the same numbers is noise. */
+.is-fpv .hud-tele { display: none; }
+/* both of these live in the cam's corners, which fullscreen puts under the rail and
+   the corner brackets — stack them down the right edge, clear of the sage card */
 .is-fpv .stage-chip { top: 18px; right: 52px; z-index: 12; border-radius: 3px; }
-.is-fpv .cam-tools { right: calc(clamp(206px, 21vw, 282px) + 14px); bottom: 18px; z-index: 12; }
+.is-fpv .cam-tools { right: 18px; bottom: auto; top: 54px; z-index: 12; }
 
 /* the feed is 4:3 shot through a camera mounted on its side, so un-rotating it
    leaves a 3:4 portrait frame — see .cam-feed. in the tile that's fine (whole
@@ -1306,38 +1303,10 @@ input[type="range"]:focus { box-shadow: none; }
    above 1 zooms in on the centre. set from FPV_ZOOMS, cycled with OPTIONS. */
 .is-fpv .cam-feed { width: calc(100cqh * var(--fpv-zoom, 1)); }
 
-.is-fpv .strip, .is-fpv .col-rail {
-  position: fixed; top: 58px; bottom: 58px; z-index: 10;
-  width: clamp(206px, 21vw, 282px);
-  display: flex; flex-direction: column; gap: 8px;
-  padding: 0 14px; overflow-y: auto; overscroll-behavior: contain;
-  scrollbar-width: none;
-}
-.is-fpv .strip::-webkit-scrollbar, .is-fpv .col-rail::-webkit-scrollbar { width: 0; }
-.is-fpv .strip { left: 0; }
-.is-fpv .col-rail { right: 0; }
-/* rails deal themselves in, near edge first */
-.is-fpv .strip .reading, .is-fpv .agent { animation: fpv-deal 380ms cubic-bezier(0.2, 0.9, 0.2, 1) both; }
-.is-fpv .strip .reading { animation-delay: calc(var(--i, 0) * 45ms + 120ms); }
-.is-fpv .agent { animation-delay: 150ms; --dir: 1; }
-.is-fpv .strip .reading:nth-child(1) { --i: 0; } .is-fpv .strip .reading:nth-child(2) { --i: 1; }
-.is-fpv .strip .reading:nth-child(3) { --i: 2; } .is-fpv .strip .reading:nth-child(4) { --i: 3; }
-.is-fpv .strip .reading:nth-child(5) { --i: 4; }
-@keyframes fpv-deal { from { opacity: 0; transform: translateX(calc(var(--dir, -1) * 26px)); } to { opacity: 1; transform: none; } }
+/* nothing from the cockpit columns comes to fpv: <FpvSage> is sage and every
+   sensor, drive is hidden anyway, and the sparkline is unreadable this small. */
+.is-fpv .col-rail, .is-fpv .strip { display: none; }
 @keyframes fpv-rise { from { opacity: 0; transform: translate(-50%, 16px); } to { opacity: 1; transform: translate(-50%, 0); } }
-
-/* --- hud skin: square corners, hairline rules, glass --- */
-.is-fpv .strip .reading, .is-fpv .agent {
-  background: color-mix(in srgb, var(--panel) 38%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
-  border-radius: 3px;
-  backdrop-filter: blur(12px) saturate(1.2); -webkit-backdrop-filter: blur(12px) saturate(1.2);
-  box-shadow: inset 0 0 0 1px rgba(9, 9, 10, 0.5);
-}
-.is-fpv .strip .reading { padding: 7px 11px 9px; gap: 5px; }
-.is-fpv .agent { flex: 1; min-height: 0; }
-.is-fpv .agent .zone-head { border-bottom-color: color-mix(in srgb, var(--accent) 20%, transparent); }
-.is-fpv .trend-cell { display: none; }  /* sparkline is unreadable at rail width */
 .fpv-enter { cursor: pointer; background: none; }
 .fpv-enter:hover { color: var(--ink); border-color: var(--ink-2); }
 
@@ -1347,6 +1316,72 @@ input[type="range"]:focus { box-shadow: none; }
   animation: fpv-rise 380ms 80ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
 }
 .fpv-hud .hud-btn { border-radius: 3px; border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* ============================================================
+   fpv sage card — sage's whole presence in fpv: who's talking,
+   the last line, and every live sensor down the right. same panel
+   as the marketing frame (docs/marketing/posts.html #03-telemetry),
+   shrunk to hud size; keep the two in step if either changes.
+   ============================================================ */
+.fpv-sage {
+  position: fixed; z-index: 12; bottom: 18px;
+  left: 50%; transform: translateX(-50%);
+  width: min(560px, calc(100vw - 56px));
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "bar bar" "said stats";
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 12px; overflow: hidden;
+  /* thin enough to fly through — the feed still reads under it */
+  background: color-mix(in srgb, var(--panel) 34%, transparent);
+  backdrop-filter: blur(7px) saturate(1.2); -webkit-backdrop-filter: blur(7px) saturate(1.2);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
+  animation: fpv-rise 420ms 120ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.fpv-sage-bar {
+  grid-area: bar; display: flex; align-items: center; gap: 7px;
+  padding: 7px 11px; border-bottom: 1px solid var(--line);
+  font: 400 8.5px/1 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3);
+}
+.fpv-sage-bar b { color: var(--accent); font-weight: 500; }
+.fpv-sage-dot {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.fpv-sage.is-speaking .fpv-sage-dot { animation: fpv-sage-pulse 1.1s ease-in-out infinite; }
+@keyframes fpv-sage-pulse {
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 8%, transparent); }
+}
+.fpv-sage-state { margin-left: auto; }
+
+.fpv-sage-said {
+  grid-area: said; align-self: center; padding: 11px; color: var(--ink);
+  font: 300 12.5px/1.5 var(--mono);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);   /* stays legible over a bright frame */
+  animation: agent-text-in 0.4s ease;
+}
+.fpv-sage-said.sage-caution { color: var(--warn); }
+.fpv-sage-said.sage-danger  { color: var(--abort); }
+
+.fpv-sage-row {
+  grid-area: stats; width: 150px;
+  display: flex; flex-direction: column; justify-content: center;
+  border-left: 1px solid var(--line);
+}
+.fpv-sage-row div {
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 4px 11px; border-bottom: 1px solid var(--line);
+}
+.fpv-sage-row div:last-child { border-bottom: 0; }
+.fpv-sage-row small {
+  flex: 1; font: 500 7.5px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);
+}
+.fpv-sage-row strong { font: 400 13px/1 var(--mono); color: var(--ink); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7); }
+.fpv-sage-row strong i { font-style: normal; font-size: 8.5px; color: var(--accent); margin-left: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fpv-sage, .fpv-sage-said { animation: none; }
+  .fpv-sage.is-speaking .fpv-sage-dot { animation: none; }
+}
 
 /* ============================================================
    fpv glass — reticle, attitude line, heading tape. decoration

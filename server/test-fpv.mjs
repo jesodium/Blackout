@@ -81,18 +81,24 @@ ok("feed covers viewport (no pillarbox)", hud.feedBox.h >= 761 - 1 && hud.feedBo
 const geo = await ev(`
   const r = (s) => { const e = document.querySelector(s); if(!e) return null; const b = e.getBoundingClientRect();
     return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) }; };
-  return { cam: r('.stage-cam'), strip: r('.strip'), rail: r('.col-rail'), agent: r('.agent'),
+  return { cam: r('.stage-cam'), sage: r('.fpv-sage'),
            topbarShown: !!document.querySelector('.topbar')?.getClientRects().length,
            driveShown: !!document.querySelector('.drive')?.getClientRects().length,
+           railShown: !!document.querySelector('.col-rail')?.getClientRects().length,
+           stripShown: !!document.querySelector('.strip')?.getClientRects().length,
+           cells: [...document.querySelectorAll('.fpv-sage-row div small')].map(e => e.textContent),
            vw: innerWidth, vh: innerHeight,
-           railBg: getComputedStyle(document.querySelector('.agent')).backgroundColor };`);
+           sageBg: getComputedStyle(document.querySelector('.fpv-sage')).backgroundColor };`);
 console.log("  geo:", JSON.stringify(geo));
 
 ok("camera fills viewport", geo.cam.w >= geo.vw - 1 && geo.cam.h >= geo.vh - 1, JSON.stringify(geo.cam));
-ok("stats pinned left", geo.strip.x === 0 && geo.strip.w < geo.vw / 2, JSON.stringify(geo.strip));
-ok("agent pinned right", geo.rail.x + geo.rail.w >= geo.vw - 1 && geo.rail.w < geo.vw / 2, JSON.stringify(geo.rail));
-ok("rails do not overlap", geo.strip.x + geo.strip.w < geo.rail.x, `${geo.strip.w} + ${geo.rail.x}`);
-ok("agent panel translucent", /rgba\(|, 0\.\d/.test(geo.railBg) || geo.railBg.includes("color("), geo.railBg);
+// sage in fpv is the card, not the cockpit panels — bar, transcript, every sensor
+ok("sage card shown", !!geo.sage && geo.cells.length === 5 + 1, JSON.stringify(geo.cells));
+ok("sage card centred at the bottom", Math.abs((geo.sage.x + geo.sage.w / 2) - geo.vw / 2) <= 1
+  && geo.sage.y + geo.sage.h <= geo.vh - 1 && geo.sage.y > geo.vh / 2, JSON.stringify(geo.sage));
+ok("sage card small enough to fly through", geo.sage.w <= geo.vw / 2 && geo.sage.h <= geo.vh / 3, JSON.stringify(geo.sage));
+ok("sage card translucent", /rgba\(|, 0\.\d/.test(geo.sageBg) || geo.sageBg.includes("color("), geo.sageBg);
+ok("cockpit rails hidden", !geo.railShown && !geo.stripShown);
 ok("topbar hidden", !geo.topbarShown);
 ok("drive panel hidden", !geo.driveShown);
 ok("talk button present", await ev(`return !!document.querySelector('.fpv-hud .hud-btn')`));

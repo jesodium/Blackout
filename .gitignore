@@ -60,3 +60,6 @@ step/
 scratchpad/
 server/workflows/
 /.zed
+# Instagram post frames + exports — local marketing work, not the build
+docs/marketing/
+cmds/marketing.sh
