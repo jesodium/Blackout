@@ -1804,33 +1804,38 @@ function BlePickerModal({ open, devices, onPick, onCancel }) {
     const dup = !d.deviceName || names.filter((n) => n === d.deviceName).length > 1;
     return dup ? `${name} · ${d.deviceId.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase()}` : name;
   };
+  // IMPORTANT NOTE: guess only — the advertised name is all we get. Widen the map
+  // if a board ever advertises something more specific than "arduino".
+  const assumed = (d) => {
+    const n = (d.deviceName || "").toLowerCase();
+    if (n.includes("blackout")) return "Blackout V3";
+    if (n.includes("arduino") || n.includes("giga")) return "Blackout · Giga R1";
+    return t("ble.assumedUnknown");
+  };
   return html`
     <div class=${"blk-modal" + (open === "closing" ? " is-closing" : "")}
       onClick=${(e) => { if (e.target === e.currentTarget) onCancel(); }}>
       <div class="blk-modal-frame devices-frame ble-picker" role="dialog" aria-label=${t("ble.title")}>
         <div class="blk-modal-head">
-          <span class="label">${t("ble.title")}</span>
+          <span class="label">BLACKOUT</span>
           <button type="button" class="blk-modal-x" onClick=${onCancel} aria-label=${t("ble.cancel")}>✕</button>
         </div>
-        <div class="ble-scanline">
-          <svg class="ble-sweep" viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.5" />
-            <circle cx="12" cy="12" r="5.5" fill="none" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.5" />
-            <path class="g-sweep" d="M12 12 L12 2 A10 10 0 0 1 20.6 7 Z" fill="currentColor" fill-opacity="0.55" />
-          </svg>
-          <span class="ble-scanning-label">${t("ble.scanning")}</span>
-        </div>
+        <div class="ble-progress" aria-hidden="true"><span></span></div>
         <ul class="device-list">
           ${devices.length === 0 && html`<li class="device-empty">${t("ble.none")}</li>`}
           ${devices.map((d) => html`
             <li key=${d.deviceId} class="device-row ble-row">
               <button type="button" class="ble-pick" onClick=${() => onPick(d.deviceId)}>
-                <span class="device-name">${label(d)}</span>
+                <span class="ble-pick-main">
+                  <span class="device-name">${label(d)}</span>
+                  <span class="device-model">${t("ble.assumed")}: ${assumed(d)}</span>
+                </span>
                 <span class="pill is-go">${t("ble.inRange")}</span>
               </button>
             </li>`)}
         </ul>
         <div class="ble-actions">
+          <span class="ble-scanning-label">${t("ble.scanning")}</span>
           <button type="button" class="serial-btn" onClick=${onCancel}>${t("ble.cancel")}</button>
         </div>
       </div>
