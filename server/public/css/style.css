@@ -637,11 +637,19 @@ input[type="range"]:focus { box-shadow: none; }
 .foot-menu { position: relative; flex-shrink: 0; }
 .foot-menu > summary { list-style: none; letter-spacing: 0.1em; }
 .foot-menu > summary::-webkit-details-marker { display: none; }
+/* keep the closed content rendered so it can animate out instead of vanishing */
+.foot-menu::details-content { content-visibility: visible; }
 .foot-menu-pop {
   position: absolute; z-index: 6; right: 0; bottom: calc(100% + 6px); min-width: 190px;
   display: flex; flex-direction: column; padding: 5px; gap: 2px;
   background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px;
   box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.45);
+  visibility: hidden; opacity: 0; transform: translateY(6px) scale(0.97); transform-origin: bottom right;
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0s 0.14s;
+}
+.foot-menu[open] .foot-menu-pop {
+  visibility: visible; opacity: 1; transform: none;
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0s;
 }
 .menu-item {
   text-align: left; cursor: pointer; padding: 8px 10px; border: 0; border-radius: 7px;
@@ -1125,6 +1133,9 @@ input[type="range"]:focus { box-shadow: none; }
   .onboard-model-featured { min-height: 170px; }
 }
 @media (prefers-reduced-motion: reduce) {
+  .foot-menu-pop, .foot-menu[open] .foot-menu-pop { transition: none; }
+  .ble-progress span { width: 100%; opacity: 0.35; animation: none; }
+  .ble-scanning-label::after { animation: none; }
   .onboard, .onboard-view, .onboard.is-closing, .onboard.is-closing .onboard-view { animation: none; }
   .onboard-sweep .g-sweep { animation: none; }
   .onboard-legacy { transition: none; }
@@ -1193,25 +1204,33 @@ input[type="range"]:focus { box-shadow: none; }
 
 /* in-app ble pairing (desktop shell) — same sheet as connected devices, plus a
    scanning affordance. no signal bars: electron exposes no rssi. */
-.ble-scanline {
-  display: flex; align-items: center; gap: 10px; padding: 4px 14px 0;
-  color: var(--accent);
-}
-.ble-sweep { width: 22px; height: 22px; flex: none; }
-.ble-picker .g-sweep { animation: spin 2.6s linear infinite; transform-origin: 12px 12px; }
-.ble-scanning-label { font: 500 12px/1 var(--mono); color: var(--ink-2); letter-spacing: 0.08em; }
+/* landscape sheet, same shape as the chrome/os bluetooth choosers: header, an
+   indeterminate scan bar, the list, and scan status parked next to Cancel */
+.ble-picker { width: min(560px, 92vw); height: min(440px, 82dvh); }
+.ble-picker .device-list { flex: 1; padding-top: 12px; }
+.ble-progress { flex: none; height: 2px; overflow: hidden; background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.ble-progress span { display: block; width: 32%; height: 100%; background: var(--accent); animation: bleScan 1.5s ease-in-out infinite; }
+@keyframes bleScan { from { transform: translateX(-110%); } to { transform: translateX(330%); } }
+.ble-scanning-label { font: 500 11px/1 var(--mono); color: var(--ink-3); letter-spacing: 0.08em; }
 .ble-scanning-label::after { content: "\2026"; display: inline-block; animation: blink 1.1s ease-in-out infinite; }
 .ble-row { padding: 0; border-bottom: none; }
 .ble-pick {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  width: 100%; min-height: 48px; padding: 10px 12px; margin: 6px 0;
-  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-s);
+  width: 100%; min-height: 62px; padding: 12px 14px; margin: 6px 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 0;
   cursor: pointer; text-align: left;
   animation: list-in 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
   transition: border-color 0.15s, background 0.15s, transform 0.15s;
 }
 .ble-pick:hover { background: var(--panel-2); border-color: var(--accent); transform: translateY(-1px); }
-.ble-actions { display: flex; justify-content: flex-end; padding: 0 14px 14px; }
+.ble-pick-main { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.device-model {
+  font: 500 10px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3);
+}
+.ble-actions {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex: none; padding: 10px 14px 14px; border-top: 1px solid var(--line);
+}
 .update-frame p { font: 500 13px/1.6 var(--grotesk); color: var(--ink-2); margin: 0; }
 .update-title { font: 800 12px/1 var(--grotesk); letter-spacing: 0.16em; color: var(--ink); }
 .update-actions { display: flex; gap: 8px; justify-content: flex-end; }
