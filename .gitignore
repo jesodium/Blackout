@@ -52,6 +52,9 @@ step/
 *.bak
 *~
 
+# ── Marketing (local drafts, images, carousels) ─────────
+docs/marketing/
+
 # ── Misc ────────────────────────────────────────────────
 # What cmds/flash.sh last put on each board — local machine state
 .last-flash
