@@ -358,6 +358,32 @@ section{padding:clamp(44px,7vh,80px) 0;position:relative}
   .panel .info{border-right:0;border-bottom:1px solid var(--line)}
   .panel .shot{min-height:220px}}
 
+/* ============ sponsors — three ranks, one row each ============ */
+/* names are rendered from sponsors.json by sponsors.js — this is only the frame */
+#sponsors .tiers{display:grid;gap:14px}
+.tier{--rank:var(--dim);
+  border:1px solid var(--line);border-left:3px solid var(--rank);border-radius:16px;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--rank) 10%,transparent),transparent 45%),var(--bg-2);
+  padding:22px 24px;display:grid;grid-template-columns:170px 1fr;gap:20px;align-items:center;
+  transition:border-color 200ms ease,transform 200ms var(--ease)}
+.tier:hover{transform:translateY(-2px);border-color:var(--line-2)}
+.tier.diamond{--rank:#9fe4ff}
+.tier.platinum{--rank:#d9d5cd}
+.tier.standard{--rank:var(--accent)}
+.tier h3{font-family:var(--mono);font-size:12px;letter-spacing:.2em;text-transform:uppercase;font-weight:500;
+  color:var(--rank);display:flex;align-items:center;gap:10px}
+.tier h3::before{content:"";width:9px;height:9px;rotate:45deg;background:var(--rank);flex:none}
+.tier ul{list-style:none;display:flex;flex-wrap:wrap;gap:10px}
+.tier li{font-family:var(--mono);font-size:13px;letter-spacing:.04em;color:var(--ink);
+  border:1px solid var(--line);border-radius:10px;padding:10px 16px;background:var(--bg-3)}
+.tier li.open{color:var(--dim);border-style:dashed;background:transparent}
+.tier li img{height:26px;width:auto;filter:grayscale(1) brightness(1.6);opacity:.9}
+.tier li a:hover img{filter:none;opacity:1}
+.tier li a:hover{color:var(--accent)}
+#sponsors .more{margin-top:26px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+#sponsors .more span{font-family:var(--mono);font-size:12px;color:var(--muted)}
+@media (max-width:640px){.tier{grid-template-columns:1fr;gap:12px}}
+
 /* ============ final CTA ============ */
 .finale{text-align:center;overflow:hidden}
 .finale h2{font-size:clamp(3rem,10vw,7rem);margin-bottom:20px}
@@ -404,6 +430,7 @@ footer nav a:hover{color:var(--accent)}
     <a href="#run" data-i18n="nav.run">The run</a>
     <a href="#pricing" data-i18n="nav.pricing">Pricing</a>
     <a href="#roadmap" data-i18n="nav.roadmap">Roadmap</a>
+    <a href="#sponsors" data-i18n="nav.sponsors">Sponsors</a>
   </div>
   <a class="btn btn-primary" href="#pricing" data-i18n="nav.get">Get Blackout</a>
 </nav>
@@ -585,6 +612,34 @@ footer nav a:hover{color:var(--accent)}
   </div>
 </section>
 
+<section id="sponsors">
+  <div class="wrap">
+    <div class="head" data-reveal>
+      <p class="eyebrow" data-i18n="sponsors.eyebrow">Sponsors</p>
+      <h2 class="display" data-i18n="sponsors.h2">Nobody funds the dark alone.</h2>
+    </div>
+    <div class="tiers">
+      <!-- names come from sponsors.json via sponsors.js — the lists below are filled at runtime -->
+      <article class="tier diamond" data-reveal>
+        <h3 data-i18n="sponsors.diamond">Diamond</h3>
+        <ul data-tier="diamond"></ul>
+      </article>
+      <article class="tier platinum" data-reveal>
+        <h3 data-i18n="sponsors.platinum">Platinum</h3>
+        <ul data-tier="platinum"></ul>
+      </article>
+      <article class="tier standard" data-reveal>
+        <h3 data-i18n="sponsors.standard">Standard</h3>
+        <ul data-tier="standard"></ul>
+      </article>
+    </div>
+    <p class="more" data-reveal>
+      <a class="btn btn-ghost" href="sponsors.html" data-i18n="sponsors.cta">All the ranks</a>
+      <span data-i18n="sponsors.contact">Want a slot? Talk to the team.</span>
+    </p>
+  </div>
+</section>
+
 <section class="finale" aria-label="Get Blackout">
   <div class="glow" aria-hidden="true"></div>
   <div class="wrap" data-reveal>
@@ -602,6 +657,7 @@ footer nav a:hover{color:var(--accent)}
       <a href="#run" data-i18n="nav.run">The run</a>
       <a href="#pricing" data-i18n="nav.pricing">Pricing</a>
       <a href="#roadmap" data-i18n="nav.roadmap">Roadmap</a>
+      <a href="sponsors.html" data-i18n="nav.sponsors">Sponsors</a>
       <a href="https://github.com/jesodium/Blackout">GitHub</a>
     </nav>
   </div>
@@ -614,6 +670,7 @@ footer nav a:hover{color:var(--accent)}
   </div>
 </footer>
 
+<script src="sponsors.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script>
@@ -627,7 +684,7 @@ const DICT = {
       desc: "Blackout is a recon rover built for WRO 2026 Future Innovators. It drives into places people should not enter, looks around, and reports back out loud."
     },
     wro: { strip: "Made for the 2026 World Robot Olympiad · Future Innovators, Senior Category" },
-    nav: { run: "The run", pricing: "Pricing", roadmap: "Roadmap", get: "Get Blackout" },
+    nav: { run: "The run", pricing: "Pricing", roadmap: "Roadmap", sponsors: "Sponsors", get: "Get Blackout" },
     hero: {
       title: 'Send it into the <span class="accent">dark.</span>',
       lede: "A recon rover for places people should not enter. It drives in, looks around, and reports back out loud.",
@@ -675,6 +732,11 @@ const DICT = {
       ref: "Sheet 01 · route V1 → V4 · not to scale", built: "Built", planned: "Planned",
       swipehint: "← Swipe to change version →", prev: "Previous", next: "Next"
     },
+    sponsors: {
+      eyebrow: "Sponsors", h2: "Nobody funds the dark alone.",
+      diamond: "Diamond", platinum: "Platinum", standard: "Standard",
+      open: "Slot open", cta: "All the ranks", contact: "Want a slot? Talk to the team."
+    },
     finale: { h2: 'Shaping archeology with <span>robotics.</span>', lede: "The dark part of the map is the part worth looking at." },
     footer: { p: "A WRO 2026 Future Innovators project.", lang: "Language" }
   },
@@ -684,7 +746,7 @@ const DICT = {
       desc: "Blackout es un róver de reconocimiento construido para la WRO 2026 Future Innovators. Entra en lugares donde nadie debería entrar, mira alrededor e informa en voz alta."
     },
     wro: { strip: "Hecho para la Olimpiada Mundial de Robótica 2026 · Future Innovators, Categoría Senior" },
-    nav: { run: "El recorrido", pricing: "Precio", roadmap: "Hoja de ruta", get: "Consigue Blackout" },
+    nav: { run: "El recorrido", pricing: "Precio", roadmap: "Hoja de ruta", sponsors: "Patrocinadores", get: "Consigue Blackout" },
     hero: {
       title: 'Envíalo a la <span class="accent">oscuridad.</span>',
       lede: "Un róver de reconocimiento para lugares donde nadie debería entrar. Entra, mira alrededor e informa en voz alta.",
@@ -731,6 +793,11 @@ const DICT = {
       lede: "Cada versión dejó atrás algo de lo que la anterior estaba orgullosa. Elige una parada en la ruta.",
       ref: "Hoja 01 · ruta V1 → V4 · sin escala", built: "Construido", planned: "Planeado",
       swipehint: "← Desliza para cambiar de versión →", prev: "Anterior", next: "Siguiente"
+    },
+    sponsors: {
+      eyebrow: "Patrocinadores", h2: "Nadie financia la oscuridad solo.",
+      diamond: "Diamante", platinum: "Platino", standard: "Estándar",
+      open: "Plaza libre", cta: "Todos los rangos", contact: "¿Quieres una plaza? Habla con el equipo."
     },
     finale: { h2: 'Más exploraciones, menos riesgos, <span>más descubrimientos.</span>', lede: "La parte oscura del mapa es la que vale la pena mirar." },
     footer: { p: "Un proyecto de WRO 2026 Future Innovators.", lang: "Idioma" }
@@ -915,6 +982,7 @@ const DICT = {
   applyStatic();
   renderTicker();
   renderManifesto();
+  sponsorsRender(dictGet('sponsors.open'));
   const roadmapApi = await initRoadmap();
 
   document.getElementById('langSelect').addEventListener('change', (e) => {
@@ -926,6 +994,7 @@ const DICT = {
       applyStatic();
       renderTicker();
       renderManifesto();
+      sponsorsRender(dictGet('sponsors.open'));
       if (roadmapApi) roadmapApi.refresh();
     });
   });
