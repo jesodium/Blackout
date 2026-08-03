@@ -16,7 +16,8 @@
     "test:report": "node test-report.mjs",
     "test:mirror": "node test-mirror.mjs",
     "test:tour": "node test-tour.mjs",
-    "test:pairing": "node test-electron-pairing.mjs"
+    "test:pairing": "node test-electron-pairing.mjs",
+    "test:face": "node test-sageface.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
