@@ -71,14 +71,13 @@ header.page h1{font-size:clamp(2.4rem,6vw,4.4rem);margin:12px 0 18px}
 .rank h2::before{content:"";width:11px;height:11px;rotate:45deg;background:var(--rank);flex:none}
 .rank .side{display:flex;flex-direction:column;gap:14px}
 .rank .who{font-family:var(--mono);font-size:12px;color:var(--muted);line-height:1.7}
-.rank ul{list-style:none;display:grid;gap:10px;font-size:14px;color:var(--muted);align-content:center}
-.rank li{padding-left:26px;position:relative}
-.rank li::before{content:"+";position:absolute;left:0;color:var(--rank);font-family:var(--mono)}
-.rank .taken{list-style:none;display:flex;flex-wrap:wrap;gap:10px}
+.rank .taken{list-style:none;display:flex;flex-wrap:wrap;gap:10px;align-content:center}
 .rank .taken li{padding:10px 16px;font-family:var(--mono);font-size:13px;color:var(--ink);
-  border:1px solid var(--line);border-radius:10px;background:var(--bg-3)}
-.rank .taken li::before{content:none}
+  border:1px solid var(--line);border-radius:10px;background:var(--bg-3);height:max-content}
 .rank .taken li.open{color:var(--dim);border-style:dashed;background:transparent}
+.rank .taken li img{height:26px;width:auto;filter:grayscale(1) brightness(1.6);opacity:.9}
+.rank .taken li a:hover img{filter:none;opacity:1}
+.rank .taken li a:hover{color:var(--accent)}
 @media (max-width:820px){.rank{grid-template-columns:1fr;gap:18px}}
 
 .note{margin:0 0 clamp(44px,7vh,80px);font-size:13px;color:var(--muted);
@@ -115,49 +114,31 @@ footer nav a:hover{color:var(--accent)}
   </div>
 </header>
 
-<!-- IMPORTANT NOTE: sponsor names are also listed on index.html's #sponsors strip — add a name in both. -->
+<!-- sponsor names come from sponsors.json (see sponsors.js) — add one there and both pages pick it up -->
 <div class="wrap">
   <div class="ranks">
     <article class="rank diamond">
       <div class="side">
         <h2 data-i18n="diamond.name">Diamond</h2>
         <p class="who" data-i18n="diamond.who">Top rank. One or two names, no more, so it stays worth something.</p>
-        <ul class="taken"><li class="open" data-i18n="open">Slot open</li></ul>
       </div>
-      <ul>
-        <li data-i18n="diamond.p1">Logo on the rover chassis, where the camera sees it</li>
-        <li data-i18n="diamond.p2">Logo on the team shirts and the pit banner</li>
-        <li data-i18n="diamond.p3">Top billing on this site and in the project report</li>
-        <li data-i18n="diamond.p4">Named on stage in the WRO pitch and in every run video</li>
-        <li data-i18n="diamond.p5">A demo run for your people, rover and operator included</li>
-      </ul>
+      <ul class="taken" data-tier="diamond"></ul>
     </article>
 
     <article class="rank platinum">
       <div class="side">
         <h2 data-i18n="platinum.name">Platinum</h2>
         <p class="who" data-i18n="platinum.who">The working rank — enough to keep a rebuild funded.</p>
-        <ul class="taken"><li class="open" data-i18n="open">Slot open</li></ul>
       </div>
-      <ul>
-        <li data-i18n="platinum.p1">Logo on the team shirts and the pit banner</li>
-        <li data-i18n="platinum.p2">Logo on this site and in the project report</li>
-        <li data-i18n="platinum.p3">Named in the run videos</li>
-        <li data-i18n="platinum.p4">Build updates before they go public</li>
-      </ul>
+      <ul class="taken" data-tier="platinum"></ul>
     </article>
 
     <article class="rank standard">
       <div class="side">
         <h2 data-i18n="standard.name">Standard</h2>
         <p class="who" data-i18n="standard.who">Parts, filament, a battery, a ride to the venue. All of it counts.</p>
-        <ul class="taken"><li class="open" data-i18n="open">Slot open</li></ul>
       </div>
-      <ul>
-        <li data-i18n="standard.p1">Name on this site</li>
-        <li data-i18n="standard.p2">Name in the project report and the credits</li>
-        <li data-i18n="standard.p3">Build updates by email</li>
-      </ul>
+      <ul class="taken" data-tier="standard"></ul>
     </article>
   </div>
 
@@ -184,6 +165,7 @@ footer nav a:hover{color:var(--accent)}
   </div>
 </footer>
 
+<script src="sponsors.js"></script>
 <script>
 /* same flat [data-i18n] pass and the same 'blk-lang' key as index.html, minus the wipe —
    this page has no animation to keep in sync, so a re-render is the whole switch. */
@@ -194,25 +176,13 @@ const DICT = {
     lede: "Blackout is built by students for WRO 2026 Future Innovators. Sponsors cover parts, batteries, print time and getting the rover to the venue. What you cover decides the rank, and the rank decides where your name shows up.",
     open: "Slot open",
     diamond: {
-      name: "Diamond", who: "Top rank. One or two names, no more, so it stays worth something.",
-      p1: "Logo on the rover chassis, where the camera sees it",
-      p2: "Logo on the team shirts and the pit banner",
-      p3: "Top billing on this site and in the project report",
-      p4: "Named on stage in the WRO pitch and in every run video",
-      p5: "A demo run for your people, rover and operator included"
+      name: "Diamond", who: "Top rank. One or two names, no more, so it stays worth something."
     },
     platinum: {
-      name: "Platinum", who: "The working rank — enough to keep a rebuild funded.",
-      p1: "Logo on the team shirts and the pit banner",
-      p2: "Logo on this site and in the project report",
-      p3: "Named in the run videos",
-      p4: "Build updates before they go public"
+      name: "Platinum", who: "The working rank — enough to keep a rebuild funded."
     },
     standard: {
-      name: "Standard", who: "Parts, filament, a battery, a ride to the venue. All of it counts.",
-      p1: "Name on this site",
-      p2: "Name in the project report and the credits",
-      p3: "Build updates by email"
+      name: "Standard", who: "Parts, filament, a battery, a ride to the venue. All of it counts."
     },
     note: "Want a rank? Talk to the team on GitHub. Blackout is a school competition project, not a company — sponsorship pays for hardware and travel, and nothing here is a commercial offer.",
     nav: { run: "The run", pricing: "Pricing", roadmap: "Roadmap" },
@@ -224,25 +194,13 @@ const DICT = {
     lede: "Blackout lo construyen estudiantes para la WRO 2026 Future Innovators. Los patrocinadores cubren piezas, baterías, horas de impresión y llevar el róver a la sede. Lo que cubres decide el rango, y el rango decide dónde aparece tu nombre.",
     open: "Plaza libre",
     diamond: {
-      name: "Diamante", who: "El rango más alto. Uno o dos nombres, no más, para que siga valiendo algo.",
-      p1: "Logo en el chasis del róver, donde la cámara lo ve",
-      p2: "Logo en las camisetas del equipo y en el banner del pit",
-      p3: "Primer lugar en este sitio y en el informe del proyecto",
-      p4: "Mencionado en la presentación de la WRO y en cada vídeo de misión",
-      p5: "Una demostración para tu gente, con róver y operador"
+      name: "Diamante", who: "El rango más alto. Uno o dos nombres, no más, para que siga valiendo algo."
     },
     platinum: {
-      name: "Platino", who: "El rango de trabajo — suficiente para financiar una reconstrucción.",
-      p1: "Logo en las camisetas del equipo y en el banner del pit",
-      p2: "Logo en este sitio y en el informe del proyecto",
-      p3: "Mencionado en los vídeos de misión",
-      p4: "Novedades de la construcción antes de que se publiquen"
+      name: "Platino", who: "El rango de trabajo — suficiente para financiar una reconstrucción."
     },
     standard: {
-      name: "Estándar", who: "Piezas, filamento, una batería, un viaje a la sede. Todo cuenta.",
-      p1: "Nombre en este sitio",
-      p2: "Nombre en el informe del proyecto y en los créditos",
-      p3: "Novedades de la construcción por correo"
+      name: "Estándar", who: "Piezas, filamento, una batería, un viaje a la sede. Todo cuenta."
     },
     note: "¿Quieres un rango? Habla con el equipo en GitHub. Blackout es un proyecto escolar de competición, no una empresa — el patrocinio paga hardware y viajes, y nada de esto es una oferta comercial.",
     nav: { run: "El recorrido", pricing: "Precio", roadmap: "Hoja de ruta" },
@@ -259,6 +217,7 @@ function apply() {
   document.title = DICT[lang].title;
   document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = get(el.dataset.i18n); });
   document.getElementById('langSelect').value = lang;
+  sponsorsRender(DICT[lang].open);
 }
 apply();
 
