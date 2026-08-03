@@ -359,8 +359,7 @@ section{padding:clamp(44px,7vh,80px) 0;position:relative}
   .panel .shot{min-height:220px}}
 
 /* ============ sponsors — three ranks, one row each ============ */
-/* IMPORTANT NOTE: names live in the markup here and in sponsors.html. Two edits per sponsor,
-   which beats a data file until there are more sponsors than tiers. */
+/* names are rendered from sponsors.json by sponsors.js — this is only the frame */
 #sponsors .tiers{display:grid;gap:14px}
 .tier{--rank:var(--dim);
   border:1px solid var(--line);border-left:3px solid var(--rank);border-radius:16px;
@@ -378,6 +377,9 @@ section{padding:clamp(44px,7vh,80px) 0;position:relative}
 .tier li{font-family:var(--mono);font-size:13px;letter-spacing:.04em;color:var(--ink);
   border:1px solid var(--line);border-radius:10px;padding:10px 16px;background:var(--bg-3)}
 .tier li.open{color:var(--dim);border-style:dashed;background:transparent}
+.tier li img{height:26px;width:auto;filter:grayscale(1) brightness(1.6);opacity:.9}
+.tier li a:hover img{filter:none;opacity:1}
+.tier li a:hover{color:var(--accent)}
 #sponsors .more{margin-top:26px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
 #sponsors .more span{font-family:var(--mono);font-size:12px;color:var(--muted)}
 @media (max-width:640px){.tier{grid-template-columns:1fr;gap:12px}}
@@ -615,30 +617,24 @@ footer nav a:hover{color:var(--accent)}
     <div class="head" data-reveal>
       <p class="eyebrow" data-i18n="sponsors.eyebrow">Sponsors</p>
       <h2 class="display" data-i18n="sponsors.h2">Nobody funds the dark alone.</h2>
-      <p class="lede" data-i18n="sponsors.lede">Parts, batteries, print time and travel come from the people below. Three ranks, and the rank decides how loudly the rover says your name.</p>
     </div>
     <div class="tiers">
+      <!-- names come from sponsors.json via sponsors.js — the lists below are filled at runtime -->
       <article class="tier diamond" data-reveal>
         <h3 data-i18n="sponsors.diamond">Diamond</h3>
-        <ul>
-          <li class="open" data-i18n="sponsors.open">Slot open</li>
-        </ul>
+        <ul data-tier="diamond"></ul>
       </article>
       <article class="tier platinum" data-reveal>
         <h3 data-i18n="sponsors.platinum">Platinum</h3>
-        <ul>
-          <li class="open" data-i18n="sponsors.open">Slot open</li>
-        </ul>
+        <ul data-tier="platinum"></ul>
       </article>
       <article class="tier standard" data-reveal>
         <h3 data-i18n="sponsors.standard">Standard</h3>
-        <ul>
-          <li class="open" data-i18n="sponsors.open">Slot open</li>
-        </ul>
+        <ul data-tier="standard"></ul>
       </article>
     </div>
     <p class="more" data-reveal>
-      <a class="btn btn-ghost" href="sponsors.html" data-i18n="sponsors.cta">What each rank gets</a>
+      <a class="btn btn-ghost" href="sponsors.html" data-i18n="sponsors.cta">All the ranks</a>
       <span data-i18n="sponsors.contact">Want a slot? Talk to the team.</span>
     </p>
   </div>
@@ -674,6 +670,7 @@ footer nav a:hover{color:var(--accent)}
   </div>
 </footer>
 
+<script src="sponsors.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script>
@@ -737,9 +734,8 @@ const DICT = {
     },
     sponsors: {
       eyebrow: "Sponsors", h2: "Nobody funds the dark alone.",
-      lede: "Parts, batteries, print time and travel come from the people below. Three ranks, and the rank decides how loudly the rover says your name.",
       diamond: "Diamond", platinum: "Platinum", standard: "Standard",
-      open: "Slot open", cta: "What each rank gets", contact: "Want a slot? Talk to the team."
+      open: "Slot open", cta: "All the ranks", contact: "Want a slot? Talk to the team."
     },
     finale: { h2: 'Shaping archeology with <span>robotics.</span>', lede: "The dark part of the map is the part worth looking at." },
     footer: { p: "A WRO 2026 Future Innovators project.", lang: "Language" }
@@ -800,9 +796,8 @@ const DICT = {
     },
     sponsors: {
       eyebrow: "Patrocinadores", h2: "Nadie financia la oscuridad solo.",
-      lede: "Las piezas, las baterías, las horas de impresión y los viajes salen de la gente de abajo. Tres rangos, y el rango decide con cuánta fuerza el róver dice tu nombre.",
       diamond: "Diamante", platinum: "Platino", standard: "Estándar",
-      open: "Plaza libre", cta: "Qué recibe cada rango", contact: "¿Quieres una plaza? Habla con el equipo."
+      open: "Plaza libre", cta: "Todos los rangos", contact: "¿Quieres una plaza? Habla con el equipo."
     },
     finale: { h2: 'Más exploraciones, menos riesgos, <span>más descubrimientos.</span>', lede: "La parte oscura del mapa es la que vale la pena mirar." },
     footer: { p: "Un proyecto de WRO 2026 Future Innovators.", lang: "Idioma" }
@@ -987,6 +982,7 @@ const DICT = {
   applyStatic();
   renderTicker();
   renderManifesto();
+  sponsorsRender(dictGet('sponsors.open'));
   const roadmapApi = await initRoadmap();
 
   document.getElementById('langSelect').addEventListener('change', (e) => {
@@ -998,6 +994,7 @@ const DICT = {
       applyStatic();
       renderTicker();
       renderManifesto();
+      sponsorsRender(dictGet('sponsors.open'));
       if (roadmapApi) roadmapApi.refresh();
     });
   });
