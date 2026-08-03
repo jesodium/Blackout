@@ -5,6 +5,7 @@ import htm from "htm";
 import { createRoverScene } from "./scene.js";
 import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./i18n.js";
 import { parse as blkParse, run as blkRun, lint as blkLint, estimate as blkEstimate, fmtMs } from "./blk.mjs";
+import { SageFace } from "./sageface.js";
 
 const html = htm.bind(React.createElement);
 
@@ -1014,21 +1015,14 @@ function Memory({ chat }) {
 
 /* agent (ai)
    mood derived from what it says + live sensor state. drives animated glyph so analysis reads as intent, not just text. */
-// label is i18n key, resolved at render via t().
-// split face string into animated parts for telegram-style blink.
-function animFace(face) {
-  if (face === ":o") return html`<span class="a-eye">:</span><span class="a-mouth">o</span>`;
-  const [l, m, r] = face;
-  return html`<span class="a-eye">${l}</span><span class="a-mouth">${m}</span><span class="a-eye">${r}</span>`;
-}
-
+// label is i18n key, resolved at render via t(). key doubles as the SageFace mood.
 const INTENTS = {
-  idle:     { key: "idle",     label: "intent.idle",     color: "var(--ink-3)", face: "-_-" },
-  scanning: { key: "scanning", label: "intent.scanning", color: "var(--ink-2)", face: "o_o" },
-  thinking: { key: "thinking", label: "intent.thinking", color: "var(--ink)",   face: "o_O" },
-  clear:    { key: "clear",    label: "intent.clear",    color: "var(--go)",     face: "^_^" },
-  caution:  { key: "caution",  label: "intent.caution",  color: "var(--warn)",   face: ":o"  },
-  alert:    { key: "alert",    label: "intent.alert",    color: "var(--accent)", face: "x_x" },
+  idle:     { key: "idle",     label: "intent.idle",     color: "var(--ink-3)" },
+  scanning: { key: "scanning", label: "intent.scanning", color: "var(--ink-2)" },
+  thinking: { key: "thinking", label: "intent.thinking", color: "var(--ink)"   },
+  clear:    { key: "clear",    label: "intent.clear",    color: "var(--go)"     },
+  caution:  { key: "caution",  label: "intent.caution",  color: "var(--warn)"   },
+  alert:    { key: "alert",    label: "intent.alert",    color: "var(--accent)" },
 };
 
 // worst pill across all live readings: 0 go · 1 warn · 2 abort · null no data.
@@ -1163,7 +1157,7 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
             : html`<div class="agent-orb"><${AgentIcon} intent=${intent} /></div>
           ${speaking
             ? html`<div class="agent-eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>`
-            : html`<span class="agent-state-label"><span class="agent-face">${animFace(intent.face)}</span> ${t(intent.label)}</span>`}`}
+            : html`<span class="agent-state-label"><${SageFace} mood=${intent.key} /> ${t(intent.label)}</span>`}`}
         </div>
         <div class="agent-speech">
           <p class=${"agent-text" + (ai.status ? " sage-" + ai.status : "")} key=${ai.text} role="status" aria-live="polite">${ai.text}</p>
@@ -1404,7 +1398,7 @@ function Briefing({ onBrief, onBack, onSpeak, busy }) {
       <div class="briefing">
         <button type="button" class="brief-back" onClick=${() => setStep(BRIEF_STEPS.length - 1)}>${t("brief.back")}</button>
         ${dots}
-        <div class="brief-orb is-happy"><span class="agent-face">${animFace("^_^")}</span></div>
+        <div class="brief-orb is-happy"><${SageFace} mood="clear" /></div>
         <div class="brief-step" key="review">
           <p class="brief-greeting">${t("brief.rundown")}</p>
           <div class="brief-summary">
@@ -1426,7 +1420,7 @@ function Briefing({ onBrief, onBack, onSpeak, busy }) {
         ${step === 0 ? t("brief.sessions") : t("brief.back")}
       </button>
       ${dots}
-      <div class="brief-orb"><span class="agent-face">${animFace("o_o")}</span></div>
+      <div class="brief-orb"><${SageFace} mood="scanning" /></div>
       ${step === 0 ? html`<p class="brief-greeting">${ONBOARDING[getLang()].intro}</p>` : null}
       <div class="brief-step" key=${step}>
         <div class="brief-step-k">${t("brief.stepOf", { n: step + 1, total: BRIEF_STEPS.length, label: t(cur.label) })}</div>
@@ -1624,20 +1618,17 @@ function flashProgress(log, boards, phase) {
   return { pct: phase === "done" ? 100 : Math.min(99, Math.round((ticks / total) * 100)), board, step };
 }
 
-/* sage's face + bar. the eyes blink while work is happening and settle into
+/* sage's face + bar. the eyes scan while work is happening and settle into
    ^_^ / x_x the moment the script exits — the bar is the actual read-out. */
-const SAGE_EYES = { work: "O", ok: "^", error: "x" };
+const FLASH_MOOD = { work: "work", ok: "clear", error: "alert" };
 function FlashProgress({ log, boards, phase, code }) {
   const { pct, board, step } = flashProgress(log, boards, phase);
   const state = phase !== "done" ? "work" : code === 0 ? "ok" : "error";
-  const eye = SAGE_EYES[state];
   const label = step === "prep" ? t("update.prep")
     : t(step === "compile" ? "update.compiling" : "update.uploading", { board });
   return html`
     <div class=${"flash-prog is-" + state}>
-      <div class="sage-face" aria-hidden="true">
-        <span class="sage-eye">${eye}</span><span class="sage-mouth">_</span><span class="sage-eye">${eye}</span>
-      </div>
+      <${SageFace} mood=${FLASH_MOOD[state]} />
       <div class="flash-bar" role="progressbar" aria-valuenow=${pct} aria-valuemin="0" aria-valuemax="100"
         aria-label=${t("update.title")}>
         <div class="flash-bar-fill" style=${{ width: pct + "%" }}></div>
