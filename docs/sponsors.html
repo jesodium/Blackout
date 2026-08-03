@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blackout · Sponsors</title>
+<meta name="description" content="Three sponsorship ranks for Blackout, a WRO 2026 Future Innovators recon rover: Diamond, Platinum and Standard.">
+<meta name="theme-color" content="#0e0e10">
+<link rel="icon" href="assets/mark.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* IMPORTANT NOTE: tokens and the shared bits are copied from index.html, not imported —
+   index.html keeps its css inline, and one small page is cheaper to duplicate than to split
+   a stylesheet out of it. Change a token there, change it here. */
+:root{
+  --bg:#0e0e10; --bg-2:#141416; --bg-3:#1a1a1d;
+  --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.16);
+  --ink:#f3f0ea; --muted:#a29c93; --dim:#6d6862;
+  --accent:#e0a45c; --accent-hi:#efb571; --accent-soft:rgba(224,164,92,.12); --accent-ink:#1a1409;
+  --sans:"JetBrains Mono",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --display:"JetBrains Mono",var(--mono),cursive;
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.6;font-weight:300;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden}
+img{max-width:100%;display:block}
+a{color:inherit;text-decoration:none}
+:where(a,button):focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:8px}
+.wrap{max-width:1160px;margin:0 auto;padding:0 24px}
+.display{font-family:var(--display);font-weight:400;line-height:1.04;letter-spacing:.01em}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--accent)}
+.lede{color:var(--muted);max-width:60ch;font-size:15.5px}
+body::after{content:"";position:fixed;inset:0;z-index:60;pointer-events:none;opacity:.05;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:14px 28px;border-radius:12px;
+  font-family:var(--mono);font-size:13px;letter-spacing:.05em;color:var(--ink);
+  background:transparent;border:1px solid var(--line-2);cursor:pointer;
+  transition:background-color 150ms ease,border-color 150ms ease,color 150ms ease,transform 120ms ease,box-shadow 150ms ease}
+.btn:hover{transform:translateY(-1px)}
+.btn-primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:500}
+.btn-primary:hover{background:var(--accent-hi);border-color:var(--accent-hi);box-shadow:0 4px 24px rgba(224,164,92,.35)}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+
+.topbar{border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20;
+  background:rgba(14,14,16,.82);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.topbar .wrap{display:flex;align-items:center;gap:20px;min-height:64px}
+.topbar .back{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--muted);transition:color 150ms ease}
+.topbar .back:hover{color:var(--accent)}
+
+header.page{padding:clamp(56px,10vh,110px) 0 clamp(28px,5vh,54px)}
+header.page h1{font-size:clamp(2.4rem,6vw,4.4rem);margin:12px 0 18px}
+
+/* ============ ranks ============ */
+.ranks{display:grid;gap:18px;padding-bottom:clamp(44px,7vh,80px)}
+.rank{--rank:var(--dim);
+  border:1px solid var(--line);border-left:3px solid var(--rank);border-radius:20px;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--rank) 10%,transparent),transparent 45%),var(--bg-2);
+  padding:clamp(24px,3vw,34px);display:grid;grid-template-columns:260px 1fr;gap:28px;
+  transition:border-color 200ms ease,transform 200ms var(--ease)}
+.rank:hover{transform:translateY(-2px);border-color:var(--line-2)}
+.rank.diamond{--rank:#9fe4ff}
+.rank.platinum{--rank:#d9d5cd}
+.rank.standard{--rank:var(--accent)}
+.rank h2{font-family:var(--mono);font-size:13px;letter-spacing:.2em;text-transform:uppercase;font-weight:500;
+  color:var(--rank);display:flex;align-items:center;gap:12px}
+.rank h2::before{content:"";width:11px;height:11px;rotate:45deg;background:var(--rank);flex:none}
+.rank .side{display:flex;flex-direction:column;gap:14px}
+.rank .who{font-family:var(--mono);font-size:12px;color:var(--muted);line-height:1.7}
+.rank ul{list-style:none;display:grid;gap:10px;font-size:14px;color:var(--muted);align-content:center}
+.rank li{padding-left:26px;position:relative}
+.rank li::before{content:"+";position:absolute;left:0;color:var(--rank);font-family:var(--mono)}
+.rank .taken{list-style:none;display:flex;flex-wrap:wrap;gap:10px}
+.rank .taken li{padding:10px 16px;font-family:var(--mono);font-size:13px;color:var(--ink);
+  border:1px solid var(--line);border-radius:10px;background:var(--bg-3)}
+.rank .taken li::before{content:none}
+.rank .taken li.open{color:var(--dim);border-style:dashed;background:transparent}
+@media (max-width:820px){.rank{grid-template-columns:1fr;gap:18px}}
+
+.note{margin:0 0 clamp(44px,7vh,80px);font-size:13px;color:var(--muted);
+  border-left:2px solid var(--accent);padding-left:18px;max-width:72ch}
+
+footer{border-top:1px solid var(--line);padding:56px 0}
+footer .wrap{display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+footer img{filter:brightness(1.4)}
+footer p{font-family:var(--mono);font-size:12px;color:var(--muted)}
+footer nav{margin-left:auto;display:flex;gap:24px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+footer nav a:hover{color:var(--accent)}
+.langpick{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:18px;
+  border-top:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--muted)}
+.langpick select{font-family:var(--mono);font-size:12px;color:var(--ink);background:var(--bg-2);
+  border:1px solid var(--line-2);border-radius:8px;padding:6px 10px}
+@media (max-width:640px){footer nav{margin-left:0}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition-duration:1ms!important}}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a href="index.html#top"><img src="assets/mark.svg" alt="Blackout" height="24" style="width:auto"></a>
+    <a class="back" href="index.html#sponsors" data-i18n="back">← Back to Blackout</a>
+  </div>
+</div>
+
+<header class="page">
+  <div class="wrap">
+    <p class="eyebrow" data-i18n="eyebrow">Sponsorship</p>
+    <h1 class="display" data-i18n="h1">Three ranks. One rover.</h1>
+    <p class="lede" data-i18n="lede">Blackout is built by students for WRO 2026 Future Innovators. Sponsors cover parts, batteries, print time and getting the rover to the venue. What you cover decides the rank, and the rank decides where your name shows up.</p>
+  </div>
+</header>
+
+<!-- IMPORTANT NOTE: sponsor names are also listed on index.html's #sponsors strip — add a name in both. -->
+<div class="wrap">
+  <div class="ranks">
+    <article class="rank diamond">
+      <div class="side">
+        <h2 data-i18n="diamond.name">Diamond</h2>
+        <p class="who" data-i18n="diamond.who">Top rank. One or two names, no more, so it stays worth something.</p>
+        <ul class="taken"><li class="open" data-i18n="open">Slot open</li></ul>
+      </div>
+      <ul>
+        <li data-i18n="diamond.p1">Logo on the rover chassis, where the camera sees it</li>
+        <li data-i18n="diamond.p2">Logo on the team shirts and the pit banner</li>
+        <li data-i18n="diamond.p3">Top billing on this site and in the project report</li>
+        <li data-i18n="diamond.p4">Named on stage in the WRO pitch and in every run video</li>
+        <li data-i18n="diamond.p5">A demo run for your people, rover and operator included</li>
+      </ul>
+    </article>
+
+    <article class="rank platinum">
+      <div class="side">
+        <h2 data-i18n="platinum.name">Platinum</h2>
+        <p class="who" data-i18n="platinum.who">The working rank — enough to keep a rebuild funded.</p>
+        <ul class="taken"><li class="open" data-i18n="open">Slot open</li></ul>
+      </div>
+      <ul>
+        <li data-i18n="platinum.p1">Logo on the team shirts and the pit banner</li>
+        <li data-i18n="platinum.p2">Logo on this site and in the project report</li>
+        <li data-i18n="platinum.p3">Named in the run videos</li>
+        <li data-i18n="platinum.p4">Build updates before they go public</li>
+      </ul>
+    </article>
+
+    <article class="rank standard">
+      <div class="side">
+        <h2 data-i18n="standard.name">Standard</h2>
+        <p class="who" data-i18n="standard.who">Parts, filament, a battery, a ride to the venue. All of it counts.</p>
+        <ul class="taken"><li class="open" data-i18n="open">Slot open</li></ul>
+      </div>
+      <ul>
+        <li data-i18n="standard.p1">Name on this site</li>
+        <li data-i18n="standard.p2">Name in the project report and the credits</li>
+        <li data-i18n="standard.p3">Build updates by email</li>
+      </ul>
+    </article>
+  </div>
+
+  <p class="note" data-i18n="note">Want a rank? Talk to the team on GitHub. Blackout is a school competition project, not a company — sponsorship pays for hardware and travel, and nothing here is a commercial offer.</p>
+</div>
+
+<footer>
+  <div class="wrap">
+    <img src="assets/mark.svg" alt="Blackout" height="24" style="width:auto">
+    <p data-i18n="footer.p">A WRO 2026 Future Innovators project.</p>
+    <nav>
+      <a href="index.html#run" data-i18n="nav.run">The run</a>
+      <a href="index.html#pricing" data-i18n="nav.pricing">Pricing</a>
+      <a href="index.html#roadmap" data-i18n="nav.roadmap">Roadmap</a>
+      <a href="https://github.com/jesodium/Blackout">GitHub</a>
+    </nav>
+  </div>
+  <div class="wrap langpick">
+    <label for="langSelect" data-i18n="footer.lang">Language</label>
+    <select id="langSelect" aria-label="Language">
+      <option value="en">English</option>
+      <option value="es">Español</option>
+    </select>
+  </div>
+</footer>
+
+<script>
+/* same flat [data-i18n] pass and the same 'blk-lang' key as index.html, minus the wipe —
+   this page has no animation to keep in sync, so a re-render is the whole switch. */
+const DICT = {
+  en: {
+    title: "Blackout · Sponsors",
+    back: "← Back to Blackout", eyebrow: "Sponsorship", h1: "Three ranks. One rover.",
+    lede: "Blackout is built by students for WRO 2026 Future Innovators. Sponsors cover parts, batteries, print time and getting the rover to the venue. What you cover decides the rank, and the rank decides where your name shows up.",
+    open: "Slot open",
+    diamond: {
+      name: "Diamond", who: "Top rank. One or two names, no more, so it stays worth something.",
+      p1: "Logo on the rover chassis, where the camera sees it",
+      p2: "Logo on the team shirts and the pit banner",
+      p3: "Top billing on this site and in the project report",
+      p4: "Named on stage in the WRO pitch and in every run video",
+      p5: "A demo run for your people, rover and operator included"
+    },
+    platinum: {
+      name: "Platinum", who: "The working rank — enough to keep a rebuild funded.",
+      p1: "Logo on the team shirts and the pit banner",
+      p2: "Logo on this site and in the project report",
+      p3: "Named in the run videos",
+      p4: "Build updates before they go public"
+    },
+    standard: {
+      name: "Standard", who: "Parts, filament, a battery, a ride to the venue. All of it counts.",
+      p1: "Name on this site",
+      p2: "Name in the project report and the credits",
+      p3: "Build updates by email"
+    },
+    note: "Want a rank? Talk to the team on GitHub. Blackout is a school competition project, not a company — sponsorship pays for hardware and travel, and nothing here is a commercial offer.",
+    nav: { run: "The run", pricing: "Pricing", roadmap: "Roadmap" },
+    footer: { p: "A WRO 2026 Future Innovators project.", lang: "Language" }
+  },
+  es: {
+    title: "Blackout · Patrocinadores",
+    back: "← Volver a Blackout", eyebrow: "Patrocinio", h1: "Tres rangos. Un róver.",
+    lede: "Blackout lo construyen estudiantes para la WRO 2026 Future Innovators. Los patrocinadores cubren piezas, baterías, horas de impresión y llevar el róver a la sede. Lo que cubres decide el rango, y el rango decide dónde aparece tu nombre.",
+    open: "Plaza libre",
+    diamond: {
+      name: "Diamante", who: "El rango más alto. Uno o dos nombres, no más, para que siga valiendo algo.",
+      p1: "Logo en el chasis del róver, donde la cámara lo ve",
+      p2: "Logo en las camisetas del equipo y en el banner del pit",
+      p3: "Primer lugar en este sitio y en el informe del proyecto",
+      p4: "Mencionado en la presentación de la WRO y en cada vídeo de misión",
+      p5: "Una demostración para tu gente, con róver y operador"
+    },
+    platinum: {
+      name: "Platino", who: "El rango de trabajo — suficiente para financiar una reconstrucción.",
+      p1: "Logo en las camisetas del equipo y en el banner del pit",
+      p2: "Logo en este sitio y en el informe del proyecto",
+      p3: "Mencionado en los vídeos de misión",
+      p4: "Novedades de la construcción antes de que se publiquen"
+    },
+    standard: {
+      name: "Estándar", who: "Piezas, filamento, una batería, un viaje a la sede. Todo cuenta.",
+      p1: "Nombre en este sitio",
+      p2: "Nombre en el informe del proyecto y en los créditos",
+      p3: "Novedades de la construcción por correo"
+    },
+    note: "¿Quieres un rango? Habla con el equipo en GitHub. Blackout es un proyecto escolar de competición, no una empresa — el patrocinio paga hardware y viajes, y nada de esto es una oferta comercial.",
+    nav: { run: "El recorrido", pricing: "Precio", roadmap: "Hoja de ruta" },
+    footer: { p: "Un proyecto de WRO 2026 Future Innovators.", lang: "Idioma" }
+  }
+};
+
+let lang = localStorage.getItem('blk-lang')
+  || (navigator.language && navigator.language.toLowerCase().startsWith('es') ? 'es' : 'en');
+
+function apply() {
+  const get = (path) => path.split('.').reduce((o, k) => o && o[k], DICT[lang]);
+  document.documentElement.lang = lang;
+  document.title = DICT[lang].title;
+  document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = get(el.dataset.i18n); });
+  document.getElementById('langSelect').value = lang;
+}
+apply();
+
+document.getElementById('langSelect').addEventListener('change', (e) => {
+  lang = e.target.value;
+  localStorage.setItem('blk-lang', lang);
+  apply();
+});
+</script>
+</body>
+</html>
