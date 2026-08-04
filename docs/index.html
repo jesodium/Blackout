@@ -9,7 +9,7 @@
 <link rel="icon" href="assets/mark.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 /* ============ tokens ============ */
 :root{
@@ -21,6 +21,7 @@
   --sans:"JetBrains Mono",system-ui,sans-serif;
   --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
   --display:"JetBrains Mono",var(--mono),cursive;
+  --serif:"Instrument Serif",Georgia,serif;   /* codenames only — the one voice that isn't machine */
   --ease:cubic-bezier(.22,1,.36,1);
 }
 *{margin:0;padding:0;box-sizing:border-box}
@@ -238,125 +239,82 @@ section{padding:clamp(44px,7vh,80px) 0;position:relative}
 @media (max-width:820px){.plan{grid-template-columns:1fr}.plan .buy{border-right:0;border-bottom:1px solid var(--line)}}
 .note{margin-top:26px;font-size:13px;color:var(--muted);border-left:2px solid var(--accent);padding-left:18px;max-width:72ch}
 
-/* ============ roadmap — a survey chart; pick a stop on the route, the panel swaps to it ============ */
-.map{position:relative}
-/* the sheet: survey grid + a couple of contour rings, both kept quiet */
-.chart{position:relative;overflow:hidden;margin-bottom:18px;padding:14px 16px 10px;
-  border:1px solid var(--line);border-radius:22px;background:var(--bg-2)}
-.chart::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.5;
-  background-image:
-    repeating-radial-gradient(circle at 12% 150%,transparent 0 54px,var(--line) 54px 55px),
-    repeating-radial-gradient(circle at 90% -60%,transparent 0 66px,var(--line) 66px 67px),
-    linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
-  background-size:auto,auto,34px 34px,34px 34px;
-  -webkit-mask-image:radial-gradient(100% 95% at 50% 45%,#000 15%,transparent 95%);
-  mask-image:radial-gradient(100% 95% at 50% 45%,#000 15%,transparent 95%)}
-/* map furniture: sheet reference, compass, legend */
-.chart .ref,.chart .legend{position:relative;font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;
-  text-transform:uppercase;color:var(--dim)}
-/* legend bottom-left: the low pins and their labels own the bottom-right corner */
-.chart .legend{display:flex;gap:18px;align-items:center}
-.chart .legend i{display:inline-block;width:18px;height:0;margin-right:7px;vertical-align:middle;
-  border-top:2px solid var(--accent)}
-.chart .legend .todo i{border-top-style:dotted;border-color:var(--line-2)}
-.rose{position:absolute;top:12px;right:16px;width:34px;height:34px;color:var(--dim);opacity:.8}
-.rose text{font:600 8px var(--mono);letter-spacing:.1em;fill:var(--accent)}
+/* ============ model library — pick a model on the left, its file opens on the right ============ */
+.lib{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:16px;align-items:start}
 
-/* the route */
-.track{position:relative;height:180px;margin:2px 0 4px}
-.route{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
-/* one path per leg, so "travelled so far" is exact without any path-length maths */
-.route path{fill:none;stroke:var(--line-2);stroke-width:2;stroke-linecap:round;stroke-dasharray:2 9;
-  vector-effect:non-scaling-stroke}
-/* the travelled overlay sits on top of its dotted leg and draws itself along it — pathLength="1"
-   makes the dash maths unit-free, so offset 1 = not travelled, 0 = travelled. Going back it
-   un-draws from the far end, which is the retreat for free. JS staggers the legs in travel order. */
-.route path.run{stroke:var(--accent);stroke-dasharray:1;stroke-dashoffset:1;
-  transition:stroke-dashoffset 420ms var(--ease);filter:drop-shadow(0 0 7px rgba(224,164,92,.5))}
-.route path.run.done{stroke-dashoffset:0}
-.stop{position:absolute;z-index:1;transform:translate(-50%,-13px);padding:0;border:0;background:none;cursor:pointer;
-  display:flex;flex-direction:column;align-items:center;gap:11px;font-family:var(--mono);color:var(--dim);
-  transition:color 200ms ease}
-.stop:hover{color:var(--ink)}
-.stop .dot{position:relative;width:26px;height:26px;display:grid;place-items:center;font-size:11px;
-  border:1px solid var(--line-2);border-radius:50% 50% 50% 0;background:var(--bg-2);color:var(--muted);
-  transform:rotate(45deg);box-shadow:0 6px 14px rgba(0,0,0,.45);
-  transition:transform 250ms var(--ease),background-color 250ms ease,border-color 250ms ease,color 250ms ease,box-shadow 250ms ease}
-.stop .dot span{transform:rotate(-45deg)}
-.stop:hover .dot{transform:rotate(45deg) scale(1.14);border-color:var(--accent);color:var(--accent)}
-.stop.done .dot{border-color:var(--accent);color:var(--accent)}
-.stop[aria-selected="true"]{color:var(--ink)}
-.stop[aria-selected="true"] .dot{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
-  box-shadow:0 0 0 7px var(--accent-soft),0 6px 16px rgba(0,0,0,.5)}
-.stop.live .dot::after{content:"";position:absolute;inset:0;border-radius:inherit;
-  box-shadow:0 0 0 0 rgba(224,164,92,.5);animation:ping 2.2s ease-out infinite}
-.stop .lab{font-size:13px;letter-spacing:.16em;white-space:nowrap}
-.stop .st{font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);white-space:nowrap}
-@media (max-width:600px){.stop .st{display:none}.stop .lab{font-size:11px}
-  .track{height:150px}.rose,.chart .ref{display:none}}
+/* left: one wide plate per model, its own photo behind the name */
+.shelf{display:grid;gap:12px}
+.card{position:relative;overflow:hidden;isolation:isolate;cursor:pointer;text-align:left;
+  min-height:118px;padding:20px 22px;display:flex;align-items:center;gap:16px;
+  border:1px solid var(--line);border-radius:18px;background:var(--bg-2);
+  transition:border-color 220ms ease,transform 220ms var(--ease),background-color 220ms ease}
+.card>img{position:absolute;inset:0;z-index:-2;width:100%;height:100%;object-fit:cover;
+  opacity:.5;filter:grayscale(.45) saturate(.9);transform:scale(1.02);
+  transition:opacity 320ms ease,transform 500ms var(--ease),filter 320ms ease}
+/* the scrim keeps the type legible whatever the photo does */
+.card::before{content:"";position:absolute;inset:0;z-index:-1;
+  background:linear-gradient(90deg,rgba(14,14,16,.92) 26%,rgba(14,14,16,.5) 62%,rgba(14,14,16,.22))}
+/* no photo on record — the plate wears the survey grid instead, on purpose */
+.card.nophoto{background:
+  linear-gradient(90deg,var(--bg-2) 40%,transparent),
+  linear-gradient(var(--line) 1px,transparent 1px) 0 0/26px 26px,
+  linear-gradient(90deg,var(--line) 1px,transparent 1px) 0 0/26px 26px,var(--bg-2)}
+.card:hover{border-color:var(--line-2);transform:translateX(3px)}
+.card:hover>img{opacity:.55;transform:scale(1.06)}
+.card[aria-selected="true"]{border-color:var(--accent);background:var(--bg-3)}
+.card[aria-selected="true"]>img{opacity:.62;filter:none}
+/* the accent spine marks the open file */
+.card::after{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);
+  transform:scaleY(0);transform-origin:50% 50%;transition:transform 260ms var(--ease)}
+.card[aria-selected="true"]::after{transform:scaleY(1)}
+.card .ident{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;min-width:0}
+.card .v{font-family:var(--display);font-size:clamp(2.1rem,4.4vw,2.9rem);line-height:.9;letter-spacing:.02em;
+  color:var(--ink);text-transform:uppercase}
+.card .code{font-family:var(--serif);font-style:italic;font-weight:400;font-size:clamp(1.15rem,2.4vw,1.5rem);
+  line-height:1;color:var(--muted);transition:color 220ms ease}
+.card:hover .code,.card[aria-selected="true"] .code{color:var(--accent)}
+.card .tag{margin-left:auto;flex:none;font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);border:1px solid var(--line-2);border-radius:4px;padding:6px 10px}
+.card.live .tag{color:var(--accent);border-color:var(--accent)}
+.card.live .tag::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;
+  background:var(--accent);margin-right:7px;vertical-align:middle;animation:ping 2.2s ease-out infinite}
+@media (max-width:560px){.card{min-height:100px;padding:16px 18px}.card .tag{display:none}}
 
-/* the panel, flanked by prev/next so the neighbouring versions are visible, not guessed at */
-/* full-height rails either side — a centred button on a tall panel scrolls out of sight */
-.deck{display:grid;grid-template-columns:120px minmax(0,1fr) 120px;gap:14px;align-items:stretch}
-.arrow{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:10px;padding:26px 12px;cursor:pointer;
-  border:1px solid var(--line-2);border-radius:16px;background:var(--bg-2);color:var(--muted);text-align:center;
-  font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
-  transition:border-color 200ms ease,color 200ms ease,background-color 200ms ease,transform 200ms var(--ease)}
-.arrow:hover:not(:disabled){border-color:var(--accent);color:var(--accent);background:var(--bg-3)}
-.arrow:hover:not(:disabled).prev{transform:translateX(-3px)}
-.arrow:hover:not(:disabled).next{transform:translateX(3px)}
-.arrow:disabled{opacity:.28;cursor:not-allowed}
-.arrow em{font-style:normal;font-size:26px;line-height:.7;color:var(--accent);opacity:.75}
-.arrow.next em{order:-1}   /* chevron on top on both rails, whatever the DOM order */
-.arrow:disabled em{color:var(--muted);opacity:1}
-.arrow .who{display:block;color:var(--ink);font-size:15px;letter-spacing:.1em;margin-top:3px}
-.arrow .kind{display:block;font-size:9px;color:var(--dim);letter-spacing:.16em}
-.arrow:disabled .who{color:var(--dim)}
-/* on touch the arrows go away and the panel itself is swiped */
-.swipehint{display:none;margin:0 0 14px;text-align:center;font-family:var(--mono);font-size:10px;
-  letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
-@media (max-width:820px){
-  .deck{grid-template-columns:1fr}
-  .arrow{display:none}
-  .swipehint{display:block}
-  .panel{touch-action:pan-y}
-}
-
-.panel{display:grid;grid-template-columns:1.05fr 1fr;border:1px solid var(--line);border-radius:22px;
-  overflow:hidden;background:var(--bg-2);user-select:none}
-.panel.live{border-color:var(--accent)}
-.panel.noshot{grid-template-columns:1fr}
-.panel .info{padding:clamp(22px,2.6vw,30px);display:flex;flex-direction:column;gap:12px;border-right:1px solid var(--line)}
-.panel.noshot .info{border-right:0}
-.panel .info>*{animation:rise 520ms var(--ease) backwards}
-.panel .info>*:nth-child(2){animation-delay:60ms}
-.panel .info>*:nth-child(3){animation-delay:120ms}
-.panel .info>*:nth-child(4){animation-delay:180ms}
-@keyframes rise{from{opacity:0;transform:translateY(16px)}}
-.panel .state{align-self:flex-start;font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;
-  padding:5px 10px;border-radius:999px;border:1px solid var(--line-2);color:var(--muted)}
-.panel.live .state{border-color:var(--accent);color:var(--accent)}
-.panel h3{font-size:clamp(1.9rem,4vw,2.6rem);line-height:1}
-.panel p{color:var(--muted);font-size:14px;max-width:46ch}
-.panel dl{margin-top:auto;padding-top:16px;border-top:1px solid var(--line);display:grid;gap:8px 22px;font-size:12px;
-  font-family:var(--mono);grid-template-columns:repeat(2,minmax(0,1fr))}
-@media (max-width:520px){.panel dl{grid-template-columns:1fr}}
-.panel dl>div{display:flex;gap:10px;align-items:baseline}
-.panel dt{width:1em;flex:none;text-align:center}
-.panel dd{color:var(--muted)}
-.has dt{color:var(--accent)}.has dd{color:var(--ink)}
-.hasnt dt{color:var(--dim)}.hasnt dd{text-decoration:line-through;text-decoration-color:var(--line-2)}
-/* the photo fills its half without dragging the panel to the image's own height */
-.panel .shot{position:relative;background:var(--bg-3);overflow:hidden;min-height:260px}
-.panel .shot img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(.85);
-  animation:shotin 760ms var(--ease)}
-@keyframes shotin{from{opacity:0;transform:scale(1.07)}}
-.panel .shot .cap{position:absolute;left:14px;bottom:14px;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+/* right: the open file. sticky so it stays put while the shelf is scanned */
+.file{position:sticky;top:118px;border:1px solid var(--line);border-radius:18px;background:var(--bg-2);overflow:hidden}
+.file.live{border-color:var(--accent)}
+.file>*{animation:rise 480ms var(--ease) backwards}
+.file>*:nth-child(2){animation-delay:70ms}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}}
+.file .shot{position:relative;height:210px;background:var(--bg-3)}
+.file .shot img{width:100%;height:100%;object-fit:cover;filter:saturate(.85)}
+.file .shot .cap{position:absolute;left:14px;bottom:14px;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   text-transform:uppercase;color:var(--muted);background:rgba(10,10,12,.7);border:1px solid var(--line-2);
   border-radius:999px;padding:5px 10px;backdrop-filter:blur(4px)}
-@media (max-width:820px){.panel{grid-template-columns:1fr}
-  .panel .info{border-right:0;border-bottom:1px solid var(--line)}
-  .panel .shot{min-height:220px}}
+.file .body{padding:clamp(22px,2.6vw,30px);display:flex;flex-direction:column;gap:14px}
+.file .state{align-self:flex-start;font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+  padding:6px 11px;border-radius:4px;border:1px solid var(--line-2);color:var(--muted)}
+.file.live .state{border-color:var(--accent);color:var(--accent)}
+.file h3{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;
+  font-family:var(--display);font-size:clamp(2.4rem,5vw,3.4rem);line-height:.95;text-transform:uppercase}
+.file h3 em{font-family:var(--serif);font-style:italic;font-size:.52em;text-transform:none;color:var(--accent)}
+.file p{color:var(--muted);font-size:14.5px;max-width:52ch}
+/* the numbers — the whole reason to open the file */
+.file .stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;
+  padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.file .stats div{display:flex;flex-direction:column;gap:4px}
+.file .stats dt{font-family:var(--display);font-size:clamp(1.3rem,3vw,1.8rem);line-height:1;color:var(--ink)}
+.file .stats dd{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.file .feat{list-style:none;display:grid;gap:9px;font-size:13.5px}
+.file .feat li{display:flex;gap:11px;align-items:baseline;font-family:var(--mono);font-size:12.5px}
+.file .feat li::before{content:"✓";flex:none;width:1em;text-align:center;color:var(--accent)}
+.file .feat .hasnt{color:var(--dim);text-decoration:line-through;text-decoration-color:var(--line-2)}
+.file .feat .hasnt::before{content:"✕";color:var(--dim)}
+@media (max-width:900px){
+  .lib{grid-template-columns:1fr}
+  .file{position:static}
+}
+@media (max-width:560px){.file .stats dd{font-size:8.5px;letter-spacing:.1em}}
 
 /* ============ sponsors — three ranks, one row each ============ */
 /* names are rendered from sponsors.json by sponsors.js — this is only the frame */
@@ -429,7 +387,7 @@ footer nav a:hover{color:var(--accent)}
   <div class="links">
     <a href="#run" data-i18n="nav.run">The run</a>
     <a href="#pricing" data-i18n="nav.pricing">Pricing</a>
-    <a href="#roadmap" data-i18n="nav.roadmap">Roadmap</a>
+    <a href="#roadmap" data-i18n="nav.roadmap">Models</a>
     <a href="#sponsors" data-i18n="nav.sponsors">Sponsors</a>
   </div>
   <a class="btn btn-primary" href="#pricing" data-i18n="nav.get">Get Blackout</a>
@@ -579,35 +537,21 @@ footer nav a:hover{color:var(--accent)}
   </div>
 </section>
 
+<!-- id kept as #roadmap so existing links (nav, sponsors page) still land here -->
 <section id="roadmap">
   <div class="wrap">
     <div class="head" data-reveal>
-      <p class="eyebrow" data-i18n="roadmap.eyebrow">Roadmap</p>
-      <h2 class="display" data-i18n="roadmap.h2">Three rebuilds to get here.</h2>
-      <p class="lede" data-i18n="roadmap.lede">Each version threw away something the last one was proud of. Pick a stop on the route.</p>
+      <p class="eyebrow" data-i18n="roadmap.eyebrow">Model Library</p>
+      <h2 class="display" data-i18n="roadmap.h2">Every version rewrites the last.</h2>
+      <p class="lede" data-i18n="roadmap.lede">The rover is never finished — each build throws away something the one before it was proud of. Open a model to read its file.</p>
     </div>
   </div>
-  <div class="wrap map">
-    <!-- IMPORTANT NOTE: stops and panel are rendered from roadmap.json (see renderRoadmap() below) —
-         edit that file to add/reorder versions or swap in real photos, no HTML editing needed. -->
-    <div class="chart">
-      <p class="ref" data-i18n="roadmap.ref">Sheet 01 · route V1 → V4 · not to scale</p>
-      <svg class="rose" viewBox="0 0 40 40" aria-hidden="true">
-        <circle cx="20" cy="22" r="11" fill="none" stroke="currentColor" stroke-width="1"/>
-        <path d="M20 11 23 22 20 20 17 22Z" fill="var(--accent)"/>
-        <path d="M20 33 17 22 20 24 23 22Z" fill="currentColor" opacity=".5"/>
-        <text x="20" y="7" text-anchor="middle">N</text>
-      </svg>
-      <div class="track" role="tablist" aria-label="Roadmap versions">
-        <svg class="route" viewBox="0 0 1000 180" preserveAspectRatio="none" aria-hidden="true"></svg>
-      </div>
-      <p class="legend"><span><i></i><span data-i18n="roadmap.built">Built</span></span><span class="todo"><i></i><span data-i18n="roadmap.planned">Planned</span></span></p>
-    </div>
-    <p class="swipehint" data-i18n="roadmap.swipehint">← Swipe to change version →</p>
-    <div class="deck">
-      <button class="arrow prev" id="verPrev" type="button"><em aria-hidden="true">‹</em><span><span class="kind" data-i18n="roadmap.prev">Previous</span><span class="who"></span></span></button>
-      <div class="panel" id="verPanel"></div>
-      <button class="arrow next" id="verNext" type="button"><span><span class="kind" data-i18n="roadmap.next">Next</span><span class="who"></span></span><em aria-hidden="true">›</em></button>
+  <div class="wrap">
+    <!-- IMPORTANT NOTE: both columns are rendered from roadmap.json (see initModels() below) —
+         edit that file to add/reorder models, rename them or swap in real photos, no HTML editing needed. -->
+    <div class="lib">
+      <div class="shelf" id="mdlShelf" role="tablist" aria-label="Models"></div>
+      <div class="file" id="mdlFile" role="tabpanel" tabindex="-1"></div>
     </div>
   </div>
 </section>
@@ -656,7 +600,7 @@ footer nav a:hover{color:var(--accent)}
     <nav>
       <a href="#run" data-i18n="nav.run">The run</a>
       <a href="#pricing" data-i18n="nav.pricing">Pricing</a>
-      <a href="#roadmap" data-i18n="nav.roadmap">Roadmap</a>
+      <a href="#roadmap" data-i18n="nav.roadmap">Models</a>
       <a href="sponsors.html" data-i18n="nav.sponsors">Sponsors</a>
       <a href="https://github.com/jesodium/Blackout">GitHub</a>
     </nav>
@@ -684,7 +628,7 @@ const DICT = {
       desc: "Blackout is a recon rover built for WRO 2026 Future Innovators. It drives into places people should not enter, looks around, and reports back out loud."
     },
     wro: { strip: "Made for the 2026 World Robot Olympiad · Future Innovators, Senior Category" },
-    nav: { run: "The run", pricing: "Pricing", roadmap: "Roadmap", sponsors: "Sponsors", get: "Get Blackout" },
+    nav: { run: "The run", pricing: "Pricing", roadmap: "Models", sponsors: "Sponsors", get: "Get Blackout" },
     hero: {
       title: 'Send it into the <span class="accent">dark.</span>',
       lede: "A recon rover for places people should not enter. It drives in, looks around, and reports back out loud.",
@@ -727,10 +671,8 @@ const DICT = {
       note: "Competition fiction: Blackout is a WRO 2026 Future Innovators project, not a company. The prices above are part of the pitch. Nothing here is for sale, and the robot, the code and the camera frames are real."
     },
     roadmap: {
-      eyebrow: "Roadmap", h2: "Three rebuilds to get here.",
-      lede: "Each version threw away something the last one was proud of. Pick a stop on the route.",
-      ref: "Sheet 01 · route V1 → V4 · not to scale", built: "Built", planned: "Planned",
-      swipehint: "← Swipe to change version →", prev: "Previous", next: "Next"
+      eyebrow: "Model Library", h2: "Every version rewrites the last.",
+      lede: "The rover is never finished — each build throws away something the one before it was proud of. Open a model to read its file."
     },
     sponsors: {
       eyebrow: "Sponsors", h2: "Nobody funds the dark alone.",
@@ -746,7 +688,7 @@ const DICT = {
       desc: "Blackout es un róver de reconocimiento construido para la WRO 2026 Future Innovators. Entra en lugares donde nadie debería entrar, mira alrededor e informa en voz alta."
     },
     wro: { strip: "Hecho para la Olimpiada Mundial de Robótica 2026 · Future Innovators, Categoría Senior" },
-    nav: { run: "El recorrido", pricing: "Precio", roadmap: "Hoja de ruta", sponsors: "Patrocinadores", get: "Consigue Blackout" },
+    nav: { run: "El recorrido", pricing: "Precio", roadmap: "Modelos", sponsors: "Patrocinadores", get: "Consigue Blackout" },
     hero: {
       title: 'Envíalo a la <span class="accent">oscuridad.</span>',
       lede: "Un róver de reconocimiento para lugares donde nadie debería entrar. Entra, mira alrededor e informa en voz alta.",
@@ -789,10 +731,8 @@ const DICT = {
       note: "Ficción de competencia: Blackout es un proyecto de WRO 2026 Future Innovators, no una empresa. Los precios de arriba son parte de la presentación. Nada aquí está a la venta, y el robot, el código y las imágenes de cámara son reales."
     },
     roadmap: {
-      eyebrow: "Hoja de ruta", h2: "Tres reconstrucciones para llegar aquí.",
-      lede: "Cada versión dejó atrás algo de lo que la anterior estaba orgullosa. Elige una parada en la ruta.",
-      ref: "Hoja 01 · ruta V1 → V4 · sin escala", built: "Construido", planned: "Planeado",
-      swipehint: "← Desliza para cambiar de versión →", prev: "Anterior", next: "Siguiente"
+      eyebrow: "Biblioteca de modelos", h2: "Cada versión reescribe la anterior.",
+      lede: "El róver nunca está terminado: cada versión deja atrás algo de lo que la anterior estaba orgullosa. Abre un modelo para leer su ficha."
     },
     sponsors: {
       eyebrow: "Patrocinadores", h2: "Nadie financia la oscuridad solo.",
@@ -872,118 +812,68 @@ const DICT = {
     words.forEach((w, i) => w.classList.toggle('lit', i < n));
   }
 
-  /* roadmap — stops come from roadmap.json so the lineup is editable without touching HTML;
-     built once, then just its text is refreshed on a language toggle */
-  async function initRoadmap() {
-    const track = document.querySelector('.track'), panel = document.getElementById('verPanel');
-    if (!track || !panel) return null;
-    const versions = await (await fetch('roadmap.json')).json();
-
-    /* pins sit on a winding route: alternate high/low, one column each, curved legs between them.
-       viewBox units are 1000x180 and the svg is stretched — non-scaling-stroke keeps the line even. */
-    const route = track.querySelector('.route');
-    const pt = i => ({ x: (i + .5) / versions.length * 1000, y: i % 2 ? 118 : 52 });
-    route.innerHTML = versions.slice(1).map((_, i) => {
-      const a = pt(i), b = pt(i + 1), c = (b.x - a.x) / 2;
-      const d = `M${a.x} ${a.y} C${a.x + c} ${a.y}, ${b.x - c} ${b.y}, ${b.x} ${b.y}`;
-      return `<path d="${d}"/><path class="run" pathLength="1" d="${d}"/>`;
-    }).join('');
-    const runs = [...route.querySelectorAll('path.run')];
-
-    track.insertAdjacentHTML('beforeend', versions.map((v, i) => `
-      <button class="stop${v.now ? ' live' : ''}" role="tab" aria-selected="false" data-i="${i}"
-              style="left:${(i + .5) / versions.length * 100}%;top:${pt(i).y / 180 * 100}%">
-        <span class="dot"><span>${i + 1}</span></span>
-        <span class="lab">${v.version}</span>
-        <span class="st"></span>
-      </button>`).join(''));
-    const stops = [...track.querySelectorAll('.stop')];
-
-    const prev = document.getElementById('verPrev'), next = document.getElementById('verNext');
+  /* model library — the shelf and the open file both come from roadmap.json, so the lineup is
+     editable without touching HTML. Built once; a language toggle only repaints the text. */
+  async function initModels() {
+    const shelf = document.getElementById('mdlShelf'), file = document.getElementById('mdlFile');
+    if (!shelf || !file) return null;
+    const models = await (await fetch('roadmap.json')).json();
     let at = 0;
 
-    const STEP = 150;  /* ms between consecutive legs — the line reads as travel, not a jump */
+    shelf.innerHTML = models.map((m, i) => `
+      <button class="card${m.now ? ' live' : ''}${m.thumb ? '' : ' nophoto'}" type="button" role="tab"
+              aria-selected="false" aria-controls="mdlFile" data-i="${i}">
+        ${m.thumb ? `<img src="${m.thumb}" alt="" loading="lazy">` : ''}
+        <span class="ident"><span class="v">${m.version}</span><span class="code">${m.codename}</span></span>
+        <span class="tag"></span>
+      </button>`).join('');
+    const cards = [...shelf.querySelectorAll('.card')];
 
-    const paintStops = () => stops.forEach((s, i) => { s.querySelector('.st').textContent = versions[i][currentLang].state; });
+    const paintTags = () => cards.forEach((c, i) => { c.querySelector('.tag').textContent = models[i][currentLang].state; });
 
     const show = (i) => {
-      const from = at, v = versions[at = i], L = v[currentLang];
-      /* only the legs whose state actually flips animate, in travel order: forwards nearest-first,
-         backwards furthest-first, so the line unwinds the way you came */
-      const order = runs.map((_, j) => j).filter(j => (j < i) !== (j < from));
-      if (i < from) order.reverse();
-      const delay = j => Math.max(order.indexOf(j), 0) * STEP;
-
-      stops.forEach((s, j) => {
-        s.setAttribute('aria-selected', j === i);
-        s.classList.toggle('done', j <= i);
-        /* a pin lights (or dims) when the line reaches it — i.e. with its incoming leg */
-        s.querySelector('.dot').style.transitionDelay = delay(j - 1) + 'ms';
-      });
-      /* the arrows name the neighbours, so what's behind and ahead is readable without clicking */
-      prev.disabled = i === 0; next.disabled = i === versions.length - 1;
-      prev.querySelector('.who').textContent = versions[i - 1]?.version || '—';
-      next.querySelector('.who').textContent = versions[i + 1]?.version || '—';
-      /* legs behind the selected pin are the road already driven */
-      runs.forEach((l, j) => {
-        l.style.transitionDelay = delay(j) + 'ms';
-        l.classList.toggle('done', j < i);
-      });
-      panel.classList.toggle('live', !!v.now);
-      /* a version with nothing left to show it (V2 is gone, V4 isn't built) drops the
-         shot half rather than holding a placeholder — see .panel.noshot */
-      panel.classList.toggle('noshot', !v.image);
-      panel.innerHTML = `
-        <div class="info">
+      at = i;
+      const m = models[i], L = m[currentLang];
+      cards.forEach((c, j) => { c.setAttribute('aria-selected', j === i); c.tabIndex = j === i ? 0 : -1; });
+      file.classList.toggle('live', !!m.now);
+      file.innerHTML = `
+        ${m.image ? `<div class="shot"><img src="${m.image}" alt="${L.cap || ''}" loading="lazy">
+          ${L.cap ? `<span class="cap">${L.cap}</span>` : ''}</div>` : ''}
+        <div class="body">
           <span class="state">${L.state}</span>
-          <h3 class="display">${v.version}</h3>
+          <h3>${m.version}<em>${m.codename}</em></h3>
           <p>${L.desc}</p>
-          <dl>${L.features.map(f => `<div class="${f.has ? 'has' : 'hasnt'}">
-            <dt aria-hidden="true">${f.has ? '✓' : '✕'}</dt><dd>${f.label}</dd></div>`).join('')}</dl>
-        </div>
-        ${v.image ? `<div class="shot">
-          <img src="${v.image}" alt="${L.cap}" loading="lazy">
-          <span class="cap">${L.cap}</span>
-        </div>` : ''}`;
+          <dl class="stats">${L.stats.map(s => `<div><dt>${s.value}</dt><dd>${s.label}</dd></div>`).join('')}</dl>
+          <ul class="feat">${L.features.map(f => `<li class="${f.has ? 'has' : 'hasnt'}">${f.label}</li>`).join('')}</ul>
+        </div>`;
     };
 
-    const go = (step) => { const i = at + step; if (i >= 0 && i < versions.length) show(i); };
-    prev.addEventListener('click', () => go(-1));
-    next.addEventListener('click', () => go(1));
-
-    stops.forEach((s, i) => {
-      s.addEventListener('click', () => show(i));
-      s.addEventListener('keydown', e => {
-        const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+    cards.forEach((c, i) => {
+      c.addEventListener('click', () => {
+        show(i);
+        /* stacked layout — the file is below the shelf, so bring it into view or the click looks dead */
+        if (window.matchMedia('(max-width:900px)').matches) file.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      c.addEventListener('keydown', e => {
+        const step = /Down|Right/.test(e.key) ? 1 : /Up|Left/.test(e.key) ? -1 : 0;
         if (!step) return;
         e.preventDefault();
-        const j = (i + step + stops.length) % stops.length;
-        stops[j].focus(); show(j);
+        const j = (i + step + cards.length) % cards.length;
+        cards[j].focus(); show(j);
       });
     });
 
-    /* swipe the panel on touch — 50px of horizontal travel that beats the vertical wins */
-    let x0 = null, y0 = null;
-    panel.addEventListener('pointerdown', e => { x0 = e.clientX; y0 = e.clientY; });
-    panel.addEventListener('pointerup', e => {
-      if (x0 === null) return;
-      const dx = e.clientX - x0, dy = e.clientY - y0;
-      x0 = null;
-      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) go(dx < 0 ? 1 : -1);
-    });
-    panel.addEventListener('pointercancel', () => { x0 = null; });
+    paintTags();
+    show(Math.max(models.findIndex(m => m.now), 0));
 
-    paintStops();
-    show(Math.max(versions.findIndex(v => v.now), 0));
-
-    return { refresh: () => { paintStops(); show(at); } };
+    return { refresh: () => { paintTags(); show(at); } };
   }
 
   applyStatic();
   renderTicker();
   renderManifesto();
   sponsorsRender(dictGet('sponsors.open'));
-  const roadmapApi = await initRoadmap();
+  const modelsApi = await initModels();
 
   document.getElementById('langSelect').addEventListener('change', (e) => {
     const next = e.target.value;
@@ -995,7 +885,7 @@ const DICT = {
       renderTicker();
       renderManifesto();
       sponsorsRender(dictGet('sponsors.open'));
-      if (roadmapApi) roadmapApi.refresh();
+      if (modelsApi) modelsApi.refresh();
     });
   });
 
