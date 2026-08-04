@@ -45,7 +45,7 @@
     "thumb": "assets/rover.jpg",
     "image": "assets/rover-cave.jpg",
     "en": {
-      "state": "Retired",
+      "state": "Soon phased out",
       "desc": "Collapsed to a single Uno R4 WiFi, added the ESP32-CAM on its own network, and introduced Sage as the voice of the robot.",
       "stats": [
         { "label": "Lines of code", "value": "6,398" },
@@ -61,7 +61,7 @@
       "cap": "V2 · in the cave"
     },
     "es": {
-      "state": "Retirado",
+      "state": "Pronto retirado",
       "desc": "Se redujo a una sola Uno R4 WiFi, se añadió la ESP32-CAM en su propia red, y se presentó a Sage como la voz del robot.",
       "stats": [
         { "label": "Líneas de código", "value": "6.398" },
@@ -84,7 +84,7 @@
     "thumb": null,
     "image": null,
     "en": {
-      "state": "Shipping now",
+      "state": "Testing in progress",
       "desc": "Giga R1 WiFi, runs became the BLK language, findings log with saved frames, one command flashes both boards. The competition build.",
       "stats": [
         { "label": "Lines of code", "value": "16,009" },
@@ -101,7 +101,7 @@
       ]
     },
     "es": {
-      "state": "Entregando ahora",
+      "state": "En pruebas",
       "desc": "Giga R1 WiFi, las rutinas se convirtieron en el lenguaje BLK, registro de hallazgos con imágenes guardadas, un solo comando programa ambas placas. La versión de competencia.",
       "stats": [
         { "label": "Líneas de código", "value": "16.009" },
