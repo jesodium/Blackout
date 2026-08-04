@@ -15,7 +15,7 @@ const fail = [];
 for (const m of moods) {
   if (!css.includes(`.sage-face.is-${m}`)) fail.push(`mood "${m}" has no .sage-face.is-${m} rule in style.css`);
 }
-// 2. every shape the svg draws is styled
+// 2. every part the face renders is styled
 for (const [, cls] of face.matchAll(/class="(sf-[\w-]+)/g)) {
   if (!css.includes("." + cls)) fail.push(`shape .${cls} is drawn but never styled`);
 }
