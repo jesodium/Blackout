@@ -6,12 +6,57 @@
 // telemetry. the server ignores anything that isn't "s:".
 #include <ArduinoBLE.h>
 #include <DHT11.h>
+#include <U8g2lib.h> // oled debug screen — spi, install "U8g2" (oliver) via library manager
 #include "routines.h" // op/step + the presentation and run tables
 
 #define DHT_PIN 2   // dht11 data pin. d2 = clean digital; not d13 (onboard led
                     // shares that line and glitches the timing).
-#define TRIG_PIN 11
+#define TRIG_PIN 23 // moved off d11 — d11 now oled mosi (spi)
 #define ECHO_PIN 12
+// oled debug screen, bit-banged (sw) spi on d13/d11.
+// IMPORTANT NOTE: giga has two spi buses — the arduino "SPI" object u8g2's hw-spi
+// mode drives is pins 89-91 on the high-density connector, NOT the d11-d13 header
+// pins (those are "SPI1", a separate object u8g2 can't target). sw spi bit-bangs
+// digitalWrite on whatever pins you hand it, so it hits the header pins we
+// actually wired. costs a little speed, doesn't matter for static debug text.
+// cs tied straight to gnd on the panel (only spi device on the bus), so u8g2
+// gets u8x8_pin_none instead of a pin to wiggle.
+// assumes an ssd1306-compatible 128x64 panel — most cheap 1.54" white spi oleds
+// are. if the screen shows noise/garbage (not just blank), it's probably really
+// an sh1106 or ssd1309 — swap the constructor below for
+// U8G2_SH1106_128X64_NONAME_F_4W_SW_SPI or U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI.
+#define OLED_CLK 13
+#define OLED_DATA 11
+#define OLED_RST A0
+#define OLED_DC A1
+// panel's mounted portrait in the enclosure (64 wide x 128 tall as drawn), not
+// landscape — U8G2_R1 rotates the buffer 90° to match. swap to U8G2_R3 if a
+// remount ever flips which edge is "up".
+U8G2_SSD1306_128X64_NONAME_F_4W_SW_SPI oled(U8G2_R1, /* clock=*/ OLED_CLK, /* data=*/ OLED_DATA, /* cs=*/ U8X8_PIN_NONE, /* dc=*/ OLED_DC, /* reset=*/ OLED_RST);
+bool bleConnected = false;
+String camState = "not connected"; // only the server/dashboard knows camera state — pushed via "cam,<state>" cmd
+// operator override from the dashboard's oled panel: "oled,<text>" shows it in
+// place of the auto link/cam status, "oled,clear" (the literal word) goes back
+// to auto. empty = auto.
+String customMsg = "";
+// two independent cadences: the *redraw* runs fast (smooth sliding highlight,
+// responsive input) but the *breathing-pulse phase* (spinner/dot animations,
+// oledFrame % 8) stays slow — those are meant to read as a calm pulse, not
+// vibrate at whatever fps the spi bus happens to allow.
+uint8_t oledFrame = 0; // wraps freely — every pulse/spinner draw is frame % something
+unsigned long lastOledDraw = 0;
+unsigned long lastOledPhase = 0;
+// measured on this board (micros() around clearBuffer+draw+sendBuffer): ~17.5ms/frame
+// regardless of screen — bit-banged spi shoving the 1024-byte buffer over dominates,
+// draw calls are noise by comparison. that's a hard ~57fps ceiling; 20ms keeps us
+// pinned near it without spending every single loop() iteration in a blocking spi
+// write (ble.poll/drive/routine ticks all wait behind an in-flight redraw).
+#define OLED_DRAW_INTERVAL 20
+#define OLED_PHASE_INTERVAL 120 // ~1s per breathing cycle (8 phase steps) — unrelated to draw fps
+
+#define BOARD_NAME "BLACKOUT-V3" // shown on the status screen and the ble local
+                                  // name/serial banner below — one literal, three
+                                  // spots, so they can't drift out of sync again
 // l298n direction pins. d4-d7 = contiguous free block, no timer/peripheral
 // conflict (d11/d12 sonar, d2 dht, d13 onboard led all clear). d9 is free —
 // it drove the camera servo before the camera was fixed.
@@ -36,7 +81,11 @@ BLEService sensorService("19b10000-e8f2-537e-4f6c-d104768a1214");
 BLEStringCharacteristic sensorChar("19b10001-e8f2-537e-4f6c-d104768a1214", BLERead | BLENotify, 100);
 // command channel: server (via the browser's web bluetooth) writes here to
 // trigger actions. "go,<routine>" starts a motion routine, "stop" cuts motors.
-BLEStringCharacteristic cmdChar("19b10002-e8f2-537e-4f6c-d104768a1214", BLEWrite | BLEWriteWithoutResponse, 20);
+// bumped 20->64 for "oled,<text>" operator messages — every other verb here
+// still fits well under 20. IMPORTANT NOTE: assumes the ble link negotiates an
+// att mtu >=67 bytes; if oled text arrives truncated on a given os/browser,
+// that's the ceiling to check first, not a firmware bug.
+BLEStringCharacteristic cmdChar("19b10002-e8f2-537e-4f6c-d104768a1214", BLEWrite | BLEWriteWithoutResponse, 64);
 
 // the routine tables live in routines.h — edit that file to change what
 // the robot does. everything here is the machinery that runs them: the board plays
@@ -55,12 +104,96 @@ unsigned long lastSend = 0;
 unsigned long lastDht = 0;
 float distF = -1; // ema state, -1 = uninitialised
 
+void oledCenter(const char* s, int y) {
+  oled.drawStr((64 - oled.getStrWidth(s)) / 2, y, s);
+}
+
+// status screen: link state is icon-only now (spinner while pairing, pulsing
+// dot once connected — motion is what sells "alive" on a panel this small),
+// cam line + its own small pulse/x dot underneath.
+void drawStatus() {
+  oled.setFont(u8g2_font_4x6_tf);
+  oledCenter(BOARD_NAME, 10);
+
+  int cx = 32, cy = 54;
+  if (!bleConnected) {
+    float ang = (oledFrame % 8) * (2 * PI / 8); // one tick sweeping a hub, 8-frame cycle
+    oled.drawDisc(cx, cy, 3);
+    oled.drawLine(cx, cy, cx + (int)(10 * cos(ang)), cy + (int)(10 * sin(ang)));
+  } else {
+    uint8_t phase = oledFrame % 8;
+    oled.drawDisc(cx, cy, 3 + (phase < 4 ? phase : 7 - phase)); // triangle-wave pulse
+  }
+
+  oled.setFont(u8g2_font_4x6_tf);
+  String camLine = "CAM: " + camState;
+  camLine.toUpperCase();
+  oledCenter(camLine.c_str(), 90);
+
+  bool camUp = camState.indexOf("not") < 0; // "connected" vs "not connected"
+  int dx = 8, dy = 82;
+  if (camUp) {
+    uint8_t phase = (oledFrame + 4) % 8; // offset from the link pulse so they don't sync up
+    oled.drawDisc(dx, dy, 1 + (phase < 4 ? phase : 7 - phase) / 2);
+  } else {
+    oled.drawLine(dx - 2, dy - 2, dx + 2, dy + 2);
+    oled.drawLine(dx - 2, dy + 2, dx + 2, dy - 2); // static x — nothing to animate for "off"
+  }
+}
+
+// operator message from the dashboard's oled panel, word-wrapped to the 64px
+// panel width with a breathing frame + corner pulse so a static string still
+// reads as "live", not frozen.
+void drawCustom() {
+  oled.setFont(u8g2_font_6x10_tf);
+  String lines[6];
+  uint8_t n = 0;
+  String word, cur;
+  String src = customMsg + " ";
+  for (uint16_t i = 0; i < src.length() && n < 6; i++) {
+    char c = src[i];
+    if (c != ' ') { word += c; continue; }
+    String trial = cur.length() ? cur + " " + word : word;
+    if (oled.getStrWidth(trial.c_str()) > 58 && cur.length()) {
+      lines[n++] = cur;
+      cur = word;
+    } else {
+      cur = trial;
+    }
+    word = "";
+  }
+  if (cur.length() && n < 6) lines[n++] = cur;
+
+  int lineH = 12;
+  int startY = 64 - (n * lineH) / 2 + 10;
+  for (uint8_t i = 0; i < n; i++) oledCenter(lines[i].c_str(), startY + i * lineH);
+
+  int boxH = n * lineH + 6;
+  if (boxH < 20) boxH = 20;
+  int top = startY - 14;
+  oled.drawRFrame(2, top, 60, boxH, 4);
+  uint8_t phase = oledFrame % 8;
+  oled.drawDisc(56, top + 6, 1 + (phase < 4 ? phase : 7 - phase) / 2); // "live message" pulse
+}
+
+// redrawn on every draw tick (see OLED_DRAW_INTERVAL in loop()), not just
+// on state change — a static screen doesn't read as "alive" on a panel this size.
+// an operator message beats the auto status screen.
+void updateOled() {
+  oled.clearBuffer();
+  customMsg.length() ? drawCustom() : drawStatus();
+  oled.sendBuffer();
+}
+
 void setup() {
   Serial.begin(9600);
   Serial.setTimeout(50); // readstringuntil on a partial line must not block the
                          // default 1s — that stalls ble.poll + the routine stepper
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
+
+  oled.begin();
+  updateOled();
 
   for (int p = IN1; p <= IN4; p++) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
   pinMode(ENA, OUTPUT); pinMode(ENB, OUTPUT);
@@ -73,7 +206,7 @@ void setup() {
   // "arduino" regardless of setlocalname() (the esp32-s3 co-processor doesn't
   // honor it in the ad packet, only in the post-connect gatt device-name
   // characteristic). so the browser filters by this service uuid instead.
-  BLE.setLocalName("BLACKOUT-V1");
+  BLE.setLocalName(BOARD_NAME);
   // 7.5-15ms connection interval (units of 1.25ms). the default negotiates out to
   // 30ms+, and every drive burst waits a whole interval before the radio sends it.
   // faster interval = more radio wakeups = more battery, worth it for manual drive.
@@ -83,7 +216,7 @@ void setup() {
   sensorService.addCharacteristic(cmdChar);
   BLE.addService(sensorService);
   BLE.advertise();
-  Serial.println("BLE advertising as BLACKOUT-V1");
+  Serial.println("BLE advertising as " BOARD_NAME); // adjacent string literals fold at compile time
 }
 
 // both motors forward at `speed` (0-255 pwm). if a motor spins backward, swap
@@ -200,6 +333,12 @@ void handleCmd(String c) {
   if (c == "stop") stopRoutine();
   else if (c.startsWith("go,")) startRoutine(c.substring(3));
   else if (c.startsWith("drv,")) startDrive(c);
+  else if (c.startsWith("cam,")) { camState = c.substring(4); updateOled(); }
+  else if (c.startsWith("oled,")) {
+    String msg = c.substring(5);
+    customMsg = (msg == "clear") ? "" : msg; // literal word "clear" reverts to auto status
+    updateOled();
+  }
   // unknown verb, ignore. the board only moves when explicitly told to.
 }
 
@@ -239,12 +378,22 @@ float medianPingCm() {
 void loop() {
   BLE.poll();
 
+  bool nowConnected = BLE.central();
+  if (nowConnected != bleConnected) { bleConnected = nowConnected; updateOled(); }
+
   if (cmdChar.written()) handleCmd(cmdChar.value());
   if (Serial.available()) handleCmd(Serial.readStringUntil('\n'));
 
   tickRoutine(); // before the send_interval return below — that skips the rest
                  // of loop() most iterations, which would stall the routine.
   tickDrive();
+
+  unsigned long nowAnim = millis();
+  if (nowAnim - lastOledPhase >= OLED_PHASE_INTERVAL) { lastOledPhase = nowAnim; oledFrame++; }
+  if (nowAnim - lastOledDraw >= OLED_DRAW_INTERVAL) {
+    lastOledDraw = nowAnim;
+    updateOled();
+  }
 
   unsigned long now = millis();
   if (now - lastSend < SEND_INTERVAL) return;

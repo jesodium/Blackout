@@ -11,7 +11,7 @@ const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
-const { eyeParts, grabFrames, setLed, getLed } = require("./vision");
+const { eyeParts, grabFrames, setLed, getLed, pingCam } = require("./vision");
 const { parseSage } = require("./sage");
 
 const openai = new OpenAI({
@@ -595,6 +595,19 @@ let lastBlurt = 0;
 let pendingAnalysis = null;
 const AUTO_MIN_GAP = parseInt(process.env.AUTO_ANALYSIS_GAP || "12", 10) * 1000;
 const BLURT_MIN_GAP = 6000; // don't let a flapping sensor spam instant reactions
+
+// cam has no wire to the giga (own wifi, own power) — the giga's oled can only
+// learn cam state secondhand. this is the only clock-driven poll in the server;
+// everything else here is event-triggered off telemetry. "cmd" is the same
+// channel drive commands already ride — whichever browser tab holds the real
+// ble link relays it on (app.js's socket "cmd" listener), same as "drv,"/"go,".
+let camConnected = null; // null = not checked yet
+setInterval(async () => {
+  const up = await pingCam();
+  if (up === camConnected) return;
+  camConnected = up;
+  io.emit("cmd", `cam,${up ? "connected" : "not connected"}`);
+}, 5000);
 
 function emitBlurt(prev, cur) {
   if (!prev || Date.now() - lastBlurt < BLURT_MIN_GAP) return;
