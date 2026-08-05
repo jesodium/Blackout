@@ -115,6 +115,23 @@ async function grabFrameFrom(url, timeoutMs) {
   }
 }
 
+// cheap up/down probe for the oled heartbeat — /control with no query does no
+// frame grab, just an instant ack, so this is far lighter than grabFrame().
+async function pingCam(timeoutMs = 3000) {
+  for (let i = 0; i < CAM_URLS.length; i++) {
+    const idx = (camIdx + i) % CAM_URLS.length;
+    try {
+      const resolved = await resolveCamUrl(CAM_URLS[idx]);
+      const u = new URL(resolved);
+      u.pathname = "/control";
+      u.search = "";
+      const resp = await fetch(u, { signal: AbortSignal.timeout(timeoutMs) });
+      if (resp.ok) { camIdx = idx; return true; }
+    } catch { /* try next url */ }
+  }
+  return false;
+}
+
 // sage's lamp — same host as frame grabs, reuse sticky camidx.
 // level is remembered so sage knows what she's already running.
 let ledLevel = 15; // matches cam firmware's boot default
@@ -178,4 +195,4 @@ async function grabFrames(count = 4, gapMs = 1000) {
   return parts;
 }
 
-module.exports = { carveJpeg, upright, grabFrame, eyeParts, grabFrames, setLed, getLed };
+module.exports = { carveJpeg, upright, grabFrame, eyeParts, grabFrames, setLed, getLed, pingCam };
