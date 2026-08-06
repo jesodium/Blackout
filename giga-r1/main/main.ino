@@ -125,8 +125,8 @@ void drawStatus() {
     oled.drawDisc(cx, cy, 3 + (phase < 4 ? phase : 7 - phase)); // triangle-wave pulse
   }
 
-  oled.setFont(u8g2_font_4x6_tf);
-  String camLine = "CAM: " + camState;
+  oled.setFont(u8g2_font_u8glib_4_tf);
+  String camLine = camState;
   camLine.toUpperCase();
   oledCenter(camLine.c_str(), 90);
 
