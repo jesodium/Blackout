@@ -973,6 +973,143 @@ function FpvSage({ ai, packet, speaking, connected }) {
     </section>`;
 }
 
+/* ---- mission replay ----
+   a recorded run is telemetry stamped against cam stills (server-side grabs —
+   the cam is a different origin, so a canvas drawn from the mjpeg <img> is
+   tainted). playback is the FPV overlay over the recorded frame, so a replay
+   reads exactly like the live feed did. */
+const clock = (ms) => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${String((s / 60) | 0).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+};
+// last sample at or before t. IMPORTANT NOTE: linear scan each tick — a 15 min run
+// at 20 Hz is 18k samples, still microseconds. index it only if that stops being true.
+function at(list, t) {
+  let hit = list[0];
+  for (const x of list) { if (x.t > t) break; hit = x; }
+  return hit;
+}
+// same, but nothing before the first one — an event hasn't happened yet at t=0.
+function before(list, t) {
+  let hit = null;
+  for (const x of list) { if (x.t > t) break; hit = x; }
+  return hit;
+}
+
+// what the recorder marks, and how the timeline says it. a kind with no entry
+// here draws nothing — keep this in step with recorder.js's mark() callers.
+const EVENT_META = {
+  finding:  { label: "FINDING DETECTED", glyph: "◆", cls: "k-find" },
+  analysis: { label: "ANALYSIS",         glyph: "◎", cls: "k-analysis" },
+  sage:     { label: "SAGE",             glyph: "◈", cls: "k-sage" },
+  blk:      { label: "BLK DECISION",     glyph: "▣", cls: "k-blk" },
+  camlost:  { label: "CAMERA DEAD",      glyph: "◉", cls: "k-dead" },
+  camback:  { label: "CAMERA BACK",      glyph: "◉", cls: "k-back" },
+};
+const SAID = ["sage", "analysis", "finding"]; // kinds that count as sage talking
+const BANNER_MS = 4000;                       // how long an event stays called out
+
+function Replay({ run, onClose }) {
+  const [t, setT] = useState(0);
+  const [play, setPlay] = useState(true);
+  const events = (run.events || []).filter(e => EVENT_META[e.kind]);
+  const ended = t >= run.dur;
+  useEffect(() => {
+    if (!play) return;
+    let last = performance.now();
+    const id = setInterval(() => {
+      const now = performance.now();
+      const dt = now - last; last = now;
+      setT(v => {
+        if (v + dt >= run.dur) { setPlay(false); return run.dur; }
+        return v + dt;
+      });
+    }, 60);
+    return () => clearInterval(id);
+  }, [play, run]);
+  const seek = useCallback((ms) => { setPlay(false); setT(Math.max(0, Math.min(run.dur, ms))); }, [run.dur]);
+  // esc out, space to hold, arrows to jog. the scrubber keeps its own native
+  // arrow handling when it has focus, so don't fight it there.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") return onClose();
+      if (e.target?.classList?.contains("rep-scrub")) return;
+      if (e.key === " ") { e.preventDefault(); setPlay(p => !p); }
+      if (e.key === "ArrowRight") setT(v => Math.min(run.dur, v + 5000));
+      if (e.key === "ArrowLeft") setT(v => Math.max(0, v - 5000));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, run.dur]);
+
+  const frame = at(run.frames, t);
+  const packet = at(run.packets, t);
+  const now = before(events, t);                               // last thing that happened
+  const banner = now && t - now.t < BANNER_MS ? now : null;    // ...if it just happened
+  const said = before(events.filter(e => SAID.includes(e.kind)), t);
+  const dead = before(events.filter(e => e.kind === "camlost" || e.kind === "camback"), t)?.kind === "camlost";
+  // sage's card is the live one, fed the line she was on at this point in the run
+  const ai = { text: said?.text || "—", status: null, analyzing: false };
+
+  return html`
+    <div class="rep">
+      ${frame
+        ? html`<img class=${"rep-img" + (dead ? " is-stale" : "")} src=${`/recordings/${run.id}/${frame.f}`} alt="" />`
+        : html`<p class="rep-blind">no video — cam was down for this run</p>`}
+      <${FpvOverlay} packet=${packet} />
+      <${FpvSage} ai=${ai} packet=${packet} speaking=${false} connected=${true} />
+
+      <p class="rep-badge">REPLAY · ${run.name}</p>
+      ${dead && html`<p class="rep-dead">◉ CAMERA DEAD — no video from here</p>`}
+      ${banner && html`
+        <p class=${"rep-event " + EVENT_META[banner.kind].cls} key=${banner.t}>
+          <b>${EVENT_META[banner.kind].glyph} ${EVENT_META[banner.kind].label}</b>
+          <span>${banner.text}</span>
+        </p>`}
+
+      <div class="rep-bar">
+        <button type="button" class="hud-btn" onClick=${() => { if (ended) setT(0); setPlay(p => ended || !p); }}
+          aria-label=${ended ? "restart" : play ? "pause" : "play"}>${ended ? "↻" : play ? "❚❚" : "▶"}</button>
+        <div class="rep-track">
+          <input class="rep-scrub" type="range" min="0" max=${run.dur} step="100" value=${Math.round(t)}
+            aria-label="scrub" onInput=${(e) => seek(+e.target.value)} />
+          <div class="rep-ticks">
+            ${events.map(e => html`
+              <button type="button" key=${e.t + e.kind} class=${"rep-tick " + EVENT_META[e.kind].cls}
+                style=${{ left: (e.t / run.dur) * 100 + "%" }} onClick=${() => seek(e.t)}
+                title=${`${clock(e.t)} · ${EVENT_META[e.kind].label} — ${e.text}`}
+                aria-label=${`${EVENT_META[e.kind].label} at ${clock(e.t)}`}></button>`)}
+          </div>
+        </div>
+        <span class="rep-t">${clock(t)} / ${clock(run.dur)}</span>
+        <button type="button" class="hud-btn" onClick=${onClose}>✕ ESC</button>
+      </div>
+    </div>`;
+}
+
+function ReplayList({ runs, onPick, onDelete, onClose }) {
+  return html`
+    <div class="blk-modal" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div class="blk-modal-frame rep-list-frame">
+        <div class="blk-modal-head">
+          <span class="label">MISSION REPLAYS</span>
+          <button type="button" class="blk-modal-x" onClick=${onClose}>✕</button>
+        </div>
+        <div class="rep-list">
+          ${!runs.length && html`<p class="report-empty">no recordings yet — hit ● REC on the camera</p>`}
+          ${runs.map(r => html`
+            <div class="rep-row" key=${r.id}>
+              <button type="button" class="rep-open" onClick=${() => onPick(r.id)}>
+                <b>${r.name}</b>
+                <small>${new Date(r.at).toLocaleString()} · ${clock(r.dur)} · ${r.frames} frames · ${r.packets} pkt${r.events ? ` · ${r.events} events` : ""}</small>
+              </button>
+              <button type="button" class="serial-btn" onClick=${() => onDelete(r.id)}>DELETE</button>
+            </div>`)}
+        </div>
+      </div>
+    </div>`;
+}
+
 /* sensor strip — 5 live tiles + trend sparkline, one row under the stage */
 function SensorStrip({ packet }) {
   return html`
@@ -2074,6 +2211,10 @@ function App() {
   const [speaking, setSpeaking] = useState(false);
   const [fpv, setFpv] = useState(false);      // △/Y — fullscreen camera + hud overlay
   const [fpvZoom, setFpvZoom] = useState(0);  // index into FPV_ZOOMS — OPTIONS cycles it
+  const [rec, setRec] = useState(null);       // run being recorded server-side, or null
+  const [runs, setRuns] = useState(null);     // saved runs while the picker is open, else null
+  const [replay, setReplay] = useState(null); // loaded run being played back
+  const [recErr, setRecErr] = useState(null); // why the last record attempt was refused
   const [report, setReport] = useState(null); // frozen session report, or null when closed
   const [reportClosing, setReportClosing] = useState(false); // true while the exit transition plays
   const [clients, setClients] = useState([]); // every dashboard on the lan (host's roster)
@@ -2499,6 +2640,8 @@ function App() {
   const fpvMic = useMic(ask);
   const fpvMicRef = useRef(fpvMic);
   fpvMicRef.current = fpvMic;
+  const fpvRef = useRef(fpv);
+  fpvRef.current = fpv;
   /* the transition is the browser's, not ours: view transitions snapshot the cam tile
      before and its fullscreen self after, then morph between them — no keyframes to keep
      in sync with the layout. flushSync so react has committed before the "after" snapshot.
@@ -2511,27 +2654,34 @@ function App() {
   toggleFpvRef.current = toggleFpv;
   const cycleZoomRef = useRef(null);
   cycleZoomRef.current = () => setFpvZoom(i => (i + 1) % FPV_ZOOMS.length);
+  // recorder controls live on the pad too, but only while fpv is up — the hud is
+  // where they're labelled, and a stray ✕ on the cockpit shouldn't start a run.
+  const recActRef = useRef(null);
   useEffect(() => {
-    let was = [false, false, false];
+    let was = [false, false, false, false, false];
     const id = setInterval(() => {
       const pad = [...navigator.getGamepads()].find(Boolean);
       if (!pad || tourOpen) return;
-      // △ = 3, ○ = 1, OPTIONS/start = 9.
-      const now = [!!pad.buttons[3]?.pressed, !!pad.buttons[1]?.pressed, !!pad.buttons[9]?.pressed];
+      // △ = 3, ○ = 1, OPTIONS/start = 9, ✕ = 0, SHARE/select = 8.
+      const now = [!!pad.buttons[3]?.pressed, !!pad.buttons[1]?.pressed, !!pad.buttons[9]?.pressed,
+        !!pad.buttons[0]?.pressed, !!pad.buttons[8]?.pressed];
       if (now[0] && !was[0]) toggleFpvRef.current();
       if (now[1] && !was[1]) fpvMicRef.current.toggle();
       if (now[2] && !was[2]) cycleZoomRef.current?.();
+      if (now[3] && !was[3] && fpvRef.current && !VIEWER) recActRef.current?.rec();
+      if (now[4] && !was[4] && fpvRef.current) recActRef.current?.replays();
       was = now;
     }, 80);
     return () => clearInterval(id);
   }, []);
   // esc is the way out without a controller — never trap the operator in fpv.
+  // with a replay up, esc belongs to the player: one press per layer, not both.
   useEffect(() => {
-    if (!fpv) return;
+    if (!fpv || replay) return;
     const onKey = (e) => { if (e.key === "Escape") toggleFpv(false); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [fpv, toggleFpv]);
+  }, [fpv, replay, toggleFpv]);
 
   const toggleTts = useCallback(() => setTts(p => {
     const n = !p; ttsRef.current = n; localStorage.setItem("tts", n);
@@ -2703,6 +2853,39 @@ function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [closeDrawer, openDrawer]);
+  // recording lives on the server (it grabs the cam stills), so the button only
+  // reflects it — a reload mid-run picks the state back up.
+  useEffect(() => { fetch("/api/rec").then(r => r.json()).then(d => setRec(d.now)).catch(() => {}); }, []);
+  const recRef = useRef(rec); recRef.current = rec;
+  const toggleRec = useCallback(() => {
+    const on = !!recRef.current;
+    fetch(on ? "/api/rec/stop" : "/api/rec/start", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: activeRef.current?.title || "" }), // title, not the whole brief
+    }).then(async r => {
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "server said " + r.status); // cam offline => 503
+      setRec(on ? null : d.now);
+      setRecErr(null);
+      addLog(on ? "recording saved" : "recording started", "system");
+    }).catch(err => {
+      addLog("recorder: " + err.message, "danger");
+      toast(err.message, "danger");
+      setRecErr(err.message); // sticks on the hud until the next attempt works
+    });
+  }, [addLog, toast]);
+  const openReplays = useCallback(() => {
+    fetch("/api/rec").then(r => r.json()).then(d => { setRec(d.now); setRuns(d.runs); }).catch(() => setRuns([]));
+  }, []);
+  const pickReplay = useCallback((id) => {
+    fetch("/api/rec/" + id).then(r => r.json()).then(run => { setRuns(null); setReplay(run); }).catch(() => {});
+  }, []);
+  recActRef.current = { rec: toggleRec, replays: openReplays }; // what ✕ / SHARE hit while fpv is up
+  const deleteReplay = useCallback((id) => {
+    fetch("/api/rec/" + id, { method: "DELETE" })
+      .then(() => setRuns(rs => (rs || []).filter(r => r.id !== id))).catch(() => {});
+  }, []);
+
   // snapshot on open, so the document you read is exactly the json you export —
   // telemetry keeps arriving behind it either way.
   const openReport = useCallback(() => {
@@ -2733,8 +2916,15 @@ function App() {
               <button type="button" class="hud-btn" onClick=${() => cycleZoomRef.current()}>
                 ⚙ ${FPV_ZOOMS[fpvZoom].label}
               </button>
+              ${!VIEWER && html`
+                <button type="button" class=${"hud-btn is-rec" + (rec ? " is-on" : "") + (recErr ? " is-err" : "")}
+                  onClick=${toggleRec} aria-pressed=${!!rec}>
+                  ✕ ${rec ? "STOP REC" : recErr ? "CAN'T RECORD" : "REC"}
+                </button>`}
+              <button type="button" class="hud-btn" onClick=${openReplays}>⧉ REPLAYS</button>
               <button type="button" class="hud-btn" onClick=${() => toggleFpv(false)}>△ / ESC</button>
             </div>
+            ${recErr && !rec && html`<p class="rec-err" role="alert">✕ ${recErr}</p>`}
           <//>`}
         ${window.blackout?.platform === "darwin" && html`<div class="mac-titlebar"></div>`}
         <${Topbar} connected=${connected} bridge=${bridge} onBridge=${toggleBridge}
@@ -2791,6 +2981,13 @@ function App() {
         <${BlePickerModal} open=${blePicker} devices=${bleDevs}
           onPick=${(id) => window.blackout.selectBleDevice(id)}
           onCancel=${() => window.blackout.selectBleDevice("")} />`, document.body)}
+
+      ${runs && createPortal(html`
+        <${ReplayList} runs=${runs} onPick=${pickReplay} onDelete=${deleteReplay}
+          onClose=${() => setRuns(null)} />`, document.body)}
+
+      ${replay && createPortal(html`
+        <${Replay} run=${replay} onClose=${() => setReplay(null)} />`, document.body)}
 
       ${report && createPortal(html`
         <${ReportModal} report=${report} closing=${reportClosing} onClose=${closeReport} />`, document.body)}

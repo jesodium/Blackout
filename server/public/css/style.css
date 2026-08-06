@@ -1693,3 +1693,100 @@ input[type="range"]:focus { box-shadow: none; }
   .fpv-glass, .fpv-hud, .is-fpv .hud-tele, .is-fpv .strip .reading, .is-fpv .agent { animation: none; }
   .fpv-reticle.is-near { animation: none; }
 }
+
+/* ============================================================
+   mission replay — recorded stills under the live fpv glass,
+   plus the run picker. the player is fullscreen so .fpv-glass
+   (position: fixed) lands over it exactly as it does live.
+   ============================================================ */
+.rep { position: fixed; inset: 0; z-index: 320; background: #000; }
+.rep-img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.rep-blind {
+  position: absolute; inset: 0; display: grid; place-items: center; margin: 0;
+  font: 500 12px/1 var(--mono); color: var(--ink-3);
+}
+.rep-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+  background: linear-gradient(to top, rgba(6, 6, 7, 0.8), transparent);
+}
+.rep-track { flex: 1; position: relative; display: flex; align-items: center; }
+.rep-scrub { flex: 1; min-height: 32px; accent-color: var(--accent); cursor: pointer; }
+.rep-t { font: 500 11px/1 var(--mono); color: var(--ink-2); min-width: 88px; text-align: right; }
+
+/* event ticks ride over the scrubber. the strip is click-through so dragging the
+   range still works; only the ticks themselves take a click (jump to that beat). */
+.rep-ticks { position: absolute; inset: 0 6px; pointer-events: none; }
+.rep-tick {
+  position: absolute; top: 2px; width: 3px; height: 11px; padding: 0;
+  margin-left: -1.5px; border: 0; border-radius: 1px; cursor: pointer;
+  background: var(--ink-2); pointer-events: auto;
+}
+.rep-tick::after { content: ""; position: absolute; inset: -12px -8px; } /* finger-sized hit box */
+.rep-tick:hover, .rep-tick:focus-visible { height: 15px; top: 0; }
+.rep-tick.k-find     { background: var(--accent); }
+.rep-tick.k-analysis { background: var(--go); }
+.rep-tick.k-sage     { background: var(--ink-2); }
+.rep-tick.k-blk      { background: var(--warn); }
+.rep-tick.k-dead     { background: var(--abort); }
+.rep-tick.k-back     { background: var(--go); }
+
+/* the run's own label, and the called-out event under it */
+.rep-badge {
+  position: absolute; top: 14px; left: 16px; z-index: 6; margin: 0;
+  font: 700 10px/1 var(--grotesk); letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink-2); background: var(--glass); border: 1px solid var(--line-2);
+  border-radius: 3px; padding: 7px 10px;
+}
+.rep-event {
+  position: absolute; top: 52px; left: 16px; z-index: 6; margin: 0;
+  max-width: min(440px, 60vw); display: flex; flex-direction: column; gap: 4px;
+  padding: 9px 12px; border-left: 2px solid currentColor; border-radius: 0 3px 3px 0;
+  background: rgba(6, 6, 7, 0.72); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  animation: repEvent 260ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+.rep-event b { font: 700 10px/1 var(--grotesk); letter-spacing: 0.16em; }
+.rep-event span { font: 500 12px/1.45 var(--grotesk); color: var(--ink); }
+.rep-event.k-find     { color: var(--accent); }
+.rep-event.k-analysis { color: var(--go); }
+.rep-event.k-sage     { color: var(--ink-2); }
+.rep-event.k-blk      { color: var(--warn); }
+.rep-event.k-dead     { color: var(--abort); }
+.rep-event.k-back     { color: var(--go); }
+@keyframes repEvent { from { opacity: 0; transform: translateX(-10px); } }
+
+/* cam died mid-run: the frame is frozen, so say so instead of letting it read live */
+.rep-img.is-stale { filter: grayscale(1) brightness(0.55); }
+.rep-dead {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 7; margin: 0;
+  font: 700 11px/1 var(--grotesk); letter-spacing: 0.18em; color: var(--abort);
+  border: 1px solid var(--abort); border-radius: 3px; padding: 10px 14px;
+  background: rgba(6, 6, 7, 0.7); animation: recPulse 1.6s ease-in-out infinite;
+}
+
+/* why the last record attempt was refused, under the hud that refused it */
+.rec-err {
+  position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 20; margin: 0;
+  font: 600 10px/1 var(--grotesk); letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--abort); border: 1px solid var(--abort); border-radius: 3px; padding: 7px 10px;
+  background: rgba(6, 6, 7, 0.72);
+}
+.hud-btn.is-rec.is-err { color: var(--abort); border-color: var(--abort); }
+
+.rep-list-frame { width: min(560px, 92vw); height: auto; max-height: 80dvh; }
+.rep-list { overflow-y: auto; padding: 10px 14px 16px; }
+.rep-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line-2); }
+.rep-open {
+  flex: 1; display: flex; flex-direction: column; gap: 4px; align-items: flex-start;
+  min-height: 44px; padding: 10px 4px; background: none; border: 0; cursor: pointer; text-align: left;
+}
+.rep-open b { font: 700 13px/1.2 var(--grotesk); color: var(--ink); }
+.rep-open small { font: 500 10.5px/1.2 var(--mono); color: var(--ink-3); }
+.rep-open:hover b { color: var(--accent); }
+/* rec sits in the fpv hud with the other pad-labelled buttons; armed it pulses red */
+.hud-btn.is-rec.is-on {
+  color: var(--abort); border-color: var(--abort);
+  animation: recPulse 1.4s ease-in-out infinite;
+}
+@keyframes recPulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .hud-btn.is-rec.is-on { animation: none; } }
