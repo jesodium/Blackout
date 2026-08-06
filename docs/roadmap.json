@@ -1,12 +1,19 @@
 [
   {
     "version": "V1",
+    "codename": "Relay",
     "now": false,
+    "thumb": "assets/v1-rover.jpg",
     "image": "assets/v1-rover.jpg",
     "en": {
       "state": "Retired",
       "desc": "Two boards and a relay. A Mega read the sensors, an Uno drove the motors, an ESP32 carried Bluetooth between them.",
       "cap": "V1 · the two-board build",
+      "stats": [
+        { "label": "Lines of code", "value": "3,658" },
+        { "label": "Boards", "value": "3" },
+        { "label": "Sensors", "value": "2" }
+      ],
       "features": [
         { "label": "Several boards", "has": false },
         { "label": "Camera", "has": false },
@@ -18,6 +25,11 @@
       "state": "Retirado",
       "desc": "Dos placas y un relé. Una Mega leía los sensores, una Uno manejaba los motores, y un ESP32 llevaba Bluetooth entre ambas.",
       "cap": "V1 · la versión de dos placas",
+      "stats": [
+        { "label": "Líneas de código", "value": "3.658" },
+        { "label": "Placas", "value": "3" },
+        { "label": "Sensores", "value": "2" }
+      ],
       "features": [
         { "label": "Varias placas", "has": false },
         { "label": "Cámara", "has": false },
@@ -28,50 +40,74 @@
   },
   {
     "version": "V2",
+    "codename": "Archeologist",
     "now": false,
-    "image": null,
+    "thumb": "assets/rover.jpg",
+    "image": "assets/rover-cave.jpg",
     "en": {
-      "state": "Retired",
+      "state": "Soon phased out",
       "desc": "Collapsed to a single Uno R4 WiFi, added the ESP32-CAM on its own network, and introduced Sage as the voice of the robot.",
+      "stats": [
+        { "label": "Lines of code", "value": "6,398" },
+        { "label": "Boards", "value": "2" },
+        { "label": "Sensors", "value": "2" }
+      ],
       "features": [
         { "label": "AI Paired with the Camera", "has": true },
         { "label": "Camera", "has": true },
         { "label": "Speaks its findings", "has": true },
         { "label": "Runs autonomously", "has": false }
-      ]
+      ],
+      "cap": "V2 · in the cave"
     },
     "es": {
-      "state": "Retirado",
+      "state": "Pronto retirado",
       "desc": "Se redujo a una sola Uno R4 WiFi, se añadió la ESP32-CAM en su propia red, y se presentó a Sage como la voz del robot.",
+      "stats": [
+        { "label": "Líneas de código", "value": "6.398" },
+        { "label": "Placas", "value": "2" },
+        { "label": "Sensores", "value": "2" }
+      ],
       "features": [
         { "label": "IA integrada con la cámara", "has": true },
         { "label": "Cámara", "has": true },
         { "label": "Habla sus hallazgos", "has": true },
         { "label": "Funciona de forma autónoma", "has": false }
-      ]
+      ],
+      "cap": "V2 · en la cueva"
     }
   },
   {
     "version": "V3",
+    "codename": "Magnum",
     "now": true,
-    "image": "assets/shot-console.jpg",
+    "thumb": null,
+    "image": null,
     "en": {
-      "state": "Shipping now",
+      "state": "Testing in progress",
       "desc": "Giga R1 WiFi, runs became the BLK language, findings log with saved frames, one command flashes both boards. The competition build.",
-      "cap": "V3 · the console, mid-run",
+      "stats": [
+        { "label": "Lines of code", "value": "16,009" },
+        { "label": "Boards", "value": "2" },
+        { "label": "Sensors", "value": "2" }
+      ],
       "features": [
         { "label": "AI Paired with the Camera", "has": true },
         { "label": "Camera", "has": true },
         { "label": "Speaks its findings", "has": true },
         { "label": "MCP server support", "has": false },
-        { "label": "Redesigned, smarter Sage", "has": false },
+        { "label": "Redesigned, smarter Sage", "has": true },
         { "label": "Expansion ports", "has": false }
       ]
     },
     "es": {
-      "state": "Entregando ahora",
+      "state": "En pruebas",
       "desc": "Giga R1 WiFi, las rutinas se convirtieron en el lenguaje BLK, registro de hallazgos con imágenes guardadas, un solo comando programa ambas placas. La versión de competencia.",
-      "cap": "V3 · la consola, en plena misión",
+      "stats": [
+        { "label": "Líneas de código", "value": "16.009" },
+        { "label": "Placas", "value": "2" },
+        { "label": "Sensores", "value": "2" }
+      ],
       "features": [
         { "label": "IA integrada con la cámara", "has": true },
         { "label": "Cámara", "has": true },
@@ -84,11 +120,18 @@
   },
   {
     "version": "V4",
+    "codename": "Codename Pending",
     "now": false,
+    "thumb": null,
     "image": null,
     "en": {
       "state": "In design",
       "desc": "Not built. Machine learning on the rover: a trained model calling what it sees, closed-loop motion from wheel encoders, gas and orientation sensing.",
+      "stats": [
+        { "label": "Lines of code", "value": "—" },
+        { "label": "Boards", "value": "2" },
+        { "label": "Sensors", "value": "5" }
+      ],
       "features": [
         { "label": "Machine learning on board", "has": true },
         { "label": "Closed-loop motion", "has": true },
@@ -99,6 +142,11 @@
     "es": {
       "state": "En diseño",
       "desc": "Aún no construida. Aprendizaje automático a bordo: un modelo entrenado que reconoce lo que ve, movimiento en lazo cerrado con encoders de rueda, detección de gas y orientación.",
+      "stats": [
+        { "label": "Líneas de código", "value": "—" },
+        { "label": "Placas", "value": "2" },
+        { "label": "Sensores", "value": "5" }
+      ],
       "features": [
         { "label": "Aprendizaje automático a bordo", "has": true },
         { "label": "Movimiento en lazo cerrado", "has": true },
