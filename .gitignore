@@ -6,6 +6,8 @@
 
 # ── Node / Server ───────────────────────────────────────
 server/node_modules/
+electron/node_modules/
+electron/dist/
 server/.env
 server/.env.local
 server/.env*.local
@@ -27,6 +29,8 @@ yarn-error.log*
 # Arduino IDE temp files
 *.d
 build/
+# the Arduino build/ pattern above must not eat the app icons + entitlements
+!electron/build/
 # Sketch secrets (WiFi creds) — commit the .example, never the real header
 arduino_secrets.h
 
