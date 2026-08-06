@@ -13,6 +13,7 @@ const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
 const { eyeParts, grabFrames, setLed, getLed, pingCam } = require("./vision");
 const { parseSage } = require("./sage");
+const recorder = require("./recorder");
 
 const openai = new OpenAI({
   baseURL: "https://api.cerebras.ai/v1",
@@ -199,6 +200,7 @@ function processLine(raw) {
   latestData = data;
   dataHistory.push(data);
   if (dataHistory.length > 1000) dataHistory.shift();
+  recorder.push(data); // no-op unless a run is being recorded
   io.emit("sensor-data", data);
   maybeAutoAnalyze(data);
 }
@@ -219,6 +221,26 @@ app.post("/api/mega/sensor", (req, res) => {
   for (const l of lines) processLine(l);
   res.json({ ok: true, lines: lines.length });
 });
+
+// --- mission recordings: telemetry + cam stills, played back in the dashboard ---
+// not gated behind mirror-mode grant: recording touches nothing on the robot.
+app.use("/recordings", express.static(recorder.DIR));
+app.get("/api/rec", (req, res) => res.json({ now: recorder.state(), runs: recorder.list() }));
+// no cam, no recording — a run with no video is a scrubber over a black screen,
+// and the operator finds out after the run instead of before it.
+app.post("/api/rec/start", async (req, res) => {
+  if (!(await pingCam())) return res.status(503).json({ error: "camera offline — nothing to record" });
+  res.json({ now: recorder.start(req.body?.name) });
+});
+app.post("/api/rec/stop", (req, res) => {
+  const run = recorder.stop();
+  res.json({ id: run?.id || null });
+});
+app.get("/api/rec/:id", (req, res) => {
+  const run = recorder.read(req.params.id);
+  run ? res.json(run) : res.status(404).json({ error: "no such run" });
+});
+app.delete("/api/rec/:id", (req, res) => res.json({ ok: recorder.remove(req.params.id) }));
 
 // --- bluetooth "bridge" intent flag ---
 // the actual ble connection lives in the browser (web bluetooth). these just
@@ -358,6 +380,7 @@ app.post("/api/blk-ask", async (req, res) => {
     const extra = d ? buildChatContext(d) : "No live readings right now — running dark.";
     const out = await sageDecide(question, { images, extra: sim ? `Simulated readings:\n${JSON.stringify(d)}` : extra });
     io.emit("blk-decision", { kind: "ask", question, ...out, sim, timestamp: Date.now() });
+    recorder.mark("blk", `${question} → ${out.yes ? "yes" : "no"}`);
     res.json(out);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -376,6 +399,7 @@ app.post("/api/blk-find", async (req, res) => {
     const out = await sageDecide(`Look at your forward camera view. Is there ${thing} in it?`, { images });
     if (out.yes) recordFinding(`found: ${thing}${out.text ? " — " + out.text : ""}`, lastImage([{ content: images }]));
     io.emit("blk-decision", { kind: "find", question: thing, ...out, timestamp: Date.now() });
+    recorder.mark("blk", `find ${thing} → ${out.yes ? "found" : "not found"}`);
     res.json(out);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -509,6 +533,7 @@ function recordFinding(text, dataUrl) {
     } catch (e) { console.error("finding still:", e.message); } // log it text-only
   }
   io.emit("sage-finding", { id: `${at}-${Math.random()}`, text, img, timestamp: at });
+  recorder.mark("finding", text);
 }
 
 // sage now answers in json: { text, status, action, led, finding }. text is the only
@@ -618,7 +643,11 @@ function emitBlurt(prev, cur) {
       if (!best || RANK[cur[k]] > RANK[cur[best]]) best = k;
     }
   }
-  if (best) { lastBlurt = Date.now(); io.emit("agent-blurt", { text: lines[best][cur[best]], timestamp: Date.now() }); }
+  if (best) {
+    lastBlurt = Date.now();
+    io.emit("agent-blurt", { text: lines[best][cur[best]], timestamp: Date.now() });
+    recorder.mark("sage", lines[best][cur[best]]);
+  }
 }
 
 function maybeAutoAnalyze(data) {
@@ -647,6 +676,7 @@ async function ackMission(text) {
     : "Copy that. Mission's locked in — heading in.";
   if (!process.env.CEREBRAS_API_KEY) {
     io.emit("mission-ack", { text: fallback, status: null, timestamp: Date.now() });
+    recorder.mark("sage", fallback);
     return;
   }
   try {
@@ -656,9 +686,11 @@ async function ackMission(text) {
       { role: "user", content: `The operator is briefing you on the mission before you head in: "${text}". Acknowledge it back in character in one or two sentences — confirm you've got it and you're ready. Don't ask questions, just lock it in.` },
     ], { maxTokens: 150 });
     io.emit("mission-ack", { text: sage.text || fallback, status: sage.status, timestamp: Date.now() });
+    recorder.mark("sage", sage.text || fallback);
   } catch (err) {
     console.error("Mission ack error:", err.message);
     io.emit("mission-ack", { text: fallback, status: null, timestamp: Date.now() });
+    recorder.mark("sage", fallback);
   }
 }
 
@@ -726,9 +758,11 @@ async function runAiAnalysis(mode, focus) {
       { role: "user", content: eyes.length ? [{ type: "text", text: promptText }, ...eyes] : promptText },
     ], { maxTokens: 400 });
     io.emit("ai-analysis", { analysis: sage.text || "No analysis returned.", status: sage.status, timestamp: Date.now() });
+    recorder.mark("analysis", sage.text || "No analysis returned.");
   } catch (err) {
     console.error("AI analysis error:", err.message);
     io.emit("ai-analysis", { error: err.message, timestamp: Date.now() });
+    recorder.mark("analysis", "analysis failed: " + err.message);
   } finally {
     io.emit("cam-resume");
   }
