@@ -11,9 +11,9 @@
 
 #define DHT_PIN 2   // dht11 data pin. d2 = clean digital; not d13 (onboard led
                     // shares that line and glitches the timing).
-#define TRIG_PIN 23 // moved off d11 — d11 now oled mosi (spi)
-#define ECHO_PIN 12
-// oled debug screen, bit-banged (sw) spi on d13/d11.
+#define TRIG_PIN 32
+#define ECHO_PIN 34
+// oled debug screen, bit-banged (sw) spi on the double-row header.
 // IMPORTANT NOTE: giga has two spi buses — the arduino "SPI" object u8g2's hw-spi
 // mode drives is pins 89-91 on the high-density connector, NOT the d11-d13 header
 // pins (those are "SPI1", a separate object u8g2 can't target). sw spi bit-bangs
@@ -25,10 +25,12 @@
 // are. if the screen shows noise/garbage (not just blank), it's probably really
 // an sh1106 or ssd1309 — swap the constructor below for
 // U8G2_SH1106_128X64_NONAME_F_4W_SW_SPI or U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI.
-#define OLED_CLK 13
-#define OLED_DATA 11
-#define OLED_RST A0
-#define OLED_DC A1
+// all four on the double-row header (even side, d22-d28) — keeps the whole panel
+// on one connector and leaves d11/d13 and the analog pins free.
+#define OLED_CLK 28
+#define OLED_DATA 26
+#define OLED_RST 24
+#define OLED_DC 22
 // panel's mounted portrait in the enclosure (64 wide x 128 tall as drawn), not
 // landscape — U8G2_R1 rotates the buffer 90° to match. swap to U8G2_R3 if a
 // remount ever flips which edge is "up".
@@ -58,8 +60,8 @@ unsigned long lastOledPhase = 0;
                                   // name/serial banner below — one literal, three
                                   // spots, so they can't drift out of sync again
 // l298n direction pins. d4-d7 = contiguous free block, no timer/peripheral
-// conflict (d11/d12 sonar, d2 dht, d13 onboard led all clear). d9 is free —
-// it drove the camera servo before the camera was fixed.
+// conflict (d32/d34 sonar, d2 dht, d22-d28 oled, d13 onboard led all clear).
+// d9, d11 and d12 are free — d9 drove the camera servo before the camera was fixed.
 #define IN1 4  // motor a
 #define IN2 5
 #define IN3 6  // motor b
@@ -190,7 +192,10 @@ void setup() {
   Serial.setTimeout(50); // readstringuntil on a partial line must not block the
                          // default 1s — that stalls ble.poll + the routine stepper
   pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
+  // IMPORTANT NOTE: pulldown, not bare INPUT. on the giga a floating echo pin sits
+  // HIGH, so pulsein() never sees a rising edge, times out, and every reading comes
+  // back -1 (999 on the dashboard) even with the sensor wired correctly.
+  pinMode(ECHO_PIN, INPUT_PULLDOWN);
 
   oled.begin();
   updateOled();
