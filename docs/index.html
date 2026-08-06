@@ -9,7 +9,8 @@
 <link rel="icon" href="assets/mark.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<!-- Archivo is the console's ui face — the agent tile is a copy of it, so it needs the same type -->
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
 <style>
 /* ============ tokens ============ */
 :root{
@@ -17,6 +18,7 @@
   --line:rgba(255,255,255,.09); --line-2:rgba(255,255,255,.18);
   --ink:#f3f0ea; --muted:#a29c93; --dim:#6d6862;
   --accent:#e0a45c; --accent-hi:#efb571; --accent-ink:#1a1409;
+  --go:#2fb182;                               /* the console's "clear" green, for sage */
   --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
   --serif:"Instrument Serif",Georgia,serif;   /* codenames only — the one voice that isn't machine */
   --ease:cubic-bezier(.22,1,.36,1);
@@ -50,26 +52,61 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .btn-primary:hover{background:var(--accent-hi);border-color:var(--accent-hi)}
 .btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
 
-/* ============ topbar ============ */
-.top{position:sticky;top:0;z-index:20;border-bottom:1px solid var(--line);
-  background:rgba(14,14,16,.88);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
-.top .wrap{display:flex;align-items:center;gap:18px;min-height:60px}
+/* ============ topbar — floating oval ============ */
+/* fixed, not sticky: the pill rides over the hero video instead of pushing it
+   down, so the hero gets the whole viewport. .hero's 120px top padding already
+   leaves the clearance this needs. */
+.top{position:fixed;top:14px;left:0;right:0;z-index:20}
+.top .wrap{display:flex;align-items:center;gap:18px;min-height:56px;
+  padding:0 10px 0 22px;border:1px solid var(--line-2);border-radius:999px;
+  background:rgba(14,14,16,.72);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  box-shadow:0 14px 38px -22px #000,inset 0 1px 0 rgba(255,255,255,.05)}
 .top .links{display:flex;gap:18px;margin-left:auto;font-size:12.5px;color:var(--muted)}
 .top .links a:hover{color:var(--accent)}
-.top .btn{padding:9px 16px;font-size:12px}
-@media (max-width:680px){.top .links{display:none}}
+.top .btn{padding:9px 18px;font-size:12px;border-radius:999px}
+/* links carry the margin-left:auto that pushes the cta right — hiding them
+   would strand the cta next to the mark, so it takes the auto margin over */
+@media (max-width:680px){.top .links{display:none}.top .btn{margin-left:auto}}
 
 /* ============ hero ============ */
-.hero{border-top:0;padding-top:clamp(56px,10vh,110px);padding-bottom:clamp(64px,11vh,120px)}
-.hero h1{font-size:clamp(2.4rem,7vw,4.4rem);max-width:14ch;margin-bottom:18px}
+.hero{position:relative;isolation:isolate;border-top:0;overflow:hidden;min-height:100svh;
+  display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;
+  padding:120px 24px 90px}
+.hero video{position:absolute;inset:0;z-index:-3;width:100%;height:100%;object-fit:cover;object-position:50% 62%;
+  filter:brightness(.55) saturate(.65)}
+.hero .wash{position:absolute;inset:0;z-index:-2;background:
+  radial-gradient(120% 90% at 50% 30%,rgba(10,10,12,.25) 0%,rgba(10,10,12,.7) 62%,rgba(10,10,12,.97) 100%),
+  linear-gradient(0deg,var(--bg) 0%,rgba(10,10,12,.55) 26%,rgba(10,10,12,.15) 55%)}
+/* scanline sweep */
+.hero .scan{position:absolute;inset:0;z-index:-1;pointer-events:none;overflow:hidden}
+.hero .scan::before{content:"";position:absolute;left:0;right:0;height:120px;top:-140px;
+  background:linear-gradient(0deg,transparent,rgba(224,164,92,.06),transparent);
+  animation:scan 7s linear infinite}
+@keyframes scan{to{transform:translateY(calc(100svh + 280px))}}
+.scrollcue{position:absolute;bottom:26px;left:50%;translate:-50% 0;font-family:var(--mono);font-size:10px;
+  letter-spacing:.3em;text-transform:uppercase;color:var(--dim);display:flex;flex-direction:column;align-items:center;gap:10px}
+.scrollcue::after{content:"";width:1px;height:34px;background:linear-gradient(var(--accent),transparent);
+  animation:drip 1.8s var(--ease) infinite}
+@keyframes drip{from{transform:scaleY(0);transform-origin:top}45%{transform:scaleY(1);transform-origin:top}
+  55%{transform:scaleY(1);transform-origin:bottom}to{transform:scaleY(0);transform-origin:bottom}}
+.hero h1{font-size:clamp(2.6rem,8vw,6rem);max-width:13ch;margin:0 auto 20px;text-shadow:0 4px 40px rgba(0,0,0,.6)}
 .hero h1 span{color:var(--accent)}
-.hero .lede{font-size:16px;margin-bottom:28px}
-.hero .cta{display:flex;gap:12px;flex-wrap:wrap}
-.hero figure{margin-top:clamp(34px,6vh,60px);border:1px solid var(--line);border-radius:14px;overflow:hidden}
-.hero figure video{width:100%;aspect-ratio:16/8;object-fit:cover;object-position:50% 62%}
-.wro{display:flex;align-items:center;gap:10px;margin-bottom:22px;font-size:11px;letter-spacing:.12em;
-  text-transform:uppercase;color:var(--dim)}
-.wro img{height:13px;width:auto;background:#f3f0ea;border-radius:3px;padding:3px 5px;box-sizing:content-box}
+.hero .lede{font-size:16px;margin:0 auto 32px}
+.hero .cta{display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+.hero .cta .btn-ghost{background:rgba(14,14,16,.45);backdrop-filter:blur(8px)}
+.wro{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:22px;font-size:11px;letter-spacing:.12em;
+  text-transform:uppercase;color:#fff}
+.wro img{height:20px;width:auto;background:#f3f0ea;border-radius:4px;padding:4px 7px;box-sizing:content-box}
+
+/* ============ telemetry ticker ============ */
+.ticker{border-bottom:1px solid var(--line);overflow:hidden;padding:18px 0;
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);
+  mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)}
+.ticker .lane{display:flex;gap:48px;width:max-content;animation:marquee 30s linear infinite}
+.ticker:hover .lane{animation-play-state:paused}
+.ticker span{font-family:var(--mono);font-size:12px;letter-spacing:.12em;color:var(--dim);white-space:nowrap;text-transform:uppercase}
+.ticker i{font-style:normal;color:var(--accent)}
+@keyframes marquee{to{transform:translateX(-50%)}}
 
 /* ============ the run — four plain columns ============ */
 .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:22px}
@@ -96,6 +133,396 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .step p{color:var(--muted);font-size:13px;line-height:1.55}
 @media (max-width:900px){.steps{grid-template-columns:1fr 1fr}}
 @media (max-width:520px){.steps{grid-template-columns:1fr}}
+
+/* ============ the console — a collage of working pieces of the app ============
+   three of the four tiles are not pictures of the console, they *are* it: the camera
+   picker, sage's face and the routine builder run right here. only the two frames that
+   need real hardware behind them (the rover render, the fpv feed) are stills. */
+.collage{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;align-items:stretch}
+.tile{position:relative;display:flex;flex-direction:column;background:var(--bg-2);
+  border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  transition:border-color 200ms ease}
+.tile:hover,.tile:focus-within{border-color:var(--line-2)}
+.tile .cap{padding:13px 16px 15px;border-top:1px solid var(--line);background:var(--bg-2)}
+.tile h3{font-size:12px;letter-spacing:.14em;text-transform:uppercase;font-weight:500;margin-bottom:6px}
+.tile p{color:var(--muted);font-size:12.5px;line-height:1.5}
+.tile .hint{display:block;margin-top:7px;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
+.stage{position:relative;flex:1;min-height:0;overflow:hidden;background:#0a0a0b}
+.t-3d{grid-column:span 7}
+.t-sage{grid-column:span 5;grid-row:span 2}
+.t-fpv{grid-column:span 7}
+.t-blk{grid-column:span 12;overflow:visible}
+
+/* --- the 3d viewport: the console's own scene (js/scene.js, three.js), running here.
+   the chrome around it is the console's too, so the tokens are re-declared like the
+   agent tile's and the rules stay selector-for-selector the app's. --- */
+.stage-3d{
+  --panel:#101012; --inset:#060607; --glass:rgba(9,9,10,.72);
+  --line:rgba(236,229,214,.09); --line-2:rgba(236,229,214,.22);
+  --ink:#ece5d6; --ink-2:#a09888; --ink-3:#6a6455;
+  --grotesk:'Archivo',system-ui,-apple-system,sans-serif; --r-s:9px;
+  aspect-ratio:16/10;background:var(--inset)}
+.stage-view{position:absolute;inset:0;overflow:hidden;container-type:size}
+.stage-view--3d canvas#vis-canvas{width:100%!important;height:100%!important;display:block}
+.stage-3d.is-free canvas#vis-canvas{touch-action:none}
+/* the still stands in until the model is on screen — and stays if webgl is missing */
+.view-poster{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 46%;
+  z-index:1;transition:opacity 400ms var(--ease)}
+.view-poster.is-gone{opacity:0;pointer-events:none}
+.stage-chip{
+  position:absolute;top:10px;right:10px;z-index:3;
+  font:700 9px/1 var(--grotesk);letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-2);background:var(--glass);border:1px solid var(--line);
+  border-radius:99px;padding:6px 10px;
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.hud-btn{
+  font:700 10px/1 var(--grotesk);letter-spacing:.12em;text-transform:uppercase;
+  min-height:32px;padding:0 12px;cursor:pointer;border-radius:var(--r-s);
+  color:var(--ink-2);background:var(--glass);border:1px solid var(--line-2);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  transition:color .14s,background .14s,border-color .14s}
+.hud-btn:hover{color:var(--ink);border-color:var(--ink-2)}
+.hud-btn.is-active{color:#09090a;background:var(--ink);border-color:var(--ink)}
+.hud-cams{position:absolute;top:10px;left:10px;z-index:3;display:flex;flex-direction:column;gap:5px}
+.compass{position:absolute;top:46px;right:10px;z-index:3;display:flex;flex-direction:column;align-items:center;gap:4px}
+.compass svg{width:52px;height:52px}
+.compass span{font:700 8.5px/1 var(--grotesk);letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3)}
+.hud-tele{
+  position:absolute;left:10px;right:10px;bottom:10px;z-index:3;
+  display:flex;flex-wrap:wrap;gap:4px 24px;
+  background:var(--glass);border:1px solid var(--line);border-radius:10px;
+  padding:9px 14px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.hud-tele div{display:flex;align-items:baseline;gap:8px}
+.hud-tele dt{font:700 8.5px/1 var(--grotesk);letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3)}
+.stage-3d .hud-tele dd{font:500 13px/1 var(--mono);color:var(--ink);font-variant-numeric:tabular-nums}
+
+/* --- fpv: the frame drifts under the pointer, the hud drifts against it --- */
+.stage-fpv{--px:0;--py:0;aspect-ratio:16/9;cursor:crosshair}
+.stage-fpv img{width:100%;height:100%;object-fit:cover;scale:1.14;
+  translate:calc(var(--px) * -18px) calc(var(--py) * -14px);
+  transition:translate 400ms var(--ease),scale 400ms var(--ease)}
+.stage-fpv:hover img{scale:1.2}
+.fpv-hud{position:absolute;inset:0;pointer-events:none;
+  translate:calc(var(--px) * 9px) calc(var(--py) * 7px);transition:translate 400ms var(--ease)}
+.fpv-hud::before,.fpv-hud::after{content:"";position:absolute;left:50%;top:50%;background:rgba(224,164,92,.55)}
+.fpv-hud::before{width:26px;height:1px;translate:-50% 0}
+.fpv-hud::after{width:1px;height:26px;translate:0 -50%}
+.fpv-ring{position:absolute;left:50%;top:50%;width:88px;height:88px;translate:-50% -50%;border-radius:50%;
+  border:1px solid rgba(224,164,92,.22)}
+
+/* --- sage: the console's agent panel, ported 1:1 from server/public/css/style.css.
+   the console's own tokens are re-declared on the tile so the block below can stay
+   selector-for-selector identical to the app's — the only edits are the `.stage-sage`
+   prefixes that beat the landing page's own `.tile h3` / `.tile p` / `.btn` rules. --- */
+.stage-sage{
+  --panel:#101012; --panel-2:#17171a; --inset:#060607;
+  --line:rgba(236,229,214,.09); --line-2:rgba(236,229,214,.22);
+  --ink:#ece5d6; --ink-2:#a09888; --ink-3:#6a6455;
+  --accent:#e1a95f;
+  --go:#3fcf8e; --go-bg:rgba(63,207,142,.14);
+  --warn:#f3b62b; --warn-bg:rgba(243,182,43,.14);
+  --abort:#ff3b2f; --abort-bg:rgba(255,59,47,.16);
+  --grotesk:'Archivo',system-ui,-apple-system,sans-serif;
+  --r-s:9px;
+  display:flex;flex-direction:column;background:var(--panel);
+  font-family:var(--grotesk);line-height:1.5;color:var(--ink)}
+
+.stage-sage .zone-head{
+  flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:12px;
+  min-height:38px;padding:5px 14px;border-bottom:1px solid var(--line)}
+.stage-sage .zone-title{
+  font:700 11.5px/1 var(--grotesk);letter-spacing:.15em;text-transform:uppercase;
+  color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0}
+.stage-sage .tag{
+  font:600 9.5px/1 var(--grotesk);letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-3);border:1px solid var(--line);border-radius:99px;padding:4px 9px;white-space:nowrap}
+
+.stage-sage .btn{
+  font:700 11px/1.2 var(--grotesk);letter-spacing:.1em;text-transform:uppercase;
+  min-height:40px;padding:0 16px;cursor:pointer;border-radius:var(--r-s);
+  color:var(--ink-2);background:transparent;border:1px solid var(--line-2);
+  transition:color .15s,background .15s,border-color .15s,transform .12s ease,box-shadow .18s ease}
+.stage-sage .btn:hover{color:var(--ink);border-color:var(--ink-2);background:var(--panel-2)}
+.stage-sage .btn:disabled{opacity:.4;cursor:not-allowed}
+.stage-sage .btn:not(:disabled):active{transform:translateY(1px) scale(.99)}
+.stage-sage .btn--primary{color:#09090a;background:var(--accent);border-color:var(--accent)}
+.stage-sage .btn--primary:hover{color:#09090a;background:#f0bd7c;border-color:#f0bd7c;
+  transform:translateY(-1px);box-shadow:0 6px 18px -8px var(--accent)}
+
+.agent-body{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.agent-topbar{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 14px 0}
+.agent-topbar-spacer{flex:1}
+.agent-back{
+  align-self:flex-start;padding:6px 10px;background:transparent;border-radius:99px;
+  border:1px solid var(--line-2);color:var(--ink-2);font:600 10px var(--mono);letter-spacing:.04em;
+  max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* the voice picker is a picture of the console's — nothing to switch without tts here */
+.agent-voice-sel{pointer-events:none;flex-shrink:0;min-height:30px;font-size:11px;padding:0 24px 0 8px;
+  font-family:var(--grotesk);color:var(--ink-2);background-color:transparent;
+  border:1px solid var(--line-2);border-radius:var(--r-s)}
+
+.agent-stage{
+  position:relative;flex:1 1 auto;min-height:44px;container-type:size;overflow:hidden;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;
+  padding:14px;margin:10px 14px 0;border-radius:10px;
+  background:var(--inset);border:1px solid var(--line);
+  color:var(--agent-c,var(--ink-2));            /* glyph color follows intent */
+  transition:color .45s ease}
+.agent-grid{
+  position:absolute;inset:0;z-index:0;opacity:.08;color:currentColor;
+  background-image:radial-gradient(circle,currentColor .6px,transparent .7px);
+  background-size:15px 15px;
+  -webkit-mask-image:radial-gradient(circle at center,#000 28%,transparent 72%);
+          mask-image:radial-gradient(circle at center,#000 28%,transparent 72%)}
+
+/* halo rings pulsing behind glyph */
+.agent-orb{position:relative;z-index:1;display:grid;place-items:center;
+  width:min(clamp(64px,10dvh,118px),64cqh);height:min(clamp(64px,10dvh,118px),64cqh)}
+.agent-orb::before,.agent-orb::after{
+  content:"";position:absolute;inset:14px;border:1px solid currentColor;border-radius:50%;
+  opacity:0;animation:orb-halo 3.2s ease-out infinite}
+.agent-orb::after{animation-delay:1.6s}
+@keyframes orb-halo{0%{transform:scale(.6);opacity:.3}100%{transform:scale(1.3);opacity:0}}
+.stage-sage.is-alert .agent-orb::before,.stage-sage.is-alert .agent-orb::after{animation-duration:1.4s}
+
+/* the glyph */
+.ai-glyph{position:relative;z-index:1;display:block;overflow:visible;
+  width:min(clamp(40px,6dvh,68px),40cqh);height:min(clamp(40px,6dvh,68px),40cqh)}
+@container (max-height:108px){.agent-state-label,.agent-eq{display:none}}
+.ai-glyph *{
+  fill:none;stroke:currentColor;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round;
+  transform-box:fill-box;transform-origin:center}
+.ai-glyph .g-fill{fill:currentColor;stroke:none}
+.ai-glyph .g-faint{opacity:.22}
+.ai-glyph .g-spin{transform-box:view-box;transform-origin:60px 60px}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes breathe{0%,100%{transform:scale(.86);opacity:.6}50%{transform:scale(1.1);opacity:1}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.32}}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+@keyframes draw{to{stroke-dashoffset:0}}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+@keyframes pop{0%{transform:scale(.7);opacity:0}60%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
+
+.stage-sage.is-idle .g-core,.stage-sage.is-idle .g-ring{animation:breathe 2.6s ease-in-out infinite}
+.stage-sage.is-idle .g-ring{animation-duration:3.4s}
+
+.agent-analyzing-label{
+  position:relative;z-index:1;color:var(--agent-c,var(--ink));
+  font:700 12px/1 var(--grotesk);letter-spacing:.26em;text-transform:uppercase;
+  display:inline-flex;align-items:center;gap:3px}
+.agent-analyzing-label::after{content:"\2026";display:inline-block;animation:blink 1.1s ease-in-out infinite}
+.stage-sage.is-scanning .g-sweep{animation:spin 2.6s linear infinite}
+.stage-sage.is-scanning .g-wedge{opacity:.5}
+.stage-sage.is-scanning .g-blip{animation:blink 1.1s ease-in-out infinite}
+.stage-sage.is-clear .g-ring2{stroke-dasharray:214;stroke-dashoffset:214;animation:draw .6s ease forwards}
+.stage-sage.is-clear .g-check{stroke-dasharray:60;stroke-dashoffset:60;
+  animation:draw .45s .3s ease forwards,bob 2.6s .9s ease-in-out infinite}
+.stage-sage.is-caution .g-tri{animation:pop .4s ease,blink 1.3s .4s ease-in-out infinite}
+.stage-sage.is-caution .g-bang,.stage-sage.is-caution .g-dot2{animation:blink 1.3s ease-in-out infinite}
+.stage-sage.is-alert .ai-glyph{animation:shake .5s ease-in-out infinite}
+.stage-sage.is-alert .g-tri{animation:pop .3s ease,blink .6s .3s steps(2,jump-none) infinite}
+.stage-sage.is-alert .g-bang,.stage-sage.is-alert .g-dot2{animation:blink .6s steps(2,jump-none) infinite}
+
+.agent-state-label{
+  position:relative;z-index:1;color:currentColor;
+  display:flex;flex-direction:column;align-items:center;gap:10px;
+  font:700 10px/1 var(--grotesk);letter-spacing:.26em;text-transform:uppercase;
+  animation:agent-text-in .4s ease}
+.agent-state-label .sage-face{font-size:26px}
+
+/* sage's face — lifted from server/public/css/style.css so the landing page blinks
+   the same way the console does. every offset is in em, so it scales with font-size. */
+.sage-face{--sf-gx:0em;--sf-gy:0em;position:relative;display:inline-flex;align-items:center;justify-content:center;
+  color:currentColor;font:700 1em/1 var(--mono);letter-spacing:.12em;white-space:pre;user-select:none;
+  text-shadow:0 0 .35em color-mix(in srgb,currentColor 45%,transparent);
+  animation:sf-bob 3.4s ease-in-out infinite}
+.sf-scan{display:inline-flex;align-items:baseline;translate:var(--sf-gx) var(--sf-gy);
+  transition:translate .28s cubic-bezier(.2,.7,.2,1)}
+.sf-eye{position:relative;display:inline-block;transition:scale .3s cubic-bezier(.2,1.2,.4,1)}
+.sf-eye b{font-weight:inherit}
+.sf-shut{position:absolute;left:0;top:0;opacity:0}
+.sf-open,.sf-shut{animation:sf-open 4.6s steps(1,end) infinite}
+.sf-shut{animation-name:sf-close}
+.sf-r .sf-open,.sf-r .sf-shut{animation-delay:.06s}
+.sf-mouth{display:inline-block;transition:scale .3s ease}
+.sf-z{position:absolute;right:-.35em;top:-.1em;font-size:.5em;opacity:0}
+@keyframes sf-open{0%,89%,93%,100%{opacity:1}90%,92%{opacity:0}}
+@keyframes sf-close{0%,89%,93%,100%{opacity:0}90%,92%{opacity:1}}
+@keyframes sf-bob{0%,100%{translate:0 0}50%{translate:0 -.08em}}
+@keyframes sf-sweep{0%,10%{translate:-.16em var(--sf-gy)}45%,55%{translate:.16em var(--sf-gy)}92%,100%{translate:0 var(--sf-gy)}}
+@keyframes sf-shake{0%,100%{translate:0 0}25%{translate:-.07em 0}75%{translate:.07em 0}}
+@keyframes sf-pulse{0%,100%{scale:1}50%{scale:1.25}}
+@keyframes sf-breath{0%,100%{scale:1 1}50%{scale:1.06 .85}}
+@keyframes sf-ponder{0%,100%{rotate:-4deg}50%{rotate:4deg}}
+@keyframes sf-hop{0%,60%,100%{translate:0 0}25%{translate:0 -.16em}40%{translate:0 -.04em}}
+@keyframes sf-snooze{0%{opacity:0;translate:0 0;scale:.7}25%{opacity:.8}100%{opacity:0;translate:.25em -.7em;scale:1.2}}
+.sage-face.is-idle .sf-open,.sage-face.is-idle .sf-shut{animation:none}
+.sage-face.is-idle .sf-scan{animation:sf-breath 4s ease-in-out infinite}
+.sage-face.is-idle .sf-z{animation:sf-snooze 3.4s ease-in-out infinite}
+.sage-face.is-scanning .sf-scan,.sage-face.is-work .sf-scan{animation:sf-sweep 3.2s ease-in-out infinite}
+.sage-face.is-work .sf-open,.sage-face.is-work .sf-shut{animation-duration:1.6s}
+.sage-face.is-thinking{animation:sf-ponder 3.6s ease-in-out infinite}
+.sage-face.is-thinking .sf-l{scale:.8}
+.sage-face.is-thinking .sf-r{scale:1.15}
+.sage-face.is-clear .sf-open,.sage-face.is-clear .sf-shut{animation:none}
+.sage-face.is-clear{animation:sf-hop 2.4s ease-in-out infinite}
+.sage-face.is-caution .sf-mouth{animation:sf-pulse 1.1s ease-in-out infinite}
+.sage-face.is-caution .sf-open,.sage-face.is-caution .sf-shut{animation-duration:2.4s}
+.sage-face.is-alert .sf-open,.sage-face.is-alert .sf-shut{animation:none}
+.sage-face.is-alert .sf-scan{animation:sf-shake .32s ease-in-out infinite}
+
+/* voice equalizer (speaking) */
+.agent-eq{position:relative;z-index:1;display:flex;align-items:flex-end;gap:3px;height:15px;color:currentColor}
+.agent-eq i{width:3px;height:100%;border-radius:99px;background:currentColor;transform-origin:bottom;
+  animation:eq .8s ease-in-out infinite}
+.agent-eq i:nth-child(2){animation-delay:.16s}
+.agent-eq i:nth-child(3){animation-delay:.32s}
+.agent-eq i:nth-child(4){animation-delay:.48s}
+.agent-eq i:nth-child(5){animation-delay:.22s}
+@keyframes eq{0%,100%{transform:scaleY(.28)}50%{transform:scaleY(1)}}
+
+/* what the agent says */
+.agent-speech{padding:8px 16px 0}
+.stage-sage .agent-text{
+  margin:0;padding-left:13px;border-left:2px solid var(--agent-c,var(--accent));color:var(--ink);
+  font:400 13.5px/1.55 var(--grotesk);
+  min-height:1.6em;animation:agent-text-in .4s ease;transition:border-color .45s ease}
+.stage-sage.is-analyzing .agent-text{color:var(--ink-2)}
+.stage-sage .agent-text.sage-clear{border-left-color:var(--go)}
+.stage-sage .agent-text.sage-caution{border-left-color:var(--warn)}
+.stage-sage .agent-text.sage-danger{border-left-color:var(--abort)}
+@keyframes agent-text-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+.agent-timing{margin-top:5px;padding-left:13px;
+  font:500 9.5px/1 var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3)}
+.agent-timing b{color:var(--ink-2);font-weight:700}
+.agent-timing.is-live,.agent-timing.is-live b{color:var(--agent-c,var(--accent))}
+
+/* go/no-go verdict */
+.verdict{
+  margin:8px 16px 0;padding:7px 12px;display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;
+  border:1px solid var(--line);border-left:3px solid var(--ink-3);border-radius:8px;
+  background:rgba(236,229,214,.03);transition:border-color .3s ease,background .3s ease}
+.verdict-k{font:700 9px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.verdict-label{font:800 15px/1.2 var(--grotesk);letter-spacing:.05em;text-transform:uppercase;color:var(--ink)}
+.stage-sage .verdict-cause{flex-basis:100%;font:500 10.5px/1.35 var(--mono);letter-spacing:.03em;
+  text-transform:uppercase;color:var(--ink-2)}
+.verdict.is-go{border-left-color:var(--go);background:var(--go-bg)} .verdict.is-go .verdict-label{color:var(--go)}
+.verdict.is-warn{border-left-color:var(--warn);background:var(--warn-bg)} .verdict.is-warn .verdict-label{color:var(--warn)}
+.verdict.is-abort{border-left-color:var(--accent);background:var(--abort-bg)} .verdict.is-abort .verdict-label{color:var(--accent)}
+
+.agent-foot{flex-shrink:0;display:flex;align-items:stretch;gap:6px;padding:8px 16px 6px}
+.agent-foot .btn--primary{flex:1}
+.foot-icon{flex:none;width:42px;padding:0;display:grid;place-items:center;font-size:14px}
+
+/* secondary actions live behind ⋯ so the foot is one primary button wide */
+.foot-menu{position:relative;flex-shrink:0}
+.foot-menu>summary{list-style:none;letter-spacing:.1em}
+.foot-menu>summary::-webkit-details-marker{display:none}
+.foot-menu::details-content{content-visibility:visible}
+.foot-menu-pop{
+  position:absolute;z-index:6;right:0;bottom:calc(100% + 6px);min-width:190px;
+  display:flex;flex-direction:column;padding:5px;gap:2px;
+  background:var(--panel);border:1px solid var(--line-2);border-radius:10px;
+  box-shadow:0 -10px 30px rgba(0,0,0,.45);
+  visibility:hidden;opacity:0;transform:translateY(6px) scale(.97);transform-origin:bottom right;
+  transition:opacity .14s ease,transform .14s ease,visibility 0s .14s}
+.foot-menu[open] .foot-menu-pop{visibility:visible;opacity:1;transform:none;
+  transition:opacity .14s ease,transform .14s ease,visibility 0s}
+.menu-item{
+  text-align:left;cursor:pointer;padding:8px 10px;border:0;border-radius:7px;
+  background:transparent;color:var(--ink-2);font:500 12px var(--grotesk);
+  transition:color .14s,background .14s}
+.menu-item:hover:not(:disabled){color:var(--ink);background:var(--inset)}
+.menu-item:disabled{opacity:.4;cursor:not-allowed}
+.menu-label{padding:5px 10px 3px;font:700 8.5px/1 var(--grotesk);letter-spacing:.16em;
+  text-transform:uppercase;color:var(--ink-3)}
+.menu-sep{height:0;margin:4px 6px;border:0;border-top:1px solid var(--line)}
+.agent-hist{padding:0 16px 8px;position:relative}
+.stage-sage.is-analyzing .zone-title{animation:blink .9s ease-in-out infinite}
+
+.ai-hist>summary{
+  font:700 9.5px/1 var(--grotesk);letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink-3);cursor:pointer;padding:6px 0;list-style:none}
+.ai-hist>summary::-webkit-details-marker{display:none}
+.ai-hist>summary:hover{color:var(--ink)}
+.ai-hist>summary::before{content:"▸ ";color:var(--accent)}
+.ai-hist[open]>summary::before{content:"▾ "}
+.ai-hist-list{display:flex;flex-direction:column;gap:4px;margin-top:8px;max-height:168px;overflow-y:auto}
+/* open history floats over the panel — expanding in flow would grow the box past the tile */
+.agent-hist[open] .ai-hist-list{
+  position:absolute;z-index:5;left:16px;right:16px;bottom:calc(100% - 4px);
+  padding:8px;background:var(--panel);border:1px solid var(--line-2);border-radius:10px;
+  box-shadow:0 -10px 30px rgba(0,0,0,.45)}
+.ai-hist-item{
+  display:flex;gap:10px;padding:8px 10px;background:var(--inset);border-radius:8px;
+  border:1px solid transparent;cursor:pointer;font:400 12px/1.45 var(--grotesk);color:var(--ink-2);
+  transition:color .14s,background .14s,border-color .14s,transform .14s ease}
+.ai-hist-item:hover{border-color:var(--line-2);background:var(--panel-2);color:var(--ink);transform:translateX(3px)}
+.ai-hist-time{font:500 10px/1.45 var(--mono);color:var(--accent);flex-shrink:0}
+.ai-hist-empty{font:400 11.5px/1.45 var(--grotesk);color:var(--ink-3);padding:8px 10px}
+
+/* --- blk: a routine you can actually build, next to a recording of the real editor --- */
+.lab{display:grid;grid-template-columns:1fr 1fr;min-height:296px}
+.lab-build{display:grid;grid-template-rows:auto 1fr auto;gap:10px;padding:14px;min-width:0}
+.pal{display:flex;flex-wrap:wrap;gap:6px}
+.pal button{padding:7px 11px;border-radius:99px;cursor:pointer;border:1px solid transparent;
+  font-family:var(--mono);font-size:11px;color:#0e0e10;font-weight:500;
+  transition:transform 140ms var(--ease),filter 140ms ease}
+.pal button:hover{transform:translateY(-2px);filter:brightness(1.12)}
+.op-move{background:#5b9df9}.op-turn{background:#e0a45c}.op-say{background:#b28cf0}
+.lab-body{display:grid;grid-template-columns:minmax(120px,.9fr) 1fr;gap:10px;min-height:0}
+.prog{list-style:none;display:flex;flex-direction:column;gap:5px;overflow:auto;padding-right:2px;min-height:0}
+.prog li{display:flex;align-items:center;gap:6px;padding:6px 9px;border-radius:7px;cursor:pointer;
+  font-size:11px;color:#0e0e10;font-weight:500;transition:box-shadow 160ms ease,opacity 160ms ease}
+.prog li.now{box-shadow:0 0 0 2px var(--ink)}
+.prog li .x{margin-left:auto;opacity:.45;font-size:13px;line-height:1}
+.prog li:hover .x{opacity:1}
+.prog .empty{color:var(--dim);font-size:11.5px;padding:6px 0;cursor:default;background:none}
+.arena{display:block;width:100%;height:100%;min-height:150px;border:1px solid var(--line);
+  border-radius:8px;background:#0a0a0b}
+.lab-run{display:flex;align-items:center;gap:8px}
+.lab-run button{padding:8px 14px;border-radius:8px;cursor:pointer;border:1px solid var(--line-2);
+  background:transparent;color:var(--ink);font-family:var(--mono);font-size:11px;letter-spacing:.12em;
+  text-transform:uppercase;transition:background-color 150ms ease,color 150ms ease,border-color 150ms ease}
+.lab-run button:hover{border-color:var(--accent);color:var(--accent)}
+.lab-run #blkRun{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:500}
+.lab-run #blkRun:hover{background:var(--accent-hi);color:var(--accent-ink)}
+.lab-run .out{margin-left:auto;font-size:10.5px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase}
+/* the recording of the editor: hover pulls it out of the tile */
+.tape{position:relative;overflow:hidden;border-left:1px solid var(--line);background:#000;
+  transition:transform 420ms var(--ease),box-shadow 420ms var(--ease)}
+.tape video{width:100%;height:100%;object-fit:cover;object-position:50% 40%}
+.tape .badge{position:absolute;left:12px;bottom:12px;padding:5px 10px;border-radius:99px;
+  background:rgba(14,14,16,.78);border:1px solid var(--line);backdrop-filter:blur(6px);
+  font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+@media (hover:hover) and (min-width:901px){
+  .tape:hover{transform:scale(1.55);transform-origin:100% 50%;z-index:6;
+    box-shadow:0 30px 70px rgba(0,0,0,.7);border-radius:12px}
+  .tape:hover .badge{opacity:0}
+}
+
+@media (max-width:900px){
+  .t-3d,.t-fpv,.t-blk{grid-column:span 12}
+  .t-sage{grid-column:span 12;grid-row:auto}
+  .lab{grid-template-columns:1fr}
+  /* stacked, the 16/10 frame is too short for the hud — the rail and the telemetry
+     ribbon end up on top of each other. give the viewport a squarer frame instead */
+  .stage-3d{aspect-ratio:1/1}
+  .hud-tele{gap:4px 14px;padding:8px 10px}
+  .stage-3d .hud-tele dd{font-size:12px}
+  /* stacked, the tile is content-sized, so the stage's height is indefinite and its
+     container query (the glyph is sized in cqh) resolves to zero — pin it instead */
+  .stage-sage .agent-stage{flex:none;height:300px}
+  .tape{border-left:0;border-top:1px solid var(--line);aspect-ratio:16/10}
+}
+@media (prefers-reduced-motion:reduce){
+  .sage-face,.sage-face *{animation:none!important;transition:opacity .2s ease}
+  .sage-face .sf-shut,.sage-face .sf-z{opacity:0}
+  .sage-face .sf-open{opacity:1}
+  .stage-fpv img,.fpv-hud{translate:none!important}
+}
 
 /* ============ pricing ============ */
 .plan{display:grid;grid-template-columns:1fr 1fr;gap:clamp(24px,4vw,48px);align-items:start;
@@ -199,6 +626,7 @@ footer nav a:hover{color:var(--accent)}
   html{scroll-behavior:auto}
   *{animation:none!important;transition-duration:1ms!important}
   .js [data-reveal]{opacity:1;transform:none}
+  .hero video{display:none}
 }
 </style>
 </head>
@@ -209,6 +637,7 @@ footer nav a:hover{color:var(--accent)}
     <a href="#top"><img src="assets/mark.svg" alt="Blackout" height="22" style="width:auto"></a>
     <div class="links">
       <a href="#run" data-i18n="nav.run">The run</a>
+      <a href="#app" data-i18n="nav.app">The app</a>
       <a href="#pricing" data-i18n="nav.pricing">Pricing</a>
       <a href="#roadmap" data-i18n="nav.roadmap">Models</a>
       <a href="#sponsors" data-i18n="nav.sponsors">Sponsors</a>
@@ -218,8 +647,11 @@ footer nav a:hover{color:var(--accent)}
 </div>
 
 <header class="hero" id="top">
+  <video src="assets/hero.mp4" poster="assets/hero-poster.jpg" muted autoplay loop playsinline aria-hidden="true" tabindex="-1"></video>
+  <div class="wash" aria-hidden="true"></div>
+  <div class="scan" aria-hidden="true"></div>
   <div class="wrap">
-    <p class="wro"><img src="assets/wro.png" width="136" height="22" alt="World Robot Olympiad"><span data-i18n="wro.strip">WRO 2026 · Future Innovators</span></p>
+    <p class="wro"><img src="assets/wro.png" width="136" height="22" alt="World Robot Olympiad"><span data-i18n="wro.strip">Future Innovators</span></p>
     <h1 id="heroTitle" data-i18n-html="hero.title">Send it into the <span>dark.</span></h1>
     <p class="lede" data-i18n="hero.lede">A recon rover for places people should not enter. It drives in, looks around, and says what it sees.</p>
     <div class="cta">
@@ -229,11 +661,13 @@ footer nav a:hover{color:var(--accent)}
         GitHub
       </a>
     </div>
-    <figure>
-      <video src="assets/hero.mp4" poster="assets/rover.jpg" muted autoplay loop playsinline aria-label="The rover driving across open ground."></video>
-    </figure>
   </div>
+  <p class="scrollcue" aria-hidden="true">Scroll</p>
 </header>
+
+<div class="ticker" aria-hidden="true">
+  <div class="lane" id="lane"></div>
+</div>
 
 <section id="run">
   <div class="wrap">
@@ -267,6 +701,168 @@ footer nav a:hover{color:var(--accent)}
   </div>
 </section>
 
+<section id="app">
+  <div class="wrap">
+    <div class="head" data-reveal>
+      <p class="eyebrow" data-i18n="app.eyebrow">The console</p>
+      <h2 data-i18n="app.h2">One dashboard, everything the rover knows.</h2>
+      <p class="lede" data-i18n="app.lede">Real screens, straight out of the app. Drive it, watch its sensors, brief Sage on the mission — one laptop on the surface, running the whole thing.</p>
+    </div>
+    <div class="collage">
+      <figure class="tile t-3d" data-reveal>
+        <!-- the console's live view (ThreeDeeBox in app.js): same scene, same hud, same
+             camera presets. the readings are simulated — no rover on the other end. -->
+        <div class="stage stage-3d" id="camStage">
+          <div class="stage-view stage-view--3d">
+            <canvas id="vis-canvas"></canvas>
+            <img class="view-poster" id="camPoster" src="assets/cam-isometric.jpg" data-i18n-alt="app.shot1" alt="A live 3D render of the rover's chassis, tilting and turning with its real orientation readings.">
+            <span class="stage-chip" data-i18n="app.gyro">Gyro · Locked</span>
+            <div class="hud-cams" role="group" aria-label="Camera angle">
+              <button type="button" class="hud-btn is-active" data-cam="isometric" data-i18n="app.cam1">isometric</button>
+              <button type="button" class="hud-btn" data-cam="front" data-i18n="app.cam2">front</button>
+              <button type="button" class="hud-btn" data-cam="top" data-i18n="app.cam3">top</button>
+              <button type="button" class="hud-btn" data-cam="side" data-i18n="app.cam4">side</button>
+              <button type="button" class="hud-btn" data-cam="free" data-i18n="app.cam5">free</button>
+            </div>
+            <div class="compass" aria-hidden="true">
+              <svg id="camCompass" viewBox="0 0 100 100">
+                <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(236,229,214,0.28)" stroke-width="1.5"/>
+                <text x="50" y="25" fill="#ece5d6" font-size="13" font-weight="700" text-anchor="middle" font-family="Archivo, sans-serif">N</text>
+                <polygon points="50,15 45,50 55,50" fill="#3b82f6"/>
+                <polygon points="50,85 45,50 55,50" fill="rgba(236,229,214,0.4)"/>
+              </svg>
+              <span data-i18n="app.heading">Heading</span>
+            </div>
+            <dl class="hud-tele">
+              <div><dt data-i18n="app.hudDist">Dist</dt><dd id="hudDist">— cm</dd></div>
+              <div><dt data-i18n="app.hudRoll">Roll</dt><dd id="hudRoll">—°</dd></div>
+              <div><dt data-i18n="app.hudPitch">Pitch</dt><dd id="hudPitch">—°</dd></div>
+              <div><dt data-i18n="app.hudYaw">Yaw</dt><dd id="hudYaw">—°</dd></div>
+            </dl>
+          </div>
+        </div>
+        <figcaption class="cap">
+          <h3 data-i18n="app.shot1h">Recon, in 3D</h3>
+          <p data-i18n="app.shot1p">The chassis tilts and turns on screen exactly as the real one does underground — roll, pitch and heading, read straight off the sensors.</p>
+          <span class="hint" data-i18n="app.hint1">Pick an angle →</span>
+        </figcaption>
+      </figure>
+
+      <figure class="tile t-sage" data-reveal>
+        <!-- the console's agent card, node for node (server/public/js/app.js → Agent).
+             the model behind it is the only thing missing: the replies are canned. -->
+        <div class="stage stage-sage is-clear" id="sageZone" style="--agent-c:var(--go)">
+          <div class="zone-head">
+            <h3 class="zone-title" data-i18n="app.agent">Agent</h3>
+            <span class="tag" data-i18n="app.sageOnline">Online</span>
+          </div>
+          <div class="agent-body">
+            <div class="agent-topbar">
+              <span class="agent-back" data-i18n="app.session">← Sessions · Cave survey</span>
+              <select class="agent-voice-sel" id="sageVoice" tabindex="-1" aria-hidden="true">
+                <option value="edge" selected data-i18n="app.voiceEdge">🔊 Voice · Edge</option>
+              </select>
+            </div>
+            <div class="agent-stage">
+              <span class="agent-grid" aria-hidden="true"></span>
+              <div class="agent-orb" id="sageOrb"></div>
+              <span class="agent-state-label" id="sageLabel">
+                <span class="sage-face is-clear" id="sageFace" aria-hidden="true">
+                  <span class="sf-scan">
+                    <span class="sf-eye sf-l"><b class="sf-open">^</b><b class="sf-shut">-</b></span>
+                    <span class="sf-mouth">_</span>
+                    <span class="sf-eye sf-r"><b class="sf-open">^</b><b class="sf-shut">-</b></span>
+                  </span>
+                  <span class="sf-z">z</span>
+                </span>
+                <span id="sageState" data-i18n="app.intentClear">All Clear</span>
+              </span>
+            </div>
+            <div class="agent-speech">
+              <p class="agent-text sage-clear" id="sageSay" role="status" aria-live="polite" data-i18n="app.sageHello">I'll help you with anything.</p>
+              <div class="agent-timing" id="sageTiming">LLM <b>1.4s</b> · TTS <b>0.6s</b></div>
+            </div>
+            <div class="verdict is-go" id="sageVerdict" role="status" aria-live="polite">
+              <span class="verdict-k" data-i18n="app.entryStatus">Entry Status</span>
+              <strong class="verdict-label" id="sageVerdictLabel" data-i18n="app.verdictSafe">Safe</strong>
+              <span class="verdict-cause" id="sageVerdictCause" data-i18n="app.verdictNominal">All readings nominal</span>
+            </div>
+            <div class="agent-foot">
+              <button type="button" class="btn btn--primary" id="sageRun" data-i18n="app.runAnalysis">Run Analysis</button>
+              <details class="foot-menu" id="sageMenu">
+                <summary class="btn foot-icon" data-i18n-title="app.more" aria-label="More actions">⋯</summary>
+                <div class="foot-menu-pop">
+                  <span class="menu-label" data-i18n="app.askPick">Suggested questions</span>
+                  <button type="button" class="menu-item" data-ask="0" data-i18n="app.askS0">What's ahead?</button>
+                  <button type="button" class="menu-item" data-ask="1" data-i18n="app.askS1">Is the air breathable?</button>
+                  <button type="button" class="menu-item" data-ask="2" data-i18n="app.askS2">Any gas danger?</button>
+                  <button type="button" class="menu-item" data-ask="3" data-i18n="app.askS3">Are we level?</button>
+                  <button type="button" class="menu-item" data-ask="4" data-i18n="app.askS4">Push on or back out?</button>
+                </div>
+              </details>
+            </div>
+            <details class="ai-hist agent-hist">
+              <summary id="sageHistSum">History · 0</summary>
+              <div class="ai-hist-list" id="sageHist">
+                <p class="ai-hist-empty" data-i18n="app.histEmpty">Nothing asked yet.</p>
+              </div>
+            </details>
+          </div>
+        </div>
+        <figcaption class="cap">
+          <h3 data-i18n="app.shot3h">Sage, on call</h3>
+          <p data-i18n="app.shot3p">Briefed on the mission, Sage calls the entry status, narrates what the camera sees, and talks back the moment you ask it something.</p>
+          <span class="hint" data-i18n="app.hint3">Ask it something →</span>
+        </figcaption>
+      </figure>
+
+      <figure class="tile t-fpv" data-reveal>
+        <div class="stage stage-fpv" id="fpvStage">
+          <img src="assets/shot-fpv-near.jpg" loading="lazy" data-i18n-alt="app.shot2" alt="The full-screen FPV view: camera feed, heading tape, distance reticle and Sage's voice bar.">
+          <div class="fpv-hud" aria-hidden="true"><span class="fpv-ring"></span></div>
+        </div>
+        <figcaption class="cap">
+          <h3 data-i18n="app.shot2h">FPV mode</h3>
+          <p data-i18n="app.shot2p">One tap and the whole screen becomes the camera feed — heading tape, distance reticle, Sage talking over the top.</p>
+          <span class="hint" data-i18n="app.hint2">Move over the frame →</span>
+        </figcaption>
+      </figure>
+
+      <figure class="tile t-blk" data-reveal>
+        <div class="lab">
+          <div class="lab-build">
+            <div class="pal" id="blkPal">
+              <button type="button" class="op-move" data-op="fwd" data-i18n="app.blkFwd">forward</button>
+              <button type="button" class="op-move" data-op="back" data-i18n="app.blkBack">back</button>
+              <button type="button" class="op-turn" data-op="left" data-i18n="app.blkLeft">turn left</button>
+              <button type="button" class="op-turn" data-op="right" data-i18n="app.blkRight">turn right</button>
+              <button type="button" class="op-say" data-op="say" data-i18n="app.blkSay">say</button>
+            </div>
+            <div class="lab-body">
+              <ol class="prog" id="blkProg"></ol>
+              <canvas class="arena" id="blkArena" width="520" height="400" aria-label="Simulated rover path"></canvas>
+            </div>
+            <div class="lab-run">
+              <button type="button" id="blkRun" data-i18n="app.blkRun">Run</button>
+              <button type="button" id="blkClear" data-i18n="app.blkClear">Clear</button>
+              <span class="out" id="blkOut"></span>
+            </div>
+          </div>
+          <div class="tape">
+            <video src="assets/clip-blkedit.mp4" poster="assets/clip-blkedit.jpg" muted autoplay loop playsinline
+                   preload="metadata" data-i18n-alt="app.shot4" aria-label="A screen recording of the BLK editor: a block dragged in from the palette, its duration retyped, then the routine run in the simulator."></video>
+            <span class="badge" data-i18n="app.blkTape">The real editor</span>
+          </div>
+        </div>
+        <figcaption class="cap">
+          <h3 data-i18n="app.shot4h">BLK routines</h3>
+          <p data-i18n="app.shot4p">Drag a few blocks together and the rover runs the mission on its own — the routine survives even if the link back to it drops.</p>
+          <span class="hint" data-i18n="app.hint4">Build one, run it · hover the tape →</span>
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
 
 <section id="pricing">
   <div class="wrap">
@@ -347,6 +943,7 @@ footer nav a:hover{color:var(--accent)}
     <p data-i18n="footer.p">A WRO 2026 Future Innovators project.</p>
     <nav>
       <a href="#run" data-i18n="nav.run">The run</a>
+      <a href="#app" data-i18n="nav.app">The app</a>
       <a href="#pricing" data-i18n="nav.pricing">Pricing</a>
       <a href="#roadmap" data-i18n="nav.roadmap">Models</a>
       <a href="sponsors.html" data-i18n="nav.sponsors">Sponsors</a>
@@ -374,8 +971,8 @@ const DICT = {
       title: "Blackout · Recon rover for the dark",
       desc: "Blackout is a recon rover built for WRO 2026 Future Innovators. It drives into places people should not enter, looks around, and reports back out loud."
     },
-    wro: { strip: "WRO 2026 · Future Innovators" },
-    nav: { run: "The run", pricing: "Pricing", roadmap: "Models", sponsors: "Sponsors", get: "Get Blackout" },
+    wro: { strip: "Future Innovators" },
+    nav: { run: "The run", app: "The app", pricing: "Pricing", roadmap: "Models", sponsors: "Sponsors", get: "Get Blackout" },
     hero: {
       title: 'Send it into the <span>dark.</span>',
       lede: "A recon rover for places people should not enter. It drives in, looks around, and says what it sees."
@@ -387,6 +984,44 @@ const DICT = {
       step2: { h3: "Live telemetry", p: "Distance, temperature, humidity and heading stream back, next to the camera feed.", alt: "An operator driving the rover on a gamepad with the console and camera feed on screen." },
       step3: { h3: "Sage speaks", p: "The onboard voice names what the camera sees, out loud, in English or Spanish.", alt: "Sage reading the telemetry aloud and calling the entry status." },
       step4: { h3: "Findings log", p: "Anything worth a second look is saved with its frame, so you can walk the run back.", alt: "The session report listing the mission, the readings and every finding." }
+    },
+    app: {
+      eyebrow: "The console", h2: "One dashboard, everything the rover knows.",
+      lede: "Real screens, straight out of the app. Drive it, watch its sensors, brief Sage on the mission — one laptop on the surface, running the whole thing.",
+      shot1: "A live 3D render of the rover's chassis, tilting and turning with its real orientation readings.",
+      shot1h: "Recon, in 3D", shot1p: "The chassis tilts and turns on screen exactly as the real one does underground — roll, pitch and heading, read straight off the sensors.",
+      shot2: "The full-screen FPV view: camera feed, heading tape, distance reticle and Sage's voice bar.",
+      shot2h: "FPV mode", shot2p: "One tap and the whole screen becomes the camera feed — heading tape, distance reticle, Sage talking over the top.",
+      shot3: "Sage's agent panel, showing an entry status of SAFE, a spoken update, and a run analysis button.",
+      shot3h: "Sage, on call", shot3p: "Briefed on the mission, Sage calls the entry status, narrates what the camera sees, and talks back the moment you ask it something.",
+      shot4: "A screen recording of the BLK editor: a block dragged in from the palette, its duration retyped, then the routine run in the simulator.",
+      shot4h: "BLK routines", shot4p: "Drag a few blocks together and the rover runs the mission on its own — the routine survives even if the link back to it drops.",
+      hint1: "Pick an angle · free to orbit →", hint2: "Move over the frame →", hint3: "Ask it something →", hint4: "Build one, run it · hover the tape →",
+      cam1: "isometric", cam2: "front", cam3: "top", cam4: "side", cam5: "free",
+      gyro: "Gyro · Locked", heading: "Heading",
+      hudDist: "Dist", hudRoll: "Roll", hudPitch: "Pitch", hudYaw: "Yaw",
+      /* the agent tile speaks the console's own strings — same keys, same wording as js/i18n.js */
+      agent: "Agent", session: "← Sessions · Cave survey", sageOnline: "Online", sageHello: "I'll help you with anything.",
+      voiceEdge: "🔊 Voice · Edge",
+      more: "More actions", askPick: "Suggested questions",
+      askS0: "What's ahead?", askS1: "Is the air breathable?", askS2: "Any gas danger?",
+      askS3: "Are we level?", askS4: "Push on or back out?",
+      runAnalysis: "Run Analysis", analyzing: "Analyzing…",
+      history: "History · {n}", histEmpty: "Nothing asked yet.", thinking: "Thinking…",
+      intentIdle: "Standby", intentScanning: "Scanning", intentThinking: "Analyzing",
+      intentClear: "All Clear", intentCaution: "Caution",
+      entryStatus: "Entry Status", verdictSafe: "Safe", verdictCaution: "Caution",
+      verdictNominal: "All readings nominal", verdictAir: "Air quality · Elevated",
+      verdictDist: "Distance · Close",
+      sageA0: "Gallery runs on about four metres, then bends left. 62 cm to the near wall, floor is dry, nothing moving.",
+      sageA1: "Air quality reads 430 ppm and holding, 24 °C, 58 % humidity. Breathable — I'd still keep the run short.",
+      sageA2: "CO₂ is climbing down the left branch — 780 ppm and rising. Not dangerous yet, but I wouldn't take that fork.",
+      sageA3: "Roll 2°, pitch −4°. Slightly nose-down, well inside what the chassis handles.",
+      sageA4: "Push on. Readings are steady, the wall on my right is 17 cm off, and there's room to turn around at the bend.",
+      sageARun: "Full sweep done. Wall on my right at 17 cm, air clean, chassis level. Painted surface on the left is worth a second look.",
+      blkFwd: "forward", blkBack: "back", blkLeft: "turn left", blkRight: "turn right", blkSay: "say",
+      blkRun: "Run", blkClear: "Clear", blkTape: "The real editor",
+      blkEmpty: "Tap a block to add it. Tap a step to drop it.", blkDone: "routine finished"
     },
     pricing: {
       eyebrow: "Pricing", h2: "It arrives ready to drive.",
@@ -414,8 +1049,8 @@ const DICT = {
       title: "Blackout · Róver de reconocimiento para la oscuridad",
       desc: "Blackout es un róver de reconocimiento construido para la WRO 2026 Future Innovators. Entra en lugares donde nadie debería entrar, mira alrededor e informa en voz alta."
     },
-    wro: { strip: "WRO 2026 · Future Innovators" },
-    nav: { run: "El recorrido", pricing: "Precio", roadmap: "Modelos", sponsors: "Patrocinadores", get: "Consigue Blackout" },
+    wro: { strip: "Future Innovators" },
+    nav: { run: "El recorrido", app: "La app", pricing: "Precio", roadmap: "Modelos", sponsors: "Patrocinadores", get: "Consigue Blackout" },
     hero: {
       title: 'Envíalo a la <span>oscuridad.</span>',
       lede: "Un róver de reconocimiento para lugares donde nadie debería entrar. Entra, mira alrededor y dice lo que ve."
@@ -427,6 +1062,43 @@ const DICT = {
       step2: { h3: "Telemetría en vivo", p: "Distancia, temperatura, humedad y rumbo llegan en tiempo real, junto a la imagen de la cámara.", alt: "Un operador conduciendo el róver con un mando, con la consola y la imagen de la cámara en pantalla." },
       step3: { h3: "Sage habla", p: "La voz a bordo dice en voz alta lo que ve la cámara, en inglés o español.", alt: "Sage leyendo la telemetría en voz alta y anunciando el estado de la entrada." },
       step4: { h3: "Registro de hallazgos", p: "Todo lo que merece una segunda mirada se guarda con su imagen, para repasar la misión después.", alt: "El informe de la sesión con la misión, las lecturas y cada hallazgo." }
+    },
+    app: {
+      eyebrow: "La consola", h2: "Un panel, todo lo que sabe el róver.",
+      lede: "Pantallas reales, directo de la app. Condúcelo, mira sus sensores, informa a Sage de la misión — una sola laptop en la superficie, manejando todo.",
+      shot1: "Un render 3D en vivo del chasis del róver, inclinándose y girando con sus lecturas reales de orientación.",
+      shot1h: "Reconocimiento en 3D", shot1p: "El chasis se inclina y gira en pantalla igual que el real bajo tierra — alabeo, cabeceo y rumbo, leídos directo de los sensores.",
+      shot2: "La vista FPV a pantalla completa: imagen de cámara, cinta de rumbo, retícula de distancia y la barra de voz de Sage.",
+      shot2h: "Modo FPV", shot2p: "Un toque y toda la pantalla se vuelve la cámara — cinta de rumbo, retícula de distancia, Sage hablando encima.",
+      shot3: "El panel de Sage, con estado de entrada SAFE, una respuesta hablada y un botón para correr el análisis.",
+      shot3h: "Sage, en línea", shot3p: "Ya informado de la misión, Sage anuncia el estado de entrada, narra lo que ve la cámara y responde en el momento en que le preguntas algo.",
+      shot4: "Una grabación del editor BLK: un bloque arrastrado desde la paleta, su duración reescrita, y luego la rutina corriendo en el simulador.",
+      shot4h: "Rutinas BLK", shot4p: "Junta unos bloques y el róver corre la misión solo — la rutina sigue aunque se pierda el enlace con ella.",
+      hint1: "Elige un ángulo · libre para orbitar →", hint2: "Mueve el cursor sobre la imagen →", hint3: "Pregúntale algo →", hint4: "Arma una y córrela · pasa el cursor por el video →",
+      cam1: "isométrica", cam2: "frontal", cam3: "superior", cam4: "lateral", cam5: "libre",
+      gyro: "Giro · Fijado", heading: "Rumbo",
+      hudDist: "Dist", hudRoll: "Alabeo", hudPitch: "Cabeceo", hudYaw: "Guiñada",
+      agent: "Agente", session: "← Sesiones · Reconocimiento de cueva", sageOnline: "En Línea", sageHello: "Te ayudo con lo que sea.",
+      voiceEdge: "🔊 Voz · Edge",
+      more: "Más acciones", askPick: "Preguntas sugeridas",
+      askS0: "¿Qué hay adelante?", askS1: "¿El aire es respirable?", askS2: "¿Hay peligro de gas?",
+      askS3: "¿Estamos nivelados?", askS4: "¿Seguir o retroceder?",
+      runAnalysis: "Ejecutar Análisis", analyzing: "Analizando…",
+      history: "Historial · {n}", histEmpty: "Nada preguntado aún.", thinking: "Pensando…",
+      intentIdle: "En Espera", intentScanning: "Escaneando", intentThinking: "Analizando",
+      intentClear: "Todo Despejado", intentCaution: "Precaución",
+      entryStatus: "Estado de Entrada", verdictSafe: "Seguro", verdictCaution: "Precaución",
+      verdictNominal: "Todas las lecturas nominales", verdictAir: "Calidad del aire · Elevada",
+      verdictDist: "Distancia · Cerca",
+      sageA0: "La galería sigue unos cuatro metros y dobla a la izquierda. 62 cm hasta la pared más cercana, el suelo está seco, nada se mueve.",
+      sageA1: "Calidad del aire en 430 ppm y estable, 24 °C, 58 % de humedad. Respirable — aun así haría la incursión corta.",
+      sageA2: "El CO₂ sube por el ramal izquierdo — 780 ppm y subiendo. Todavía no es peligroso, pero yo no tomaría esa bifurcación.",
+      sageA3: "Alabeo 2°, cabeceo −4°. Un poco de morro abajo, bien dentro de lo que aguanta el chasis.",
+      sageA4: "Sigue. Las lecturas están estables, la pared a mi derecha está a 17 cm y hay espacio para dar la vuelta en la curva.",
+      sageARun: "Barrido completo. Pared a mi derecha a 17 cm, aire limpio, chasis nivelado. La superficie pintada de la izquierda merece una segunda mirada.",
+      blkFwd: "avanzar", blkBack: "retroceder", blkLeft: "girar izq.", blkRight: "girar der.", blkSay: "decir",
+      blkRun: "Correr", blkClear: "Borrar", blkTape: "El editor real",
+      blkEmpty: "Toca un bloque para añadirlo. Toca un paso para quitarlo.", blkDone: "rutina terminada"
     },
     pricing: {
       eyebrow: "Precio", h2: "Llega listo para rodar.",
@@ -455,6 +1127,20 @@ const DICT = {
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduced) document.querySelectorAll('video[autoplay]').forEach(v => { v.removeAttribute('autoplay'); v.pause(); });
 
+  /* feature ticker — build one lane, duplicate for the seamless loop */
+  const tickerFeed = [
+    'AGENT <i>SAGE — VISION + VOICE</i>',
+    'ROUTINES <i>SURVIVE A DROPPED LINK</i>',
+    'FEED <i>LIVE MJPEG RECON</i>',
+    'VOICE <i>BILINGUAL, EN · ES</i>',
+    'EDITOR <i>BLK — TOUCH-FIRST MISSIONS</i>',
+    'LOG <i>EVERY FINDING SAVED</i>',
+    'CONTROL <i>GAMEPAD OR AUTOPILOT</i>',
+    'MIRROR <i>JUDGES WATCH LIVE</i>'
+  ];
+  const lane = document.getElementById('lane');
+  if (lane) lane.innerHTML = tickerFeed.concat(tickerFeed).map(t => `<span>${t}</span>`).join('');
+
   /* saved choice wins; otherwise fall back to the browser's own language */
   let currentLang = localStorage.getItem('blk-lang')
     || (navigator.language && navigator.language.toLowerCase().startsWith('es') ? 'es' : 'en');
@@ -472,6 +1158,7 @@ const DICT = {
       const t = dictGet(el.dataset.i18nAlt);
       if (el.tagName === 'IMG') el.alt = t; else el.setAttribute('aria-label', t);
     });
+    document.querySelectorAll('[data-i18n-title]').forEach(el => { el.title = dictGet(el.dataset.i18nTitle); });
     document.getElementById('langSelect').value = currentLang;
   }
 
@@ -605,8 +1292,313 @@ const DICT = {
     if (accent) scramble(accent, accent.textContent, 900);
   }
 
+  /* ---- the console collage: three tiles that actually run ---- */
+
+  /* camera picker — same five angles the console offers, five real renders */
+  /* the 3d viewport — the console's own scene module, three.js and the rover model.
+     it is 3 MB of payload, so none of it is fetched until the tile is near the screen.
+     the telemetry it renders is simulated: a slow sweep of the gallery, closing on a
+     wall and backing off, so the chassis and the distance marker actually move. */
+  const loadScript = (src) => new Promise((ok, no) => {
+    const el = document.createElement('script');
+    el.src = src; el.onload = ok; el.onerror = () => no(new Error(src));
+    document.head.appendChild(el);
+  });
+
+  async function initCams() {
+    const stage = document.getElementById('camStage');
+    if (!stage) return;
+    const btns = [...stage.querySelectorAll('.hud-btn')];
+    const canvas = document.getElementById('vis-canvas');
+    const poster = document.getElementById('camPoster');
+
+    /* wait for the tile to come near before pulling three.js down */
+    await new Promise(go => {
+      const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) { io.disconnect(); go(); } },
+        { rootMargin: '400px' });
+      io.observe(stage);
+    });
+
+    let scene;
+    try {
+      await loadScript('vendor/three.min.js');
+      await loadScript('vendor/GLTFLoader.js');
+      const { createRoverScene } = await import('./js/scene.js');
+      scene = createRoverScene(canvas, { onLog: (msg) => { if (/loaded/i.test(msg)) poster.classList.add('is-gone'); } });
+      scene.bindCompass(document.getElementById('camCompass'));
+    } catch (e) {
+      /* no webgl, or the model never arrived — the still stays up and the rail goes quiet */
+      btns.forEach(b => b.disabled = true);
+      return;
+    }
+
+    btns.forEach(b => b.addEventListener('click', () => {
+      btns.forEach(x => x.classList.toggle('is-active', x === b));
+      stage.classList.toggle('is-free', b.dataset.cam === 'free');
+      scene.setCamera(b.dataset.cam);
+    }));
+
+    /* the readings: a patrol loop, not a recording — same fields the board sends */
+    const out = { dist: document.getElementById('hudDist'), roll: document.getElementById('hudRoll'),
+                  pitch: document.getElementById('hudPitch'), yaw: document.getElementById('hudYaw') };
+    const t0 = performance.now();
+    const step = () => {
+      const t = (performance.now() - t0) / 1000;
+      const d = { roll: Math.sin(t * 0.7) * 4.5, pitch: Math.sin(t * 0.43 + 1) * 3.2,
+                  yaw: Math.sin(t * 0.19) * 38, dist: 68 + Math.sin(t * 0.31) * 45 };
+      scene.setData(d);
+      out.dist.textContent = d.dist.toFixed(0) + ' cm';
+      out.roll.textContent = d.roll.toFixed(1) + '°';
+      out.pitch.textContent = d.pitch.toFixed(1) + '°';
+      out.yaw.textContent = d.yaw.toFixed(1) + '°';
+    };
+    step();
+    if (!reduced) setInterval(step, 100);
+  }
+
+  /* fpv — the frame drifts with the pointer, the reticle drifts against it */
+  function initFpv() {
+    const st = document.getElementById('fpvStage');
+    if (!st) return;
+    const set = (x, y) => { st.style.setProperty('--px', x); st.style.setProperty('--py', y); };
+    st.addEventListener('pointermove', (e) => {
+      const r = st.getBoundingClientRect();
+      set(((e.clientX - r.left) / r.width * 2 - 1).toFixed(3), ((e.clientY - r.top) / r.height * 2 - 1).toFixed(3));
+    }, { passive: true });
+    st.addEventListener('pointerleave', () => set(0, 0));
+  }
+
+  /* sage — the console's agent panel, running here. face, glyphs, intents, verdict and
+     history behave exactly as in app.js; the only difference is that no model answers,
+     so each question has a canned reply and the timings are made up. */
+  const FACES = { idle: ['-', '_', '-'], scanning: ['o', '_', 'o'], thinking: ['o', '_', 'O'], clear: ['^', '_', '^'], caution: [':', 'o', ':'], alert: ['x', '_', 'x'] };
+  const INTENT_C = { idle: 'var(--ink-3)', scanning: 'var(--ink-2)', thinking: 'var(--ink)', clear: 'var(--go)', caution: 'var(--warn)', alert: 'var(--accent)' };
+  /* the glyphs, straight out of AgentIcon() — one svg per intent, the parts animated in css */
+  const GLYPHS = {
+    thinking: `<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true"><circle class="g-faint" cx="60" cy="60" r="40"/>
+      <circle class="g-track" cx="60" cy="60" r="40"/><g class="g-spin g-orbit">
+      <circle class="g-fill g-dot g-dot1" cx="60" cy="20" r="6"/>
+      <circle class="g-fill g-dot g-dot2" cx="60" cy="20" r="6" transform="rotate(120 60 60)"/>
+      <circle class="g-fill g-dot g-dot3" cx="60" cy="20" r="6" transform="rotate(240 60 60)"/></g>
+      <circle class="g-fill g-core" cx="60" cy="60" r="8"/></svg>`,
+    scanning: `<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true"><circle class="g-faint" cx="60" cy="60" r="40"/>
+      <circle class="g-faint" cx="60" cy="60" r="24"/><g class="g-spin g-sweep"><path class="g-fill g-wedge" d="M60 60 L60 22 A38 38 0 0 1 92 41 Z"/></g>
+      <circle class="g-fill g-core" cx="60" cy="60" r="4"/><circle class="g-fill g-blip" cx="84" cy="42" r="3.6"/></svg>`,
+    clear: `<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true"><circle class="g-ring2" cx="60" cy="60" r="34"/>
+      <path class="g-check" d="M44 61 L55 72 L78 47"/></svg>`,
+    caution: `<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true"><path class="g-tri" d="M60 22 L94 84 L26 84 Z"/>
+      <line class="g-bang" x1="60" y1="46" x2="60" y2="66"/><circle class="g-fill g-dot2" cx="60" cy="75" r="3.2"/></svg>`,
+    idle: `<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true"><circle class="g-ring g-faint" cx="60" cy="60" r="34"/>
+      <circle class="g-fill g-core" cx="60" cy="60" r="7"/></svg>`
+  };
+  GLYPHS.alert = GLYPHS.caution;
+  /* one row per menu item (0-4), then the run-analysis reply — reply key, intent, verdict */
+  const REPLIES = [
+    { a: 'sageA0', m: 'clear',   v: ['go',   'verdictSafe',    'verdictNominal'] },
+    { a: 'sageA1', m: 'clear',   v: ['go',   'verdictSafe',    'verdictNominal'] },
+    { a: 'sageA2', m: 'caution', v: ['warn', 'verdictCaution', 'verdictAir'] },
+    { a: 'sageA3', m: 'clear',   v: ['go',   'verdictSafe',    'verdictNominal'] },
+    { a: 'sageA4', m: 'clear',   v: ['go',   'verdictSafe',    'verdictDist'] },
+    { a: 'sageARun', m: 'clear', v: ['go',   'verdictSafe',    'verdictNominal'] }
+  ];
+  function initSage() {
+    const zone = document.getElementById('sageZone'), face = document.getElementById('sageFace'),
+          orb = document.getElementById('sageOrb'), label = document.getElementById('sageLabel'),
+          say = document.getElementById('sageSay'), state = document.getElementById('sageState'),
+          timing = document.getElementById('sageTiming'), verdict = document.getElementById('sageVerdict'),
+          vLabel = document.getElementById('sageVerdictLabel'), vCause = document.getElementById('sageVerdictCause'),
+          run = document.getElementById('sageRun'), hist = document.getElementById('sageHist'),
+          histSum = document.getElementById('sageHistSum');
+    if (!zone) return;
+    const g = [face.querySelector('.sf-l .sf-open'), face.querySelector('.sf-mouth'), face.querySelector('.sf-r .sf-open')];
+    const acts = [...zone.querySelectorAll('.menu-item')];
+    const setMood = (m) => {
+      zone.className = 'stage stage-sage is-' + m;
+      zone.style.setProperty('--agent-c', INTENT_C[m]);
+      orb.innerHTML = GLYPHS[m];
+      face.className = 'sage-face is-' + m;
+      FACES[m].forEach((ch, i) => g[i].textContent = ch);
+    };
+    setMood('clear');
+
+    /* eyes follow the pointer — written straight to css vars, same as the console */
+    addEventListener('pointermove', (e) => {
+      const r = face.getBoundingClientRect();
+      if (!r.width || r.bottom < 0 || r.top > innerHeight) return;
+      const cl = (v) => v < -1 ? -1 : v > 1 ? 1 : v;
+      face.style.setProperty('--sf-gx', (cl((e.clientX - r.left - r.width / 2) / (r.width * 3)) * 0.14).toFixed(3) + 'em');
+      face.style.setProperty('--sf-gy', (cl((e.clientY - r.top - r.height / 2) / (r.height * 3)) * 0.1).toFixed(3) + 'em');
+    }, { passive: true });
+
+    let typer;
+    const type = (el, text) => {
+      clearInterval(typer);
+      if (reduced) { el.textContent = text; return; }
+      let i = 0; el.textContent = '';
+      typer = setInterval(() => { el.textContent = text.slice(0, ++i); if (i >= text.length) clearInterval(typer); }, 15);
+    };
+
+    const log = [];
+    const drawHist = () => {
+      histSum.textContent = dictGet('app.history').replace('{n}', log.length);
+      hist.innerHTML = log.length === 0
+        ? `<p class="ai-hist-empty">${dictGet('app.histEmpty')}</p>`
+        : log.map(h => `<div class="ai-hist-item"><span class="ai-hist-time">${h.time}</span>` +
+            `<span>${h.text.length > 90 ? h.text.slice(0, 90) + '…' : h.text}</span></div>`).join('');
+      [...hist.querySelectorAll('.ai-hist-item')].forEach((el, i) => el.addEventListener('click', () => type(say, log[i].text)));
+    };
+    drawHist();
+
+    let busy = false, tick;
+    const ask = (i) => {
+      if (busy) return;
+      busy = true; acts.forEach(b => b.disabled = true); run.disabled = true;
+      run.textContent = dictGet('app.analyzing');
+      /* analysing: the stage drops to the one label, the timing counter runs live */
+      setMood('thinking'); zone.classList.add('is-analyzing');
+      orb.style.display = label.style.display = 'none';
+      let ghost = zone.querySelector('.agent-analyzing-label');
+      if (!ghost) { ghost = document.createElement('span'); ghost.className = 'agent-analyzing-label'; orb.parentNode.appendChild(ghost); }
+      ghost.textContent = dictGet('app.intentThinking'); ghost.style.display = '';
+      say.textContent = '';
+      const t0 = Date.now();
+      timing.className = 'agent-timing is-live';
+      clearInterval(tick);
+      const t = () => timing.innerHTML = `${dictGet('app.thinking')} <b>${((Date.now() - t0) / 1000).toFixed(1)}s</b>`;
+      t(); tick = setInterval(t, 90);
+
+      setTimeout(() => {
+        clearInterval(tick);
+        const r = REPLIES[i], text = dictGet('app.' + r.a);
+        ghost.style.display = 'none'; orb.style.display = ''; label.style.display = '';
+        setMood(r.m);
+        zone.classList.remove('is-analyzing');
+        scramble(state, dictGet('app.intent' + r.m[0].toUpperCase() + r.m.slice(1)));
+        say.className = 'agent-text sage-' + (r.m === 'caution' ? 'caution' : 'clear');
+        type(say, text);
+        verdict.className = 'verdict is-' + r.v[0];
+        vLabel.textContent = dictGet('app.' + r.v[1]);
+        vCause.textContent = dictGet('app.' + r.v[2]);
+        timing.className = 'agent-timing';
+        timing.innerHTML = `LLM <b>${(1 + Math.random()).toFixed(1)}s</b> · TTS <b>0.${3 + Math.floor(Math.random() * 6)}s</b>`;
+        log.unshift({ time: new Date().toTimeString().slice(0, 8), text });
+        drawHist();
+        run.textContent = dictGet('app.runAnalysis');
+        acts.forEach(b => b.disabled = false); run.disabled = false; busy = false;
+      }, 900);
+    };
+
+    acts.forEach(b => b.addEventListener('click', () => { b.closest('details').open = false; ask(+b.dataset.ask); }));
+    run.addEventListener('click', () => ask(5));
+    /* the ⋯ menu closes on blur, same as the console's */
+    const menu = document.getElementById('sageMenu');
+    menu.addEventListener('focusout', (e) => { if (!menu.contains(e.relatedTarget)) menu.open = false; });
+  }
+
+  /* blk — a routine you build by tapping, run on a toy of the editor's simulator.
+     open-loop like the real board: each step is a duration, nothing corrects it. */
+  const BLK_OPS = {
+    fwd:   { cls: 'op-move', key: 'app.blkFwd',   dist:  38, turn:   0, ms: 480 },
+    back:  { cls: 'op-move', key: 'app.blkBack',  dist: -30, turn:   0, ms: 420 },
+    left:  { cls: 'op-turn', key: 'app.blkLeft',  dist:   0, turn: -90, ms: 380 },
+    right: { cls: 'op-turn', key: 'app.blkRight', dist:   0, turn:  90, ms: 380 },
+    say:   { cls: 'op-say',  key: 'app.blkSay',   dist:   0, turn:   0, ms: 520 }
+  };
+  function initBlk() {
+    const list = document.getElementById('blkProg'), cv = document.getElementById('blkArena');
+    if (!list || !cv) return;
+    const ctx = cv.getContext('2d'), out = document.getElementById('blkOut');
+    let prog = ['fwd', 'right', 'fwd', 'left', 'say'], running = false, at = -1;
+    let W = 0, H = 0, rover = null, trail = [];
+
+    const home = () => { rover = { x: W * 0.5, y: H * 0.74, a: -90 }; trail = [{ x: rover.x, y: rover.y }]; };
+    const fit = () => {
+      const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1;
+      if (!r.width) return;
+      W = r.width; H = r.height; cv.width = W * d; cv.height = H * d; ctx.setTransform(d, 0, 0, d, 0, 0);
+      if (!rover) home();
+      draw();
+    };
+    const draw = () => {
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = 'rgba(255,255,255,.1)';
+      for (let x = 14; x < W; x += 24) for (let y = 14; y < H; y += 24) ctx.fillRect(x, y, 1, 1);
+      if (trail.length > 1) {
+        ctx.strokeStyle = 'rgba(224,164,92,.6)'; ctx.lineWidth = 1.5; ctx.beginPath();
+        trail.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.stroke();
+      }
+      ctx.save(); ctx.translate(rover.x, rover.y); ctx.rotate(rover.a * Math.PI / 180);
+      ctx.fillStyle = '#f3f0ea'; ctx.beginPath();
+      ctx.moveTo(11, 0); ctx.lineTo(-7, 7); ctx.lineTo(-7, -7); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    };
+
+    const paint = () => {
+      list.innerHTML = prog.length
+        ? prog.map((op, i) => `<li class="${BLK_OPS[op].cls}${i === at ? ' now' : ''}" data-i="${i}">
+             <span>${dictGet(BLK_OPS[op].key)}</span><span class="x" aria-hidden="true">×</span></li>`).join('')
+        : `<li class="empty">${dictGet('app.blkEmpty')}</li>`;
+    };
+
+    const tween = (ms, step) => new Promise(res => {
+      const t0 = performance.now();
+      const frame = (now) => {
+        const p = Math.min(1, (now - t0) / ms);
+        step(p);
+        draw();
+        p < 1 ? requestAnimationFrame(frame) : res();
+      };
+      requestAnimationFrame(frame);
+    });
+
+    const run = async () => {
+      if (running || !prog.length) return;
+      running = true; out.textContent = '';
+      home(); draw();
+      for (let i = 0; i < prog.length; i++) {
+        if (!running) break;
+        at = i; paint();
+        const o = BLK_OPS[prog[i]], s = { ...rover }, pad = 14;
+        await tween(reduced ? 1 : o.ms, (p) => {
+          rover.a = s.a + o.turn * p;
+          if (o.dist) {
+            const r = (s.a + o.turn * p) * Math.PI / 180;
+            rover.x = Math.max(pad, Math.min(W - pad, s.x + Math.cos(r) * o.dist * p));
+            rover.y = Math.max(pad, Math.min(H - pad, s.y + Math.sin(r) * o.dist * p));
+            trail.push({ x: rover.x, y: rover.y });
+          }
+        });
+      }
+      at = -1; running = false; paint();
+      out.textContent = dictGet('app.blkDone');
+    };
+
+    document.querySelectorAll('#blkPal button').forEach(b => b.addEventListener('click', () => {
+      if (prog.length >= 10) return;
+      prog.push(b.dataset.op); out.textContent = ''; paint();
+    }));
+    list.addEventListener('click', (e) => {
+      const li = e.target.closest('li[data-i]');
+      if (!li || running) return;
+      prog.splice(+li.dataset.i, 1); paint();
+    });
+    document.getElementById('blkRun').addEventListener('click', run);
+    document.getElementById('blkClear').addEventListener('click', () => {
+      running = false; prog = []; out.textContent = ''; home(); draw(); paint();
+    });
+
+    addEventListener('resize', fit);
+    fit(); paint();
+    return { refresh: paint };
+  }
+
   applyStatic();
   heroIn();
+  initCams();
+  initFpv();
+  initSage();
+  const blkApi = initBlk();
   sponsorsRender(dictGet('sponsors.open'));
   const modelsApi = await initModels();
 
@@ -618,6 +1610,7 @@ const DICT = {
     heroIn();
     sponsorsRender(dictGet('sponsors.open'));
     if (modelsApi) modelsApi.refresh();
+    if (blkApi) blkApi.refresh();          /* the routine's own steps aren't [data-i18n] */
   });
 
   /* the only motion left: one fade-up per block, on first sight */
