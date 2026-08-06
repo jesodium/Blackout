@@ -29,6 +29,13 @@ Node.js PC server/dashboard.
   drive commands. `sage.js` parses the model's JSON replies; `vision.js`
   grabs ESP32-CAM stills for Sage to see; TTS is Deepgram (if keyed) falling
   back to Edge neural voices; prompts live in `prompts/*.md`.
+  - **Sage's face** (`public/js/sageface.js`) is ascii (`-_-`, `o_o`, `x_x`)
+    animated in css — each eye is an open glyph with a shut `-` stacked on it and
+    the blink is a step-timed opacity swap, so it snaps like text.
+    The moods are `MOODS` in that file; all the motion is
+    `.sage-face.is-<mood>` in `style.css` (an intent key *is* the mood name).
+    Adding a mood without its css rule renders a blank face silently —
+    `npm run test:face` is the check.
   - **Mirror mode:** the dashboard opened over the LAN (the judges' tablet) is
     telemetry only — no link controls, no firmware updater, no drive — until the
     host grants it from CONNECTED DEVICES in the topbar. The host is whoever

@@ -98,6 +98,13 @@ body {
   background: var(--glass);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
+/* macOS hiddenInset traffic lights get their own native-style strip above the
+   topbar (see .mac-titlebar) instead of sharing a row with the brand mark. */
+.mac-titlebar {
+  flex-shrink: 0; height: 32px;
+  background: var(--bg); border-bottom: 1px solid var(--line);
+  -webkit-app-region: drag;
+}
 
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand img { display: block; height: 22px; width: auto; }
@@ -343,6 +350,7 @@ input[type="range"]:focus { box-shadow: none; }
 
 /* status pill */
 .pill {
+  display: inline-flex; align-items: center; gap: 5px;
   font: 700 9px/1 var(--grotesk); letter-spacing: 0.12em; text-transform: uppercase;
   padding: 4px 9px; white-space: nowrap; border: 1px solid var(--line); border-radius: 99px;
   color: var(--ink-3); background: var(--inset);
@@ -571,11 +579,79 @@ input[type="range"]:focus { box-shadow: none; }
   font: 700 10px/1 var(--grotesk); letter-spacing: 0.26em; text-transform: uppercase;
   animation: agent-text-in 0.4s ease;
 }
-.agent-face { font-family: var(--mono, monospace); font-size: 26px; line-height: 1; letter-spacing: 0; animation: face-bob 3s ease-in-out infinite; }
-@keyframes face-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
-.a-eye, .a-mouth { display: inline-block; animation: a-blink 5s ease-in-out infinite; }
-.a-eye:last-child { animation-delay: 0.12s; }
-@keyframes a-blink { 0%, 90%, 100% { opacity: 1; } 93%, 97% { opacity: 0.08; } }
+.agent-state-label .sage-face { font-size: 26px; }
+
+/* ------------------------------------------------------------
+   sage's face (js/sageface.js) — ascii, animated.
+   the glyphs come from js; everything that moves is here. each eye is an open
+   glyph with a shut `-` stacked on it, and the blink is a step-timed opacity
+   swap between the two, so it snaps the way text should. sizes are set by the
+   call site's font-size — every offset below is in em so the face scales whole.
+   ------------------------------------------------------------ */
+.sage-face {
+  --sf-gx: 0em; --sf-gy: 0em;
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  color: currentColor;
+  font: 700 1em/1 var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  letter-spacing: 0.12em; white-space: pre; user-select: none;
+  text-shadow: 0 0 0.35em color-mix(in srgb, currentColor 45%, transparent);
+  animation: sf-bob 3.4s ease-in-out infinite;
+}
+.sf-scan {
+  display: inline-flex; align-items: baseline;
+  translate: var(--sf-gx) var(--sf-gy);
+  transition: translate 0.28s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.sf-eye {
+  position: relative; display: inline-block;
+  transition: scale 0.3s cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+.sf-eye b { font-weight: inherit; }
+.sf-shut { position: absolute; left: 0; top: 0; opacity: 0; }
+/* blink: swap open glyph for `-` and back. the two run on one clock. */
+.sf-open, .sf-shut { animation: sf-open 4.6s steps(1, end) infinite; }
+.sf-shut { animation-name: sf-close; }
+.sf-r .sf-open, .sf-r .sf-shut { animation-delay: 0.06s; }  /* half a frame off — reads alive, not mechanical */
+.sf-mouth { display: inline-block; transition: scale 0.3s ease; }
+.sf-z { position: absolute; right: -0.35em; top: -0.1em; font-size: 0.5em; opacity: 0; }
+
+@keyframes sf-open  { 0%, 89%, 93%, 100% { opacity: 1; } 90%, 92% { opacity: 0; } }
+@keyframes sf-close { 0%, 89%, 93%, 100% { opacity: 0; } 90%, 92% { opacity: 1; } }
+@keyframes sf-bob    { 0%, 100% { translate: 0 0; } 50% { translate: 0 -0.08em; } }
+@keyframes sf-sweep  { 0%, 10% { translate: -0.16em var(--sf-gy); } 45%, 55% { translate: 0.16em var(--sf-gy); } 92%, 100% { translate: 0 var(--sf-gy); } }
+@keyframes sf-shake  { 0%, 100% { translate: 0 0; } 25% { translate: -0.07em 0; } 75% { translate: 0.07em 0; } }
+@keyframes sf-pulse  { 0%, 100% { scale: 1; } 50% { scale: 1.25; } }
+@keyframes sf-breath { 0%, 100% { scale: 1 1; } 50% { scale: 1.06 0.85; } }
+@keyframes sf-ponder { 0%, 100% { rotate: -4deg; } 50% { rotate: 4deg; } }
+@keyframes sf-hop    { 0%, 60%, 100% { translate: 0 0; } 25% { translate: 0 -0.16em; } 40% { translate: 0 -0.04em; } }
+@keyframes sf-snooze { 0% { opacity: 0; translate: 0 0; scale: 0.7; } 25% { opacity: 0.8; } 100% { opacity: 0; translate: 0.25em -0.7em; scale: 1.2; } }
+
+/* idle — `-_-`, asleep on its feet. nothing open to blink, so it breathes. */
+.sage-face.is-idle .sf-open, .sage-face.is-idle .sf-shut { animation: none; }
+.sage-face.is-idle .sf-scan { animation: sf-breath 4s ease-in-out infinite; }
+.sage-face.is-idle .sf-z { animation: sf-snooze 3.4s ease-in-out infinite; }
+/* scanning / work — `o_o` / `O_O`, sweeping the room */
+.sage-face.is-scanning .sf-scan, .sage-face.is-work .sf-scan { animation: sf-sweep 3.2s ease-in-out infinite; }
+.sage-face.is-work .sf-open, .sage-face.is-work .sf-shut { animation-duration: 1.6s; }
+/* thinking — `o_O`, one eye pinched, head tilting */
+.sage-face.is-thinking { animation: sf-ponder 3.6s ease-in-out infinite; }
+.sage-face.is-thinking .sf-l { scale: 0.8; }
+.sage-face.is-thinking .sf-r { scale: 1.15; }
+/* clear — `^_^`, eyes already shut with joy */
+.sage-face.is-clear .sf-open, .sage-face.is-clear .sf-shut { animation: none; }
+.sage-face.is-clear { animation: sf-hop 2.4s ease-in-out infinite; }
+/* caution — `:o:`, mouth open and pulsing */
+.sage-face.is-caution .sf-mouth { animation: sf-pulse 1.1s ease-in-out infinite; }
+.sage-face.is-caution .sf-open, .sage-face.is-caution .sf-shut { animation-duration: 2.4s; }
+/* alert — `x_x`, out cold and shaking */
+.sage-face.is-alert .sf-open, .sage-face.is-alert .sf-shut { animation: none; }
+.sage-face.is-alert .sf-scan { animation: sf-shake 0.32s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sage-face, .sage-face * { animation: none !important; transition: opacity 0.2s ease; }
+  .sage-face .sf-shut, .sage-face .sf-z { opacity: 0; }
+  .sage-face .sf-open { opacity: 1; }
+}
 
 /* voice equalizer (speaking) */
 .agent-eq { position: relative; z-index: 1; display: flex; align-items: flex-end; gap: 3px; height: 15px; color: currentColor; }
@@ -630,11 +706,19 @@ input[type="range"]:focus { box-shadow: none; }
 .foot-menu { position: relative; flex-shrink: 0; }
 .foot-menu > summary { list-style: none; letter-spacing: 0.1em; }
 .foot-menu > summary::-webkit-details-marker { display: none; }
+/* keep the closed content rendered so it can animate out instead of vanishing */
+.foot-menu::details-content { content-visibility: visible; }
 .foot-menu-pop {
   position: absolute; z-index: 6; right: 0; bottom: calc(100% + 6px); min-width: 190px;
   display: flex; flex-direction: column; padding: 5px; gap: 2px;
   background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px;
   box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.45);
+  visibility: hidden; opacity: 0; transform: translateY(6px) scale(0.97); transform-origin: bottom right;
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0s 0.14s;
+}
+.foot-menu[open] .foot-menu-pop {
+  visibility: visible; opacity: 1; transform: none;
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0s;
 }
 .menu-item {
   text-align: left; cursor: pointer; padding: 8px 10px; border: 0; border-radius: 7px;
@@ -712,7 +796,8 @@ input[type="range"]:focus { box-shadow: none; }
   transition: color 0.14s, border-color 0.14s, padding-left 0.16s ease;
 }
 .brief-back:hover, .agent-back:hover { color: var(--ink); border-color: var(--ink-2); padding-left: 14px; }
-.brief-orb { align-self: center; font-family: var(--mono, monospace); font-size: 34px; line-height: 1; color: var(--agent-c, var(--ink)); margin-top: 4px; }
+.brief-orb { align-self: center; color: var(--agent-c, var(--ink)); margin-top: 4px; }
+.brief-orb .sage-face { font-size: 44px; }
 .brief-greeting { margin: 0; text-align: center; font: 400 13.5px/1.5 var(--grotesk); color: var(--ink); }
 .brief-step-k { font: 700 9px/1 var(--grotesk); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
 .brief-q { margin: 0; font: 500 14.5px/1.4 var(--grotesk); color: var(--ink); }
@@ -1008,8 +1093,128 @@ input[type="range"]:focus { box-shadow: none; }
 .warn-count { display: inline-block; overflow: hidden; white-space: pre; max-width: 3em; transition: max-width 0.35s ease, opacity 0.25s ease; }
 .warn-count.is-done { max-width: 0; opacity: 0; }
 
+/* operator settings — reuses the devices-frame shell */
+.settings-frame { width: min(420px, 92vw); height: auto; padding: 4px 0 16px; }
+.settings-body { display: flex; flex-direction: column; gap: 12px; padding: 16px 16px 4px; }
+.settings-field { display: flex; flex-direction: column; gap: 5px; }
+.settings-field span { font: 700 10px/1 var(--grotesk); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+.settings-field input {
+  font: 500 13px/1.4 var(--mono); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line-2); border-radius: var(--r-s); padding: 8px 10px;
+}
+.settings-field input:focus { outline: none; border-color: var(--accent); }
+.settings-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px 0; }
+.settings-hint { font: 500 11px/1.4 var(--grotesk); color: var(--ink-3); }
+
+/* first-run onboard flow — hero / choose model / pair. full-screen, own look.
+   IMPORTANT NOTE: z-index sits BELOW .blk-modal (300) on purpose — the pair
+   step's Connect button opens the real BlePickerModal (a .blk-modal), which
+   must stack above this full-screen overlay to be visible/clickable at all. */
+.onboard {
+  position: fixed; inset: 0; z-index: 250;
+  display: flex; justify-content: center;
+  overflow-y: auto; /* a tall step (legacy open) scrolls instead of centering off the top of a short window */
+  background: var(--bg); animation: blkFade 0.28s ease both;
+}
+.onboard.is-closing { animation: blkFadeOut 0.3s ease both; }
+.onboard.is-closing .onboard-view { animation: blkPopOut 0.3s cubic-bezier(0.5, 0, 0.75, 0.4) both; }
+.onboard-skip {
+  position: fixed; top: 20px; right: 20px; /* fixed, not absolute: stays put while .onboard scrolls */
+  font: 600 11px/1 var(--grotesk); letter-spacing: 0.08em; color: var(--ink-3);
+  background: none; border: 0; cursor: pointer; padding: 8px;
+}
+.onboard-skip:hover { color: var(--ink-2); }
+.onboard-view {
+  width: min(560px, 92vw); display: flex; flex-direction: column; align-items: center;
+  text-align: center; gap: 18px; margin: auto 0; padding: 56px 0;
+  animation: blkPop 0.32s cubic-bezier(0.2, 0.9, 0.25, 1.1) both;
+}
+.onboard-title { font: 800 clamp(40px, 9vw, 88px)/1 var(--grotesk); letter-spacing: -0.01em; color: var(--ink); margin: 0; }
+.onboard-h2 { font: 800 24px/1.2 var(--grotesk); color: var(--ink); margin: 0; }
+.onboard-desc { font: 500 14px/1.6 var(--grotesk); color: var(--ink-2); margin: 0; max-width: 46ch; }
+.onboard-feats { display: flex; gap: 10px; }
+.onboard-feat {
+  font: 700 10px/1 var(--grotesk); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 7px 14px;
+}
+.onboard-photos { display: flex; gap: 18px; margin: 6px 0; }
+.onboard-photos img {
+  width: 168px; height: 210px; object-fit: cover; border-radius: var(--r); border: 1px solid var(--line-2);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+}
+.onboard-photos img:nth-child(1) { transform: rotate(-4deg) translateY(6px); }
+.onboard-photos img:nth-child(3) { transform: rotate(4deg) translateY(6px); }
+.onboard-cta { min-height: 44px; padding: 0 28px; font-size: 12px; }
+.onboard-back {
+  align-self: flex-start; font: 600 11px/1 var(--grotesk); letter-spacing: 0.06em; color: var(--ink-3);
+  background: none; border: 0; cursor: pointer; padding: 8px 0;
+}
+.onboard-back:hover { color: var(--ink-2); }
+.onboard-back:disabled { opacity: 0.4; cursor: not-allowed; }
+.onboard-model-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 22px 16px; width: 100%;
+  background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r); cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s; text-align: left;
+}
+.onboard-model-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.onboard-model-label { font: 800 16px/1.2 var(--grotesk); color: var(--ink); }
+.onboard-model-desc { font: 500 11.5px/1.4 var(--grotesk); color: var(--ink-3); }
+/* current build: bigger, background photo (placeholder) stands in for the real render */
+.onboard-model-featured {
+  min-height: 220px; justify-content: flex-end; gap: 4px; padding: 24px;
+  background-size: cover; background-position: center 30%; border-color: var(--line-2);
+}
+.onboard-model-featured .onboard-model-label { font-size: 22px; color: #fff; }
+.onboard-model-featured .onboard-model-desc { color: rgba(255, 255, 255, 0.72); }
+.onboard-model-featured:hover { border-color: var(--accent); }
+.onboard-legacy-toggle {
+  display: flex; align-items: center; gap: 6px; align-self: center; margin-top: 2px;
+  font: 600 11.5px/1 var(--grotesk); color: var(--ink-3); background: none; border: 0; cursor: pointer; padding: 6px;
+}
+.onboard-legacy-toggle:hover { color: var(--ink-2); }
+.onboard-legacy-caret { display: inline-block; transition: transform 0.2s ease; }
+.onboard-legacy-caret.is-open { transform: rotate(180deg); }
+.onboard-legacy {
+  width: 100%; display: grid; grid-template-rows: 0fr; opacity: 0;
+  transition: grid-template-rows 0.24s ease, opacity 0.2s ease;
+}
+.onboard-legacy.is-open { grid-template-rows: 1fr; opacity: 1; }
+.onboard-legacy-inner { overflow: hidden; }
+.onboard-model-legacy {
+  position: relative; padding: 14px 16px; opacity: 0.75; filter: grayscale(0.4);
+}
+/* no lift on hover here: it's wrapped in the accordion's overflow:hidden clip, so the
+   shared card's translateY(-2px) would shave a sliver off the top on hover */
+.onboard-model-legacy:hover { opacity: 1; filter: none; transform: none; }
+.onboard-model-legacy .onboard-model-label { font-size: 14px; }
+.onboard-legacy-badge {
+  align-self: flex-start; font: 700 9px/1 var(--grotesk); letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-3); border: 1px solid var(--line-2); border-radius: 999px; padding: 3px 8px;
+}
+.onboard-sweep { width: 64px; height: 64px; color: var(--accent); }
+.onboard-sweep .g-sweep { animation: spin 2.6s linear infinite; transform-origin: 12px 12px; }
+.onboard-later {
+  font: 600 11.5px/1 var(--grotesk); letter-spacing: 0.04em; color: var(--ink-3);
+  background: none; border: 0; cursor: pointer; padding: 6px;
+}
+.onboard-later:hover { color: var(--ink-2); }
+@media (max-width: 560px) {
+  .onboard-photos img { width: 108px; height: 136px; }
+  .onboard-model-featured { min-height: 170px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .foot-menu-pop, .foot-menu[open] .foot-menu-pop { transition: none; }
+  .ble-progress span { width: 100%; opacity: 0.35; animation: none; }
+  .ble-scanning-label::after { animation: none; }
+  .onboard, .onboard-view, .onboard.is-closing, .onboard.is-closing .onboard-view { animation: none; }
+  .onboard-sweep .g-sweep { animation: none; }
+  .onboard-legacy { transition: none; }
+}
+
 /* first-run tour — the dim is one huge box-shadow spilling out of the spotlight */
 .tour { position: fixed; inset: 0; z-index: 400; animation: blkFade 0.22s ease both; }
+.tour.is-closing { animation: blkFadeOut 0.22s ease both; pointer-events: none; }
+.tour.is-closing .tour-card { animation: blkPopOut 0.22s cubic-bezier(0.5, 0, 0.75, 0.4) both; }
 .tour-hole {
   position: fixed; border-radius: var(--r); border: 1px solid var(--accent);
   box-shadow: 0 0 0 9999px rgba(6, 6, 7, 0.74);
@@ -1029,7 +1234,7 @@ input[type="range"]:focus { box-shadow: none; }
 .tour-actions .warn-go { color: var(--accent); border-color: var(--accent); }
 .drawer-tour { margin-left: auto; }
 @media (prefers-reduced-motion: reduce) {
-  .tour, .tour-hole, .tour-card { animation: none; transition: none; }
+  .tour, .tour-hole, .tour-card, .tour.is-closing, .tour.is-closing .tour-card { animation: none; transition: none; }
 }
 
 /* usb-board strip under the topbar — the only entry point to the updater */
@@ -1066,6 +1271,36 @@ input[type="range"]:focus { box-shadow: none; }
 .device-row .serial-btn.is-on { color: var(--go); border-color: var(--go); }
 /* grant confirm sits on top of the devices sheet — don't stack a second full blur */
 .blk-modal .blk-modal { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(6, 6, 7, 0.6); }
+
+/* in-app ble pairing (desktop shell) — same sheet as connected devices, plus a
+   scanning affordance. no signal bars: electron exposes no rssi. */
+/* landscape sheet, same shape as the chrome/os bluetooth choosers: header, an
+   indeterminate scan bar, the list, and scan status parked next to Cancel */
+.ble-picker { width: min(560px, 92vw); height: min(440px, 82dvh); }
+.ble-picker .device-list { flex: 1; padding-top: 12px; }
+.ble-progress { flex: none; height: 2px; overflow: hidden; background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.ble-progress span { display: block; width: 32%; height: 100%; background: var(--accent); animation: bleScan 1.5s ease-in-out infinite; }
+@keyframes bleScan { from { transform: translateX(-110%); } to { transform: translateX(330%); } }
+.ble-scanning-label { font: 500 11px/1 var(--mono); color: var(--ink-3); letter-spacing: 0.08em; }
+.ble-scanning-label::after { content: "\2026"; display: inline-block; animation: blink 1.1s ease-in-out infinite; }
+.ble-row { padding: 0; border-bottom: none; }
+.ble-pick {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; min-height: 62px; padding: 12px 14px; margin: 6px 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 0;
+  cursor: pointer; text-align: left;
+  animation: list-in 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+.ble-pick:hover { background: var(--panel-2); border-color: var(--accent); transform: translateY(-1px); }
+.ble-pick-main { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.device-model {
+  font: 500 10px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3);
+}
+.ble-actions {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex: none; padding: 10px 14px 14px; border-top: 1px solid var(--line);
+}
 .update-frame p { font: 500 13px/1.6 var(--grotesk); color: var(--ink-2); margin: 0; }
 .update-title { font: 800 12px/1 var(--grotesk); letter-spacing: 0.16em; color: var(--ink); }
 .update-actions { display: flex; gap: 8px; justify-content: flex-end; }
@@ -1082,27 +1317,9 @@ input[type="range"]:focus { box-shadow: none; }
 .flash-board.is-missing { color: var(--ink-3); }
 /* flash progress: sage watches the flash — eyes blink while working, settle on exit */
 .flash-prog { display: flex; flex-direction: column; gap: 10px; }
-.sage-face {
-  display: flex; justify-content: center; align-items: baseline; gap: 10px;
-  padding: 10px 0 6px; color: var(--ink);
-  font: 700 34px/1 var(--mono); letter-spacing: 0.04em;
-  text-shadow: 0 0 18px rgba(236, 229, 214, 0.25);
-  transition: color 0.4s ease;
-}
-.sage-eye {
-  display: inline-block; transform-origin: 50% 55%;
-  animation: sage-blink 4.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-}
-.sage-eye:last-child { animation-delay: 0.06s; } /* half a frame off — reads alive, not mechanical */
-.sage-mouth { opacity: 0.55; }
-.flash-prog.is-ok    .sage-face { color: var(--go);     text-shadow: 0 0 18px rgba(63, 207, 142, 0.3); }
-.flash-prog.is-error .sage-face { color: var(--accent); text-shadow: 0 0 18px rgba(225, 169, 95, 0.3); }
-.flash-prog.is-ok .sage-eye, .flash-prog.is-error .sage-eye { animation: none; }
-@keyframes sage-blink {
-  0%, 88%, 95%, 100% { transform: scaleY(1); }
-  91%                { transform: scaleY(0.06); }  /* ~140ms shut, opens slower than it closes */
-}
-@media (prefers-reduced-motion: reduce) { .sage-eye { animation: none; } }
+.flash-prog .sage-face { font-size: 46px; margin: 6px auto 2px; color: var(--ink); transition: color 0.4s ease; }
+.flash-prog.is-ok    .sage-face { color: var(--go); }
+.flash-prog.is-error .sage-face { color: var(--accent); }
 
 .flash-bar { height: 4px; border-radius: 99px; background: rgba(236, 229, 214, 0.1); overflow: hidden; }
 .flash-bar-fill {
@@ -1141,7 +1358,9 @@ input[type="range"]:focus { box-shadow: none; }
 }
 .toast.k-ok     { color: var(--go);     border-left-color: var(--go); }
 .toast.k-danger { color: var(--accent); border-left-color: var(--accent); }
+.toast.is-leaving { animation: toast-out 0.22s ease both; pointer-events: none; }
 @keyframes toast-in { from { transform: translateX(40px); opacity: 0; } }
+@keyframes toast-out { to { transform: translateX(40px); opacity: 0; } }
 
 /* ============================================================
    entrance
