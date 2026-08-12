@@ -955,6 +955,7 @@ footer nav a:hover{color:var(--accent)}
     <select id="langSelect" aria-label="Language">
       <option value="en">English</option>
       <option value="es">Español</option>
+      <option value="zh">中文</option>
     </select>
   </div>
 </footer>
@@ -1120,6 +1121,83 @@ const DICT = {
     },
     finale: { h2: 'Más exploraciones, menos riesgos, <span>más descubrimientos.</span>' },
     footer: { p: "Un proyecto de WRO 2026 Future Innovators.", lang: "Idioma" }
+  },
+  zh: {
+    meta: {
+      title: "Blackout · 黑暗中执行侦察任务的漫游车",
+      desc: "Blackout 是一款专为 WRO 2026 Future Innovators 打造的侦察漫游车。它驶入人们不应进入的地方，环顾四周，并大声报告。"
+    },
+    wro: { strip: "Future Innovators" },
+    nav: { run: "运行", app: "应用", pricing: "定价", roadmap: "机型", sponsors: "赞助商", get: "获取 Blackout" },
+    hero: {
+      title: '把它送进<span>黑暗。</span>',
+      lede: "一款为人们不应进入的地方而造的侦察漫游车。它驶进去，环顾四周，并说出所见。"
+    },
+    run: {
+      eyebrow: "运行", h2: "驶入。观察。报告。",
+      lede: "一名操作员，一块屏幕。漫游车负责驶入没有人愿意走进的部分。",
+      step1: { h3: "侦察任务", p: "通过一套即使断线也会继续运行的例行程序，把它派进走廊。", alt: "漫游车驶离操作员，穿过开阔地面。" },
+      step2: { h3: "实时遥测", p: "距离、温度、湿度和航向全程实时回传，与摄像头画面同步。", alt: "操作员用手柄驾驶漫游车，屏幕上显示控制台与摄像头画面。" },
+      step3: { h3: "Sage 开口说话", p: "板载语音大声说出摄像头看到的内容，支持英语或西班牙语。", alt: "Sage 朗读遥测数据并播报入口状态。" },
+      step4: { h3: "发现日志", p: "任何值得再看一眼的画面都会连同照片一起保存，之后可以回顾整次任务。", alt: "会话报告，列出任务、读数和每一条发现。" }
+    },
+    app: {
+      eyebrow: "控制台", h2: "一个面板，漫游车知道的全部。",
+      lede: "真实的界面，直接来自应用。驾驶它、查看传感器、向 Sage 交代任务——地表一台笔记本电脑，运行整个系统。",
+      shot1: "漫游车底盘的实时 3D 渲染，随真实姿态读数倾斜与转向。",
+      shot1h: "3D 侦察", shot1p: "屏幕上的底盘与实际地下的真实底盘同步倾斜与转向——横滚、俯仰与航向，直接读取自传感器。",
+      shot2: "全屏 FPV 视图：摄像头画面、航向带、距离十字线与 Sage 的语音条。",
+      shot2h: "FPV 模式", shot2p: "轻点一下，整个屏幕就变成摄像头画面——航向带、距离十字线、Sage 在画面上方解说。",
+      shot3: "Sage 的智能体面板，显示 SAFE 入口状态、语音播报与运行分析按钮。",
+      shot3h: "Sage，随叫随到", shot3p: "获知任务简报后，Sage 播报入口状态、解说摄像头所见，并在你提问时立即回应。",
+      shot4: "BLK 编辑器的屏幕录制：一个方块从调色板拖入、重设时长、然后在模拟器中运行例行程序。",
+      shot4h: "BLK 例行程序", shot4p: "把几个方块拼在一起，漫游车就自行执行任务——即使与它的连接中断，例行程序仍会继续运行。",
+      hint1: "选择角度 · 可自由环绕 →", hint2: "把光标移到画面上 →", hint3: "向它提问 →", hint4: "拼一个并运行它 · 将光标移到视频上 →",
+      cam1: "等距", cam2: "正面", cam3: "顶部", cam4: "侧面", cam5: "自由",
+      gyro: "陀螺仪 · 已锁定", heading: "航向",
+      hudDist: "距离", hudRoll: "横滚", hudPitch: "俯仰", hudYaw: "偏航",
+      agent: "智能体", session: "← 会话 · 洞穴勘察", sageOnline: "在线", sageHello: "有什么需要，我随时帮忙。",
+      voiceEdge: "🔊 语音 · Edge",
+      more: "更多操作", askPick: "推荐问题",
+      askS0: "前方有什么？", askS1: "空气可以呼吸吗？", askS2: "有气体危险吗？",
+      askS3: "我们水平吗？", askS4: "继续前进还是退出？",
+      runAnalysis: "运行分析", analyzing: "分析中…",
+      history: "历史记录 · {n}", histEmpty: "还没有提问。", thinking: "思考中…",
+      intentIdle: "待机", intentScanning: "扫描中", intentThinking: "分析中",
+      intentClear: "一切正常", intentCaution: "注意",
+      entryStatus: "入口状态", verdictSafe: "安全", verdictCaution: "注意",
+      verdictNominal: "所有读数正常", verdictAir: "空气质量 · 偏高",
+      verdictDist: "距离 · 接近",
+      sageA0: "通道向前延伸约四米后向左弯。距近侧墙 62 厘米，地面干燥，没有移动物。",
+      sageA1: "空气质量 430 ppm 且保持稳定，24 °C，湿度 58%。可以呼吸——但我仍建议缩短任务。",
+      sageA2: "左侧分支的 CO₂ 在上升——780 ppm 且继续攀升。目前还不危险，但我不会走那条岔路。",
+      sageA3: "横滚 2°，俯仰 −4°。略微前倾，完全在底盘可承受范围内。",
+      sageA4: "继续前进。读数稳定，我右侧的墙在 17 厘米外，弯道处有足够空间掉头。",
+      sageARun: "全面扫描完成。右侧墙距 17 厘米，空气洁净，底盘水平。左侧的彩绘表面值得再看一眼。",
+      blkFwd: "前进", blkBack: "后退", blkLeft: "左转", blkRight: "右转", blkSay: "说出",
+      blkRun: "运行", blkClear: "清空", blkTape: "真实编辑器",
+      blkEmpty: "点击方块以添加。点击步骤以移除。", blkDone: "例行程序已完成"
+    },
+    pricing: {
+      eyebrow: "定价", h2: "到手即可驶入。",
+      priceline: '一台漫游车，已搭建、刷机并调校。<br><em>AI 费用（Sage）不包含在内。</em>',
+      li1: "底盘已搭建、布线并贴好标签", li2: "电路板已刷机、配对并密封",
+      li3: "在真实地面调校至读数最优", li4: "Sage 已配置多语言支持",
+      li5: "附带控制台与 BLK 流程编辑器", li6: "固件无限次更新",
+      shot1: "已搭建并布线的漫游车。", shot2: "BLK 编辑器中打开的一条巡逻例行程序。", shot3: "正在执行任务的控制台。",
+      note: "竞赛虚构：Blackout 是 WRO 2026 Future Innovators 项目，而非公司。以上价格为演示内容——此处没有任何东西在售。机器人、代码与摄像头画面均为真实。"
+    },
+    roadmap: {
+      eyebrow: "机型库", h2: "每一版都在推翻上一版。",
+      lede: "选一台机型，读取它的档案。"
+    },
+    sponsors: {
+      eyebrow: "赞助商", h2: "黑暗，从来不是一个人来资助的。",
+      diamond: "钻石", platinum: "铂金", standard: "标准",
+      open: "席位开放", cta: "全部级别", contact: "想要一个席位？请联系团队。"
+    },
+    finale: { h2: '用<span>机器人</span>塑造考古学。' },
+    footer: { p: "WRO 2026 Future Innovators 项目。", lang: "语言" }
   }
 };
 
@@ -1143,7 +1221,10 @@ const DICT = {
 
   /* saved choice wins; otherwise fall back to the browser's own language */
   let currentLang = localStorage.getItem('blk-lang')
-    || (navigator.language && navigator.language.toLowerCase().startsWith('es') ? 'es' : 'en');
+    || (navigator.language && (
+      navigator.language.toLowerCase().startsWith('zh') ? 'zh'
+      : navigator.language.toLowerCase().startsWith('es') ? 'es'
+      : 'en'));
   const dictGet = (path) => path.split('.').reduce((o, k) => o && o[k], DICT[currentLang]);
 
   function applyStatic() {
