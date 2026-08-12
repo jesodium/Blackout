@@ -1,12 +1,13 @@
 // l298n test. both motors forward at speed for 2s, stop 2s, repeat.
-// ena/enb jumper caps off, wires: ena -> d3, enb -> d10.
+// ena/enb jumper caps off. l298n sits on d3-d8 in connector order:
+// ena->d3, in1->d4, in2->d5, in3->d6, in4->d7, enb->d8.
 // d13 mirrors the drive phase — lit = motors should be turning.
+#define ENA 3
 #define IN1 4
 #define IN2 5
 #define IN3 6
 #define IN4 7
-#define ENA 3
-#define ENB 10
+#define ENB 8
 #define SPEED 120 // 0-255. loaded/geared motors may need 150+ to break stiction.
                   // buzzing but not turning = raise this, not a wiring fault.
 

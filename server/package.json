@@ -12,6 +12,7 @@
     "test:editor": "node test-blk-editor.mjs",
     "test:fpv": "node test-fpv.mjs",
     "test:relay": "node test-relay.mjs",
+    "test:hud": "node test-hud.mjs",
     "test:layout": "node test-layout.mjs",
     "test:report": "node test-report.mjs",
     "test:mirror": "node test-mirror.mjs",
