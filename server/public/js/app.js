@@ -275,9 +275,6 @@ function CamBox({ packet, onFpv }) {
         <${CamView} />
         <dl class="hud-tele">
           <div><dt>${t("hud.dist")}</dt><dd>${fmt(packet?.dist, 0)} cm</dd></div>
-          <div><dt>${t("hud.roll")}</dt><dd>${fmt(packet?.roll, 1)}°</dd></div>
-          <div><dt>${t("hud.pitch")}</dt><dd>${fmt(packet?.pitch, 1)}°</dd></div>
-          <div><dt>${t("hud.yaw")}</dt><dd>${fmt(packet?.yaw, 1)}°</dd></div>
         </dl>
       </div>
     </section>`;
@@ -1113,9 +1110,11 @@ function ReplayList({ runs, onPick, onDelete, onClose }) {
 /* sensor strip — 5 live tiles + trend sparkline, one row under the stage */
 function SensorStrip({ packet }) {
   return html`
-    <section class="strip reveal" aria-label=${t("zone.environment")}>
-      ${SENSORS.map(s => html`<${Reading} key=${s.key} s=${s} value=${packet?.[s.key]} />`)}
-      <div class="reading trend-cell" aria-label=${t("zone.trends")}>
+    <${React.Fragment}>
+      <section class="strip reveal" aria-label=${t("zone.environment")}>
+        ${SENSORS.map(s => html`<${Reading} key=${s.key} s=${s} value=${packet?.[s.key]} />`)}
+      </section>
+      <div class="reading trend-cell reveal" aria-label=${t("zone.trends")}>
         <div class="reading-head">
           <span class="reading-name">${t("zone.trends")}</span>
           <span class="legend">
@@ -1124,7 +1123,7 @@ function SensorStrip({ packet }) {
         </div>
         <div class="trend-body"><${Trends} packet=${packet} /></div>
       </div>
-    </section>`;
+    <//>`;
 }
 
 /* analysis / mission memory (drawer tab) */
@@ -2437,6 +2436,7 @@ function App() {
   const BLE_CHAR = "19b10001-e8f2-537e-4f6c-d104768a1214";
   const BLE_CMD = "19b10002-e8f2-537e-4f6c-d104768a1214"; // write = motion routine verbs
   const bleRef = useRef({ device: null, char: null, cmd: null });
+  const bleWriteRef = useRef(Promise.resolve()); // serializes cmd char writes, see sendCmd
 
   // defined above onblenotify because that handler calls it — deps are evaluated during render, so later `const` would be in temporal dead zone.
   // `focus` comes from a workflow's `analyze <what to look at>` step — it steers
@@ -2486,7 +2486,11 @@ function App() {
     }
     if (!cmd) { toast(t("toast.cmdNoChar"), "danger"); return false; } // linked but firmware lacks cmd char
     try {
-      await cmd.writeValue(new TextEncoder().encode(word));
+      // web bluetooth runs one gatt op at a time — a hud push landing mid-write throws
+      // "GATT operation already in progress" and that command is just lost. chain them.
+      const w = bleWriteRef.current.then(() => cmd.writeValue(new TextEncoder().encode(word)));
+      bleWriteRef.current = w.catch(() => {}); // a failed write must not poison the chain
+      await w;
       addLog(t("log.cmdSent", { cmd: word }), "system");
       return true;
     } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); return false; }

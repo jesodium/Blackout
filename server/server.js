@@ -203,6 +203,7 @@ function processLine(raw) {
   recorder.push(data); // no-op unless a run is being recorded
   io.emit("sensor-data", data);
   maybeAutoAnalyze(data);
+  pushHud(data);
 }
 
 // pipe a readline parser onto a port.
@@ -633,6 +634,33 @@ setInterval(async () => {
   camConnected = up;
   io.emit("cmd", `cam,${up ? "connected" : "not connected"}`);
 }, 5000);
+
+// the giga's oled hud. the board draws it but decides nothing: the safety level is
+// the worst of the same statuses() the agent reasons over, and the metrics line is
+// formatted here, so the screen can never contradict what the agent is saying.
+// rides the same "cmd" channel drive commands do — the tab holding the ble link relays it.
+let lastHud = "";
+let lastHudAt = 0;
+const HUD_REPEAT = 3000; // telemetry is 10hz, the screen isn't. resend anyway on this
+                         // beat so a board that reconnected mid-stream fills in.
+// IMPORTANT NOTE: ble does one write at a time. a hand waving at the sonar changes
+// the metrics line every 100ms, and at 10hz those writes collide and get dropped —
+// the screen ends up lagging the dashboard by seconds. 4hz is faster than an eye
+// reads a 4px font and leaves the link free for drive commands.
+const HUD_MIN_GAP = 250;
+function pushHud(d) {
+  const s = statuses(d);
+  const level = ["ok", "warn", "bad"][Math.max(...Object.values(s).map(v => RANK[v] ?? 0))];
+  // 999 = sonar timeout = nothing within range, not a real 999cm reading.
+  const dist = d.dist >= 999 ? "CLEAR" : `${Math.round(d.dist)}cm`;
+  const msg = `hud,${level},${Math.round(d.temp)}C ${Math.round(d.humid)}%|${dist}`;
+  const now = Date.now();
+  if (now - lastHudAt < HUD_MIN_GAP) return;
+  if (msg === lastHud && now - lastHudAt < HUD_REPEAT) return;
+  lastHud = msg;
+  lastHudAt = now;
+  io.emit("cmd", msg);
+}
 
 function emitBlurt(prev, cur) {
   if (!prev || Date.now() - lastBlurt < BLURT_MIN_GAP) return;

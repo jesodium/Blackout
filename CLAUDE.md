@@ -7,9 +7,10 @@ Node.js PC server/dashboard.
 
 - `giga-r1/` — Giga R1 WiFi (`main/`): sensor hub + motor driver + BLE
   command endpoint, one board. Reads sensors, broadcasts CSV over BLE notify;
-  DHT11 (temp/humidity, D2) and HC-SR04 (ultrasonic, D11/D12) wired so far,
-  rest of the CSV field set sends 0 until a sensor lands. Also drives an
-  L298N (D3-D7, D10) and runs on-board `Step` motion routines
+  BME280 (temp/humidity/pressure, I2C on D20/D21 — replaced the DHT11, which is
+  off the robot) and HC-SR04 (ultrasonic, D32/D34) wired so far, rest of the CSV
+  field set sends 0 until a sensor lands. Also drives an
+  L298N (D3-D8, connector order) and runs on-board `Step` motion routines
   (`routines.h`, see "Dictated routines" below) or direct gamepad/dashboard
   drive commands over the same BLE `cmdChar` — routines run standalone on
   the board so a BLE drop mid-run doesn't strand it. `motor_test/` is a
