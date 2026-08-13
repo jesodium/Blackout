@@ -6,6 +6,7 @@ import { createRoverScene } from "./scene.js";
 import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./i18n.js";
 import { parse as blkParse, run as blkRun, lint as blkLint, estimate as blkEstimate, fmtMs } from "./blk.mjs";
 import { SageFace } from "./sageface.js";
+import { packXbm, coverRect, VID_W, VID_H, VID_BYTES, VID_CHUNK, VID_MAX_FRAMES } from "./oledvid.mjs";
 
 const html = htm.bind(React.createElement);
 
@@ -37,6 +38,10 @@ const SENSORS = [
   { key: "dist",  unit: "cm",  d: 0, min: 0, max: 200,  invert: true, st: v => v < 10 ? ["st.tooClose", "warn"] : ["st.clear", "go"] },
   { key: "smoke", unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 600 ? ["st.hazard", "abort"] : v > 300 ? ["st.warning", "warn"] : ["st.normal", "go"] },
   { key: "airq",  unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 800 ? ["st.poor", "abort"] : v > 450 ? ["st.moderate", "warn"] : ["st.good", "go"] },
+  // height above sea level, derived server-side from the bme280's pressure (see
+  // SEA_LEVEL_HPA). never a hazard, so it always reads "go" — worstSensor() walks this
+  // same list to pick the go/no-go verdict and altitude must never sway it.
+  { key: "alt",   unit: "m",   d: 0, min: 0, max: 3000, st: () => ["st.normal", "go"] },
 ];
 
 // voice/chat command triggers: saying one of these fires ble directly instead of going to llm
@@ -385,6 +390,43 @@ function MotorDebug({ onCmd, enabled }) {
     </div>`;
 }
 
+/* oled video: pick a clip, it plays on the robot's panel and the panel goes back to
+   the hud on its own when the clip ends. the slider is the per-clip knob — a 1-bit
+   panel has no grey, so a dark source needs a lower threshold to show up at all, and
+   it stays live while the clip plays so it can be dialled in by eye. */
+function OledVideo({ enabled, video, onPlay, onStop }) {
+  const [thresh, setThresh] = useState(() => +localStorage.getItem("oledVidThresh") || 128);
+  const threshRef = useRef(thresh);
+  threshRef.current = thresh;
+  const pick = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = ""; // picking the same clip twice in a row must still fire change
+    if (f) onPlay(f, threshRef);
+  };
+  const off = !enabled || !!video;
+  return html`
+    <div class="routines">
+      <span class="label">${t("drive.oledVid")}</span>
+      ${/* not .routine-row: that selector means "on-board routine buttons", and
+           test-mirror asserts every chip in one is a real disabled-able button */""}
+      <div class="vid-row">
+        <label class=${"chip" + (off ? " is-off" : "")}>
+          ${video
+            ? (video.phase === "play"
+                ? `▶ ${video.fps} FPS`
+                : `${t(video.phase === "capture" ? "drive.vidCapture" : "drive.vidUpload")} ${video.pct}%`)
+            : t("drive.pickClip")}
+          <input type="file" accept="video/*" hidden disabled=${off} onChange=${pick} />
+        </label>
+        ${video && html`
+          <button type="button" class="chip" onClick=${onStop}>■ ${t("drive.stop")}</button>`}
+        <input type="range" class="vid-thresh" min="40" max="220" value=${thresh}
+          aria-label=${t("drive.vidThresh")} title=${t("drive.vidThresh")}
+          onInput=${(e) => { setThresh(+e.target.value); localStorage.setItem("oledVidThresh", e.target.value); }} />
+      </div>
+    </div>`;
+}
+
 /* blk workflow control: pick a saved .blk program, run/stop it from here */
 // programs are authored in the popup editor (blk.html) and saved server-side;
 // the runner lives here because the browser holds the ble link. each drive step
@@ -571,7 +613,7 @@ const KEYMAP = {
   w: "fwd", arrowup: "fwd", s: "back", arrowdown: "back",
   a: "left", arrowleft: "left", d: "right", arrowright: "right",
 };
-function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
+function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef, video, onVideo, onVideoStop }) {
   const [mode, setMode] = useState("remote");
   const [padName, setPadName] = useState(null);
   const bodyRef = useRef(null);   // .drive-body — the box that gets height-animated
@@ -745,6 +787,7 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
           <button type="button" class=${"stop-bar" + (enabled ? "" : " is-off")} onClick=${stopAll} title=${t("mast.routineStopTitle")}>
             ■ ${t("drive.stop")}
           </button>`}
+        <${OledVideo} enabled=${enabled} video=${video} onPlay=${onVideo} onStop=${onVideoStop} />
        </div>
       </div>
     </section>`;
@@ -949,6 +992,7 @@ const FPV_STATS = [
   { k: "sensor.humid", u: "%",   v: p => fmt(p?.humid, 0) },
   { k: "sensor.smoke", u: "ppm", v: p => fmt(p?.smoke, 0) },
   { k: "sensor.airq",  u: "ppm", v: p => fmt(p?.airq, 0) },
+  { k: "sensor.alt",   u: "m",   v: p => fmt(p?.alt, 0) },
 ];
 
 function FpvSage({ ai, packet, speaking, connected }) {
@@ -2435,8 +2479,17 @@ function App() {
   const BLE_SERVICE = "19b10000-e8f2-537e-4f6c-d104768a1214";
   const BLE_CHAR = "19b10001-e8f2-537e-4f6c-d104768a1214";
   const BLE_CMD = "19b10002-e8f2-537e-4f6c-d104768a1214"; // write = motion routine verbs
-  const bleRef = useRef({ device: null, char: null, cmd: null });
-  const bleWriteRef = useRef(Promise.resolve()); // serializes cmd char writes, see sendCmd
+  const BLE_VID = "19b10003-e8f2-537e-4f6c-d104768a1214"; // write = raw oled video frames
+  const bleRef = useRef({ device: null, char: null, cmd: null, vid: null });
+  const bleWriteRef = useRef(Promise.resolve()); // serializes every gatt write, see bleWrite
+  // web bluetooth runs one gatt op at a time — a hud push landing mid-write throws
+  // "GATT operation already in progress" and that command is just lost. every write on
+  // the link goes through this one chain, video frames included.
+  const bleWrite = useCallback((fn) => {
+    const w = bleWriteRef.current.then(fn);
+    bleWriteRef.current = w.catch(() => {}); // a failed write must not poison the chain
+    return w;
+  }, []);
 
   // defined above onblenotify because that handler calls it — deps are evaluated during render, so later `const` would be in temporal dead zone.
   // `focus` comes from a workflow's `analyze <what to look at>` step — it steers
@@ -2470,7 +2523,7 @@ function App() {
     const { device, char } = bleRef.current;
     if (char) char.removeEventListener("characteristicvaluechanged", onBleNotify);
     if (device?.gatt?.connected) device.gatt.disconnect();
-    bleRef.current = { device: null, char: null, cmd: null };
+    bleRef.current = { device: null, char: null, cmd: null, vid: null };
   }, [onBleNotify]);
 
   // one verb to firmware over ble cmd char: "go,<name>" starts a motion routine, "stop" cuts motors.
@@ -2486,18 +2539,133 @@ function App() {
     }
     if (!cmd) { toast(t("toast.cmdNoChar"), "danger"); return false; } // linked but firmware lacks cmd char
     try {
-      // web bluetooth runs one gatt op at a time — a hud push landing mid-write throws
-      // "GATT operation already in progress" and that command is just lost. chain them.
-      const w = bleWriteRef.current.then(() => cmd.writeValue(new TextEncoder().encode(word)));
-      bleWriteRef.current = w.catch(() => {}); // a failed write must not poison the chain
-      await w;
+      await bleWrite(() => cmd.writeValue(new TextEncoder().encode(word)));
       addLog(t("log.cmdSent", { cmd: word }), "system");
       return true;
     } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); return false; }
-  }, [addLog, toast]);
+  }, [addLog, toast, bleWrite]);
   // the socket effect above relays commands through this — sendCmd is defined below it, so it can't reference it directly
   const sendCmdRef = useRef(sendCmd);
   sendCmdRef.current = sendCmd;
+
+  /* oled video: play an operator's clip on the robot's panel, then hand the screen back.
+     two phases, and the whole point is that only the first one touches the link.
+       1. capture — a detached <video> plays the picked file, every decoded frame is
+          cropped + dithered to the panel's 64x128 1-bit bitmap (oledvid.mjs) and kept in
+          an array. runs at the clip's real speed, so a 10s clip takes 10s.
+       2. upload — the frames go out back-to-back as one flat byte stream, and the board
+          plays them from its own sdram at the clip's own frame rate.
+     it used to dither-and-write frame by frame while the clip played, which meant the
+     panel only ever ran as fast as ble could carry 1KB frames — single digits. the link
+     can't do video rates (60fps is ~61KB/s, and a with-response write costs a round trip
+     at the ~15ms connection interval), so the fix is to stop asking it to: pay the
+     transfer once up front and let the board's own clock drive playback.
+     IMPORTANT NOTE: the threshold slider applies at *capture*. once a clip is uploaded
+     it's a fixed bitmap — re-pick the file to try a different threshold. */
+  const [video, setVideo] = useState(null); // { name, phase, pct, fps } while a clip runs
+  const videoStopRef = useRef(null);
+  const stopVideo = useCallback(() => { videoStopRef.current?.(); }, []);
+
+  const playVideo = useCallback(async (file, threshRef) => {
+    if (!grantedRef.current) { toast(t("toast.mirrorOnly"), "warn"); return; }
+    if (videoStopRef.current) return;                       // one clip at a time
+    const vid = bleRef.current.vid;
+    if (!vid) { toast(t("toast.vidNoChar"), "danger"); return; }
+    const el = document.createElement("video"); // detached: it never has to be on screen to decode
+    el.src = URL.createObjectURL(file);
+    el.playsInline = true;
+    const canvas = document.createElement("canvas");
+    canvas.width = VID_W; canvas.height = VID_H;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    let stop = false;
+    videoStopRef.current = () => { stop = true; };
+    addLog(t("log.vidStart", { name: file.name }), "system");
+    try {
+      await new Promise((res, rej) => {
+        el.onloadeddata = res;
+        el.onerror = () => rej(new Error(t("toast.vidDecode")));
+      });
+      // rVFC is how we get *every* decoded frame at its real presentation time. without
+      // it we'd be sampling a <video> on rAF and guessing, so refuse rather than upload
+      // a clip that judders for a reason nobody can see.
+      if (!el.requestVideoFrameCallback) throw new Error(t("toast.vidNoRvfc"));
+      const { sx, sy, sw, sh } = coverRect(el.videoWidth, el.videoHeight);
+
+      // 1. capture. muted: this pass is just a decode, the audible play is phase 3.
+      el.muted = true;
+      const frames = [];
+      let lastUi = 0;
+      setVideo({ name: file.name, phase: "capture", pct: 0, fps: "—" });
+      await el.play();
+      await new Promise((res, rej) => {
+        const onFrame = () => {
+          if (stop || el.ended || frames.length >= VID_MAX_FRAMES) return res();
+          ctx.drawImage(el, sx, sy, sw, sh, 0, 0, VID_W, VID_H);
+          frames.push(packXbm(ctx.getImageData(0, 0, VID_W, VID_H).data, VID_W, VID_H, threshRef.current));
+          const now = Date.now();
+          if (now - lastUi > 250) { // a setState per frame re-renders the whole drive panel
+            lastUi = now;
+            setVideo({ name: file.name, phase: "capture", fps: "—",
+              pct: Math.min(100, Math.round((el.currentTime / (el.duration || 1)) * 100)) });
+          }
+          el.requestVideoFrameCallback(onFrame);
+        };
+        el.onended = res;
+        el.onerror = () => rej(new Error(t("toast.vidDecode")));
+        el.requestVideoFrameCallback(onFrame);
+      });
+      el.pause();
+      if (stop) return;
+      if (!frames.length) throw new Error(t("toast.vidDecode"));
+      // the clip's real rate, from what actually decoded — not a guess and not forced to
+      // 60. a 24 or 30fps source padded up to 60 is duplicate frames: same motion, twice
+      // the upload. clamped to what the board accepts.
+      const fps = Math.max(1, Math.min(60, Math.round(frames.length / (el.currentTime || el.duration || 1))));
+
+      // 2. upload, as one flat byte stream. chunk boundaries are free to ignore frame
+      // boundaries — the board just appends in arrival order until it has the byte count
+      // "vid,load" declared, then plays.
+      if (!(await sendCmd(`vid,load,${frames.length},${fps}`))) throw new Error(t("toast.cmdNoLink"));
+      let sent = 0;
+      for (const buf of frames) {
+        for (let o = 0; o < VID_BYTES; o += VID_CHUNK) {
+          if (stop || bleRef.current.vid !== vid) return;
+          // with response, and VID_CHUNK stays under the att mtu so each one is a single
+          // write rather than a multi-round-trip long write. see VID_CHUNK in main.ino.
+          await bleWrite(() => vid.writeValueWithResponse(buf.subarray(o, o + VID_CHUNK)));
+        }
+        sent++;
+        const now = Date.now();
+        if (now - lastUi > 250) {
+          lastUi = now;
+          setVideo({ name: file.name, phase: "upload", fps: String(fps),
+            pct: Math.round((sent / frames.length) * 100) });
+        }
+      }
+
+      // 3. the board is now playing it from ram on its own clock. play the audio here to
+      // match — sound is half the joke, and the two clocks only have to agree to about a
+      // frame for that to land.
+      setVideo({ name: file.name, phase: "play", pct: 100, fps: String(fps) });
+      el.currentTime = 0;
+      el.muted = false;
+      await el.play().catch(() => {}); // autoplay policy said no — the panel still plays
+      const playMs = (frames.length / fps) * 1000;
+      await new Promise((res) => {
+        const id = setTimeout(res, playMs);
+        videoStopRef.current = () => { stop = true; clearTimeout(id); res(); };
+      });
+    } catch (e) {
+      addLog(t("log.error", { msg: e.message }), "danger");
+      toast(e.message, "danger");
+    } finally {
+      el.pause();
+      URL.revokeObjectURL(el.src);
+      videoStopRef.current = null;
+      setVideo(null);
+      await sendCmd("vid,off"); // the board also times out on its own if this never lands
+    }
+  }, [addLog, toast, sendCmd, bleWrite]);
 
   const loadBridge = useCallback(async () => {
     try { const r = await fetch("/api/bridge"); const d = await r.json();
@@ -2547,14 +2715,15 @@ function App() {
         const service = await server.getPrimaryService(BLE_SERVICE);
         const char = await service.getCharacteristic(BLE_CHAR);
         const cmd = await service.getCharacteristic(BLE_CMD).catch(() => null); // older firmware lacks it
+        const vid = await service.getCharacteristic(BLE_VID).catch(() => null); // ditto, oled video
         await char.startNotifications();
         char.addEventListener("characteristicvaluechanged", onBleNotify);
         device.addEventListener("gattserverdisconnected", () => {
-          bleRef.current = { device: null, char: null, cmd: null };
+          bleRef.current = { device: null, char: null, cmd: null, vid: null };
           setBridge(b => ({ ...b, running: false }));
           fetch("/api/bridge/stop", { method: "POST" }).catch(() => {});
         });
-        bleRef.current = { device, char, cmd };
+        bleRef.current = { device, char, cmd, vid };
         const r = await fetch("/api/bridge/start", { method: "POST" });
         const d = await r.json();
         if (d.ok) { setBridge({ running: true, busy: false }); toast(t("toast.bridgeOn"), "ok"); }
@@ -2957,7 +3126,8 @@ function App() {
                  mount, and driveMounted holds it one beat past a revoke so it can animate out */
               driveMounted && html`
               <${Drive} onCmd=${sendCmd} onAnalyze=${analyze} enabled=${canDrive} leaving=${!granted}
-                busyRef=${analyzingRef} packetRef=${packetRef} />`}
+                busyRef=${analyzingRef} packetRef=${packetRef}
+                video=${video} onVideo=${playVideo} onVideoStop=${stopVideo} />`}
           </aside>
         </main>
 
