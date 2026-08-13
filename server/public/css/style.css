@@ -894,6 +894,12 @@ input[type="range"]:focus { box-shadow: none; }
 }
 .chip:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-2); transform: translateY(-1px); }
 .chip:disabled { opacity: 0.4; cursor: not-allowed; }
+/* the oled clip picker is a <label> wrapping a hidden file input, not a button — a
+   label can't be :disabled, so the dead state is a class on it. */
+label.chip { display: inline-flex; align-items: center; }
+label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
+.vid-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.vid-thresh { flex: 1; min-width: 80px; accent-color: var(--ink-2); }
 
 .stop-bar {
   width: 100%; min-height: clamp(44px, 5dvh, 50px); cursor: pointer; border-radius: var(--r);

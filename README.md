@@ -12,7 +12,7 @@ arduino-cli compile --fqbn arduino:mbed_giga:giga
 arduino-cli upload --port /dev/cu.usbmodem1101 --fqbn arduino:mbed_giga:giga
 ```
 
-Sensors: DHT11, HSRC04
+Sensors: DHT11, BME280, HSRC04
 
 ### 2. Server (Node.js)
 

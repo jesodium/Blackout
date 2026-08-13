@@ -172,6 +172,15 @@ app.post("/api/scan", async (req, res) => {
   }
 });
 
+// height above sea level from the bme280's pressure. the board sends pressure and
+// nothing else on purpose: this is the same barometric formula Adafruit's
+// readAltitude() runs, so deriving it here instead makes the sea-level reference a
+// venue knob (SEA_LEVEL_HPA, hPa at the venue's own sea level on the day) rather than
+// a reflash — set it from the local METAR/QNH and the tile reads true elevation.
+// IMPORTANT NOTE: pressure 0 means no bme wired, not sea level — no reading, not 0m.
+const SEA_LEVEL_HPA = parseFloat(process.env.SEA_LEVEL_HPA || "1013.25");
+const altitudeM = (hPa) => (hPa > 0 ? 44330 * (1 - Math.pow(hPa / SEA_LEVEL_HPA, 1 / 5.255)) : 0);
+
 // process a raw line: emit to serial monitor, parse "S:" telemetry for dashboard.
 function processLine(raw) {
   const line = raw.trim();
@@ -197,6 +206,7 @@ function processLine(raw) {
     routine: parts.length > 11 ? parts[11].trim() === "1" : false,
     timestamp: Date.now(),
   };
+  data.alt = Math.round(altitudeM(data.pressure) * 10) / 10; // derived, not a csv field
   latestData = data;
   dataHistory.push(data);
   if (dataHistory.length > 1000) dataHistory.shift();
@@ -736,6 +746,7 @@ function readingLines(data) {
     `Temperature: ${data.temp}°C [${s.temp}]`,
     `Humidity: ${data.humid}%`,
     data.pressure ? `Pressure: ${data.pressure} hPa` : null,
+    data.pressure ? `Height: ${Math.round(data.alt)} m above sea level` : null,
     `Distance to the rock face ahead: ${data.dist} cm [${s.dist}]`,
     data.smoke ? `Smoke/gas level: ${data.smoke} [${s.smoke}]` : null,
     data.airq ? `Air quality: ${data.airq} [${s.airq}]` : null,
@@ -992,6 +1003,7 @@ io.on("connection", (socket) => {
 
       timestamp: Date.now(),
     };
+    latestData.alt = Math.round(altitudeM(latestData.pressure) * 10) / 10;
     console.log("Mock data injected");
     io.emit("sensor-data", latestData);
     runAiAnalysis();
