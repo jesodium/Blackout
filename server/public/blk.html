@@ -247,6 +247,24 @@
       transform-origin: 12px 20px; transform: rotate(-2deg) scale(1.04);
       box-shadow: 0 10px 26px rgba(0,0,0,0.55);
     }
+    /* icons: public/icons/*.svg, masked so they take the text colour (js/icons.mjs) */
+    .icn {
+      display: inline-block; width: 1em; height: 1em; vertical-align: -0.15em; flex: none;
+      background: currentColor;
+      -webkit-mask: var(--icn) center / contain no-repeat;
+      mask: var(--icn) center / contain no-repeat;
+    }
+    .icn-mic { --icn: url("/icons/mic.svg"); }
+    .icn-camera { --icn: url("/icons/camera.svg"); }
+    .icn-trash { --icn: url("/icons/trash.svg"); }
+    .icn-volume { --icn: url("/icons/volume.svg"); }
+    .icn-mute { --icn: url("/icons/mute.svg"); }
+    .icn-pause { --icn: url("/icons/pause.svg"); }
+    .icn-step { --icn: url("/icons/step.svg"); }
+    .icn-timer { --icn: url("/icons/timer.svg"); }
+    .icn-warn { --icn: url("/icons/warn.svg"); }
+    .icn-gear { --icn: url("/icons/gear.svg"); }
+
     /* bin: only exists while something is being dragged */
     .trash {
       position: absolute; right: 18px; bottom: 18px; z-index: 60;
@@ -489,7 +507,7 @@
         <div class="pane" id="pane-blocks"><div class="blk-canvas" id="canvas"></div></div>
         <div class="pane" id="pane-text" hidden><textarea id="code" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="BLK source"></textarea></div>
 
-        <div class="trash" id="trash" hidden aria-hidden="true">🗑</div>
+        <div class="trash" id="trash" hidden aria-hidden="true"><i class="icn icn-trash" aria-hidden="true"></i></div>
 
         <div class="actionbar" id="actionbar" hidden>
           <span class="what" id="act-what">block</span>
@@ -498,7 +516,7 @@
           <button class="icon-btn" id="act-dup" aria-label="Duplicate" title="Duplicate">⧉</button>
           <button class="icon-btn" id="act-off" aria-label="Disable" title="Disable — kept in the file, skipped at run">⦿</button>
           <button class="icon-btn" id="act-bp" aria-label="Breakpoint" title="Breakpoint">●</button>
-          <button class="icon-btn is-danger" id="act-del" aria-label="Delete" title="Delete">🗑</button>
+          <button class="icon-btn is-danger" id="act-del" aria-label="Delete" title="Delete"><i class="icn icn-trash" aria-hidden="true"></i></button>
           <button class="icon-btn" id="act-close" aria-label="Deselect" title="Deselect">✕</button>
         </div>
       </section>
@@ -513,8 +531,8 @@
         <div class="tele">tap the arena to add or clear a wall · two-finger tap (or shift-tap) to move the rover</div>
         <button class="run-btn" id="sim-run" title="Run the program in the simulator (Ctrl+Enter)">▶ Run sim</button>
         <div class="row">
-          <button class="btn-t" id="sim-pause">⏸ Pause</button>
-          <button class="btn-t" id="sim-step">⏭ Step</button>
+          <button class="btn-t" id="sim-pause"><i class="icn icn-pause" aria-hidden="true"></i> Pause</button>
+          <button class="btn-t" id="sim-step"><i class="icn icn-step" aria-hidden="true"></i> Step</button>
           <button class="btn-t" id="sim-reset">↺ Reset</button>
         </div>
         <div class="row">

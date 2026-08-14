@@ -36,6 +36,36 @@ Node.js PC server/dashboard.
   drive commands. `sage.js` parses the model's JSON replies; `vision.js`
   grabs ESP32-CAM stills for Sage to see; TTS is Deepgram (if keyed) falling
   back to Edge neural voices; prompts live in `prompts/*.md`.
+  - **Gamepad** is a first-class input, not a shortcut layer, and it splits in two:
+    the **sticks drive**, the **d-pad drives the UI**. Left stick is an arcade mix
+    (throttle + steering at once) and the right stick x is a slow on-the-spot pivot
+    for lining up; both land on `drv,tank,<l>,<r>` — signed pwm per side, the one
+    motion primitive the firmware keeps (`tank()` in `main.ino`, the four named verbs
+    are its corners). Stick travel maps into `[MIN_PWM, cap]`: below that the L298N
+    buzzes instead of turning, so both are bench knobs in `Drive`, not magic numbers.
+    `padnav.mjs` owns the UI half — d-pad roams focus spatially, ✕ presses, ○ backs
+    out of the top modal, OPTIONS opens the console. **VIEW/SHARE (button 8) flips to
+    cursor mode:** a free pointer flown by the left stick (or d-pad), ✕ clicks whatever
+    is under it, edges pan the page — for what focus can't reach (charts, the 3d view).
+    While it's up Drive's loop parks itself (`cursorOn()`), so aiming can never drive
+    by accident. It re-reads the dom on
+    every move, so nothing needs registering; a modal just needs a close button to
+    be backed out of. FPV and the first-run tour take the pad back while they're up
+    (they bind the same buttons). `npm run test:padnav` covers the mix and the
+    roaming maths and cross-checks the constants against `main.ino`.
+  - **Icons** are files — `public/icons/<name>.svg` — used as a css **mask**
+    (`.icn .icn-<name>`), never an `<img>`: masked, they take `currentColor` and
+    the font size of whatever they sit in, so the same file is amber in a
+    warning and white in a button. Using one is just a class
+    (`<i class="icn icn-warn">`); `icons.mjs` holds the name list plus `icon()`
+    / `prefixIcon()` for js callers and `Icon` in `app.js` for jsx. **No emoji,
+    no icon font, no cdn** — an emoji is a different picture on every machine
+    and the venue has no internet. The terminal glyphs (`✕ ● ○ △ ▶ ■`) are
+    *not* emoji and stay as text: on the gamepad they *are* the button faces.
+    An icon is three things that must line up — the name, the svg, and the
+    `.icn-<name>` rule in **both** `style.css` and `blk.html`'s own `<style>`
+    (miss one and it renders as an empty box); `npm run test:icons` is the
+    check, and it also fails on any emoji added back.
   - **Sage's face** (`public/js/sageface.js`) is ascii (`-_-`, `o_o`, `x_x`)
     animated in css — each eye is an open glyph with a shut `-` stacked on it and
     the blink is a step-timed opacity swap, so it snaps like text.

@@ -71,6 +71,36 @@ body {
 
 :focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; border-radius: 0; }
 
+/* gamepad roaming (padnav.mjs). :focus-visible won't fire for it — the heuristic only
+   knows keyboard and pointer — so body.padnav promotes plain :focus, and heavier than
+   the keyboard ring: this one is read from across the room, not from the keyboard. */
+body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* the pad's cursor (VIEW/SHARE toggles it). pointer-events: none so elementFromPoint
+   sees through it to whatever the operator is actually aiming at. It's positioned by
+   rAF, so no transition on transform — that would smear the aim behind the stick. */
+.padcursor {
+  position: fixed; top: 0; left: 0; z-index: 9999; pointer-events: none;
+  width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%;
+  border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 25%, transparent);
+  box-shadow: 0 0 0 1px #0009, 0 0 12px var(--accent);
+  animation: padcursor-in 140ms ease-out;
+}
+/* fade only — the element's transform is the cursor's position, so an animation that
+   touches transform would fling it to the top-left for the length of the fade. */
+@keyframes padcursor-in { from { opacity: 0; } }
+
+/* what the cursor is over — same read-from-the-room ring the d-pad's focus gets. */
+.padhover {
+  outline: 2px solid var(--accent); outline-offset: 3px;
+  transition: outline-color 120ms ease, box-shadow 160ms ease;
+  box-shadow: 0 0 18px -4px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .padcursor { animation: none; }
+  .padhover { transition: none; }
+}
+
 .visually-hidden {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
@@ -1790,3 +1820,25 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 }
 @keyframes recPulse { 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .hud-btn.is-rec.is-on { animation: none; } }
+
+/* ───────── icons ─────────
+   the drawings live in public/icons/*.svg and are used as a mask, not an <img>,
+   so they take the colour of whatever text they sit in (currentColor) — an
+   <img> would be stuck one colour on a ui that is amber, white and red by turn.
+   never emoji: a different picture on every machine, and colour on a mono ui. */
+.icn {
+  display: inline-block; width: 1em; height: 1em; vertical-align: -0.15em; flex: none;
+  background: currentColor;
+  -webkit-mask: var(--icn) center / contain no-repeat;
+  mask: var(--icn) center / contain no-repeat;
+}
+.icn-mic { --icn: url("/icons/mic.svg"); }
+.icn-camera { --icn: url("/icons/camera.svg"); }
+.icn-trash { --icn: url("/icons/trash.svg"); }
+.icn-volume { --icn: url("/icons/volume.svg"); }
+.icn-mute { --icn: url("/icons/mute.svg"); }
+.icn-pause { --icn: url("/icons/pause.svg"); }
+.icn-step { --icn: url("/icons/step.svg"); }
+.icn-timer { --icn: url("/icons/timer.svg"); }
+.icn-warn { --icn: url("/icons/warn.svg"); }
+.icn-gear { --icn: url("/icons/gear.svg"); }

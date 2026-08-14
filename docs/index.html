@@ -601,7 +601,9 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .tier ul{list-style:none;display:flex;flex-wrap:wrap;gap:8px}
 .tier li{font-size:12.5px;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 14px}
 .tier li.open{color:var(--dim);border-style:dashed}
-.tier li img{height:22px;width:auto;filter:grayscale(1) brightness(1.6);opacity:.9}
+/* IMPORTANT NOTE: sponsor logos keep their own white background — cutting it out kills
+   artwork drawn for white paper. Rounded so the white block reads as a chip. */
+.tier li img{height:40px;width:auto;border-radius:6px;filter:grayscale(1);opacity:.9}
 .tier li a:hover img{filter:none;opacity:1}
 .tier li a:hover{color:var(--accent)}
 .more{margin-top:22px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
@@ -1072,7 +1074,7 @@ const DICT = {
       shot2: "La vista FPV a pantalla completa: imagen de cámara, cinta de rumbo, retícula de distancia y la barra de voz de Sage.",
       shot2h: "Modo FPV", shot2p: "Un toque y toda la pantalla se vuelve la cámara — cinta de rumbo, retícula de distancia, Sage hablando encima.",
       shot3: "El panel de Sage, con estado de entrada SAFE, una respuesta hablada y un botón para correr el análisis.",
-      shot3h: "Sage, en línea", shot3p: "Ya informado de la misión, Sage anuncia el estado de entrada, narra lo que ve la cámara y responde en el momento en que le preguntas algo.",
+      shot3h: "Sage, a la orden", shot3p: "Ya informado de la misión, Sage anuncia el estado de entrada, narra lo que ve la cámara y responde en el momento en que le preguntas algo.",
       shot4: "Una grabación del editor BLK: un bloque arrastrado desde la paleta, su duración reescrita, y luego la rutina corriendo en el simulador.",
       shot4h: "Rutinas BLK", shot4p: "Junta unos bloques y el róver corre la misión solo — la rutina sigue aunque se pierda el enlace con ella.",
       hint1: "Elige un ángulo · libre para orbitar →", hint2: "Mueve el cursor sobre la imagen →", hint3: "Pregúntale algo →", hint4: "Arma una y córrela · pasa el cursor por el video →",
@@ -1112,14 +1114,14 @@ const DICT = {
     },
     roadmap: {
       eyebrow: "Biblioteca de modelos", h2: "Cada versión reescribe la anterior.",
-      lede: "Abre un modelo para leer su ficha."
+      lede: "Elige un modelo para leer su ficha."
     },
     sponsors: {
       eyebrow: "Patrocinadores", h2: "Nadie financia la oscuridad solo.",
       diamond: "Diamante", platinum: "Platino", standard: "Estándar",
       open: "Plaza libre", cta: "Todos los rangos", contact: "¿Quieres una plaza? Habla con el equipo."
     },
-    finale: { h2: 'Más exploraciones, menos riesgos, <span>más descubrimientos.</span>' },
+    finale: { h2: 'Dando forma a la arqueología con <span>robótica.</span>' },
     footer: { p: "Un proyecto de WRO 2026 Future Innovators.", lang: "Idioma" }
   },
   zh: {
