@@ -485,41 +485,30 @@ void setup() {
   Serial.println("BLE advertising as " BOARD_NAME); // adjacent string literals fold at compile time
 }
 
-// both motors forward at `speed` (0-255 pwm). if a motor spins backward, swap
-// that motor's two output wires at the l298n screw terminals — don't flip the
-// pin logic here or forward/back stop meaning the same thing.
-void forward(uint8_t speed) {
-  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
-  digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
-  analogWrite(ENA, speed); analogWrite(ENB, speed);
+// the one motion primitive: signed per-side pwm, -255 (full reverse) to 255
+// (full forward). motor a is `l`, motor b is `r`. everything below is a corner
+// of it, and the pad's left-stick arcade mix lands on the in-between values —
+// arcing while driving, which the four named verbs can't express.
+// if a motor spins backward, swap that motor's two output wires at the l298n
+// screw terminals — don't flip the pin logic here or forward/back stop meaning
+// the same thing.
+void tank(int l, int r) {
+  l = constrain(l, -255, 255); r = constrain(r, -255, 255);
+  digitalWrite(IN1, l < 0); digitalWrite(IN2, l > 0);
+  digitalWrite(IN3, r < 0); digitalWrite(IN4, r > 0);
+  analogWrite(ENA, abs(l)); analogWrite(ENB, abs(r));
 }
 
-void back(uint8_t speed) {
-  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
-  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
-  analogWrite(ENA, speed); analogWrite(ENB, speed);
-}
+void forward(uint8_t speed) { tank(speed, speed); }
+void back(uint8_t speed)    { tank(-speed, -speed); }
 
 // pivot turns: motors oppose, robot spins about its own centre rather
 // than arcing. turn *angle* is whatever `ms` buys you at this speed — open loop,
 // no encoders, so it drifts with battery charge. tune on the field, not the bench.
-void left(uint8_t speed) {
-  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
-  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
-  analogWrite(ENA, speed); analogWrite(ENB, speed);
-}
+void left(uint8_t speed)    { tank(speed, -speed); }
+void right(uint8_t speed)   { tank(-speed, speed); }
 
-void right(uint8_t speed) {
-  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
-  analogWrite(ENA, speed); analogWrite(ENB, speed);
-}
-
-void halt() {
-  analogWrite(ENA, 0); analogWrite(ENB, 0);
-  digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
-}
+void halt() { tank(0, 0); }
 
 void applyStep(const Step& s) {
   switch (s.op) {
@@ -538,26 +527,38 @@ void applyStep(const Step& s) {
   }
 }
 
-// direct drive for the dashboard's motor-debug panel: "drv,<fwd|back|left|right>,<pwm>[,<ms>]".
+// direct drive for the dashboard's motor-debug panel and the pad:
+//   "drv,<fwd|back|left|right>,<pwm>[,<ms>]"  — one of the four verbs
+//   "drv,tank,<l>,<r>[,<ms>]"                 — signed per-side, -255..255
 // always time-limited (default 800ms, cap 10s) so a dropped link or missed stop
 // never leaves the wheels spinning. overrides any running routine.
 unsigned long drvEnd = 0;
 
 void stopRoutine() { routine = nullptr; drvEnd = 0; halt(); }
 
-void startDrive(const String& c) {   // c = "drv,verb,pwm[,ms]"
+void startDrive(const String& c) {
   int a = c.indexOf(',', 4);
   if (a < 0) return;
   String verb = c.substring(4, a);
   int b = c.indexOf(',', a + 1);
-  int pwm = constrain((b < 0 ? c.substring(a + 1) : c.substring(a + 1, b)).toInt(), 0, 255);
-  long ms = b < 0 ? 800 : constrain(c.substring(b + 1).toInt(), 50, 10000);
+  if (b < 0 && verb == "tank") return;  // tank needs both sides, never one
   routine = nullptr;
-  if      (verb == "fwd")   forward(pwm);
-  else if (verb == "back")  back(pwm);
-  else if (verb == "left")  left(pwm);
-  else if (verb == "right") right(pwm);
-  else { halt(); return; } // unknown verb, wheels stay still
+  long ms;
+  if (verb == "tank") {
+    int d = c.indexOf(',', b + 1);
+    int l = c.substring(a + 1, b).toInt();
+    int r = (d < 0 ? c.substring(b + 1) : c.substring(b + 1, d)).toInt();
+    ms = d < 0 ? 800 : constrain(c.substring(d + 1).toInt(), 50, 10000);
+    tank(l, r);
+  } else {
+    int pwm = constrain((b < 0 ? c.substring(a + 1) : c.substring(a + 1, b)).toInt(), 0, 255);
+    ms = b < 0 ? 800 : constrain(c.substring(b + 1).toInt(), 50, 10000);
+    if      (verb == "fwd")   forward(pwm);
+    else if (verb == "back")  back(pwm);
+    else if (verb == "left")  left(pwm);
+    else if (verb == "right") right(pwm);
+    else { halt(); return; } // unknown verb, wheels stay still
+  }
   drvEnd = millis() + ms;
   Serial.print("drv: "); Serial.println(c);
 }

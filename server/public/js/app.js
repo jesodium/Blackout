@@ -7,8 +7,12 @@ import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./
 import { parse as blkParse, run as blkRun, lint as blkLint, estimate as blkEstimate, fmtMs } from "./blk.mjs";
 import { SageFace } from "./sageface.js";
 import { packXbm, coverRect, VID_W, VID_H, VID_BYTES, VID_CHUNK, VID_MAX_FRAMES } from "./oledvid.mjs";
+import { initPadNav, cursorOn } from "./padnav.mjs";
 
 const html = htm.bind(React.createElement);
+
+// icons are files masked with currentColor — see icons.mjs / public/icons/
+const Icon = ({ n }) => html`<i class=${"icn icn-" + n} aria-hidden="true" />`;
 
 // mirror mode: the judges' tablet reaches this dashboard over the lan, the operator's
 // laptop over localhost. anything not local is a read-only copy — same telemetry, no
@@ -573,7 +577,7 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
         <details class="blk-prev">
           <summary>${preview.text.split("\n").filter(l => l.trim()).length} lines · ~${preview.ms} per pass${preview.warns.length ? ` · ${preview.warns.length} warning${preview.warns.length === 1 ? "" : "s"}` : ""}</summary>
           <pre>${preview.text}</pre>
-          ${preview.warns.map(w => html`<div class="blk-warn" key=${w}>⚠ ${w}</div>`)}
+          ${preview.warns.map(w => html`<div class="blk-warn" key=${w}><${Icon} n="warn" /> ${w}</div>`)}
         </details>`}
       ${run && Object.keys(run.vars || {}).length > 0 && html`
         <small style=${{ opacity: 0.75, fontFamily: "var(--mono)" }}>
@@ -613,6 +617,9 @@ const KEYMAP = {
   w: "fwd", arrowup: "fwd", s: "back", arrowdown: "back",
   a: "left", arrowleft: "left", d: "right", arrowright: "right",
 };
+// each discrete verb as its per-side mix, so keys and the on-screen pad go down the
+// same tank path as the sticks. matches left()/right() in main.ino — pivots, not arcs.
+const VERB_MIX = { fwd: [1, 1], back: [-1, -1], left: [1, -1], right: [-1, 1] };
 function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef, video, onVideo, onVideoStop }) {
   const [mode, setMode] = useState("remote");
   const [padName, setPadName] = useState(null);
@@ -663,36 +670,59 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef, video, 
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur); };
   }, [onCmd]);
 
-  // one drive loop for every input source. gamepad wins over held pad/keys.
-  // dpad up/down drives, right stick x rotates, □/X analyzes. slow pwm by default — manual is
-  // precision, not speed — with R2 held as turbo. IMPORTANT NOTE: turbo is pad-only, no key binding.
-  const MANUAL_PWM = 110;
+  /* one drive loop for every input source, and every source ends up as the same thing:
+     a signed pwm per side ("drv,tank,l,r"). that's what lets the left stick throttle and
+     steer at once — the four verbs can only do one or the other.
+       left stick   — arcade: y throttles, x steers, mixed, so it arcs while driving
+       right stick x — pivot on the spot at a fraction of the band, for lining up
+       R2            — turbo (pad-only, no key binding)
+       □/X           — analyze
+     the d-pad is *not* drive any more: it roams the ui (padnav.mjs). on-screen pad and
+     wasd still send discrete verbs, and only when the sticks are idle. */
+  const MANUAL_PWM = 110; // manual is precision, not speed
   const TURBO_PWM = 200;
+  const SPIN_SCALE = 0.45; // right stick uses under half the band — that's the "slow" in slow spin
+  // IMPORTANT NOTE: bench knobs, both. DEADZONE covers a worn stick's drift at rest;
+  // MIN_PWM is where this l298n + these motors stop buzzing and start turning. stick
+  // travel is mapped into [MIN_PWM, cap] so the first millimetre of throw already moves.
+  const DEADZONE = 0.15;
+  const MIN_PWM = 55;
   useEffect(() => {
+    const dz = (v) => (Math.abs(v) < DEADZONE ? 0 : (v - Math.sign(v) * DEADZONE) / (1 - DEADZONE));
+    const duty = (v, cap) => (Math.abs(v) < 0.02 ? 0
+      : Math.round(Math.sign(v) * (MIN_PWM + (cap - MIN_PWM) * Math.min(1, Math.abs(v)))));
+    const verbOf = (l, r) => (!l && !r ? null
+      : Math.abs(l - r) > Math.abs(l + r) ? (l > r ? "left" : "right") : l + r > 0 ? "fwd" : "back");
     const id = setInterval(() => {
-      if (!armedRef.current || tourOpen) { if (moving.current) { moving.current = false; setVerb(null); onCmd("stop"); } return; }
+      // cursor mode has the sticks aiming a pointer — they must not also be wheels.
+      if (!armedRef.current || tourOpen || cursorOn()) { if (moving.current) { moving.current = false; setVerb(null); onCmd("stop"); } return; }
       const pad = [...navigator.getGamepads()].find(Boolean);
-      let v = null;
       // R2 = button 7. analog on ds4/xbox, so read .value too — .pressed only trips past the deadzone.
       const turbo = !!pad && (pad.buttons[7]?.pressed || (pad.buttons[7]?.value ?? 0) > 0.35);
+      const cap = turbo ? TURBO_PWM : MANUAL_PWM;
+      let l = 0, r = 0; // normalised -1..1 per side until the duty map at the end
       if (pad) {
         // square (x on xbox) = button 2. press edge only, so holding doesn't queue analyses.
         const sq = !!pad.buttons[2]?.pressed;
         if (sq && !sqWas.current) analyzeRef.current?.();
         sqWas.current = sq;
-        const rx = pad.axes[2] ?? 0;
-        v = pad.buttons[12]?.pressed ? "fwd"
-          : pad.buttons[13]?.pressed ? "back"
-          : Math.abs(rx) > 0.35 ? (rx < 0 ? "left" : "right")
-          : null;
+        const y = -dz(pad.axes[1] ?? 0), x = dz(pad.axes[0] ?? 0); // axis 1 is +down
+        l = y - x; r = y + x;
+        const rx = dz(pad.axes[2] ?? 0);
+        l -= rx * SPIN_SCALE; r += rx * SPIN_SCALE;
       }
-      v = v || heldRef.current;
-      if (!v) {
+      if (!l && !r && heldRef.current) [l, r] = VERB_MIX[heldRef.current];
+      // full throttle plus full steering overshoots — scale both back together, or the
+      // clip would eat the steering and turn an arc into a straight line.
+      const peak = Math.max(Math.abs(l), Math.abs(r));
+      if (peak > 1) { l /= peak; r /= peak; }
+      l = duty(l, cap); r = duty(r, cap);
+      if (!l && !r) {
         if (moving.current) { moving.current = false; setVerb(null); onCmd("stop"); }
         return;
       }
-      moving.current = true; setVerb(v);
-      onCmd(`drv,${v},${turbo ? TURBO_PWM : MANUAL_PWM},300`);
+      moving.current = true; setVerb(verbOf(l, r));
+      onCmd(`drv,tank,${l},${r},300`);
     }, 150);
     return () => clearInterval(id);
   }, [onCmd]);
@@ -746,6 +776,7 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef, video, 
   const hint = mode !== "remote" ? null
     : !enabled ? t("toast.cmdNoLink")
     : verb ? "▶ " + verb.toUpperCase()
+    : padName ? t("drive.pad")
     : t("drive.hold");
 
   return html`
@@ -1438,9 +1469,9 @@ function downloadReport(rep) {
   setTimeout(() => URL.revokeObjectURL(url), 1000); // revoking in the same tick cancels the download
 }
 
-function ReportRow({ k, v, kind }) {
+function ReportRow({ k, v, kind, img }) {
   return html`<div class=${"report-row" + (kind ? " is-" + kind : "")}>
-    <span class="report-k">${k}</span><span class="report-v">${v}</span></div>`;
+    <span class="report-k">${k}</span><span class="report-v">${v}${img ? html` <${Icon} n="camera" />` : null}</span></div>`;
 }
 
 function ReportModal({ report, closing, onClose }) {
@@ -1474,7 +1505,7 @@ function ReportModal({ report, closing, onClose }) {
 
           <h3 class="report-h">${t("report.findings")} · ${report.findings.length}</h3>
           ${report.findings.length ? report.findings.map((f, i) => html`
-            <${ReportRow} key=${i} k=${f.time} v=${f.text + (f.hasImage ? " 📷" : "")} kind=${f.kind === "danger" ? "abort" : f.kind === "warn" ? "warn" : null} />`) : empty}
+            <${ReportRow} key=${i} k=${f.time} v=${f.text} img=${f.hasImage} kind=${f.kind === "danger" ? "abort" : f.kind === "warn" ? "warn" : null} />`) : empty}
 
           <h3 class="report-h">${t("report.analysis")} · ${report.analysis.length}</h3>
           ${report.analysis.length ? report.analysis.map((h, i) => html`
@@ -1610,7 +1641,7 @@ function Briefing({ onBrief, onBack, onSpeak, busy }) {
             onKeyDown=${e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) next(); }}></textarea>
           ${mic.supported ? html`<button type="button" class=${"ask-mic brief-mic" + (mic.listening ? " is-live" : "")}
             onClick=${mic.toggle} disabled=${busy} aria-pressed=${mic.listening}>
-            ${mic.listening ? t("brief.listening") : t("brief.speak")}</button>` : null}
+            <${Icon} n="mic" /> ${mic.listening ? t("brief.listening") : t("brief.speak")}</button>` : null}
         </div>
         <button type="button" class="btn btn--primary" onClick=${next} disabled=${busy || !curVal.trim()}>
           ${step === BRIEF_STEPS.length - 1 ? t("brief.review") : t("brief.next")}
@@ -1628,7 +1659,7 @@ function Ask({ onAsk, busy }) {
   if (!mic.supported) return null;
   return html`<button type="button" class=${"btn foot-icon ask-mic" + (mic.listening ? " is-live" : "")} onClick=${mic.toggle}
     disabled=${busy} aria-pressed=${mic.listening} title=${t("ask.mic")} aria-label=${t("ask.mic")}>
-    ${mic.listening ? "●" : "🎤"}</button>`;
+    ${mic.listening ? "●" : html`<${Icon} n="mic" />`}</button>`;
 }
 
 /* logs */
@@ -1718,7 +1749,7 @@ function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, la
         ${LANGS.map(l => html`<option key=${l.code} value=${l.code}>${l.label}</option>`)}
       </select>
       ${!VIEWER && window.blackout && html`
-        <button type="button" class="console-btn" onClick=${onSettings} title=${t("settings.title")} aria-label=${t("settings.title")}>⚙</button>`}
+        <button type="button" class="console-btn" onClick=${onSettings} title=${t("settings.title")} aria-label=${t("settings.title")}><${Icon} n="gear" /></button>`}
       ${!VIEWER && html`
         <button type="button" class="console-btn" onClick=${onDevices} title=${t("devices.title")}>
           ◈ ${t("devices.button")} ${clients.length}
@@ -1907,7 +1938,7 @@ function DevicesModal({ open, clients, selfId, onGrant, onClose }) {
         <div class=${"blk-modal" + (ask.closing ? " is-closing" : "")}
           onClick=${(e) => { if (e.target === e.currentTarget) closeAsk(); }}>
           <div class="blk-modal-frame warn-frame" role="alertdialog" aria-label=${t("devices.confirmTitle")}>
-            <span class="warn-title">${t("devices.confirmTitle")}</span>
+            <span class="warn-title"><${Icon} n="warn" /> ${t("devices.confirmTitle")}</span>
             <p>${t("devices.confirmBody", { name: `${ask.c.kind} · ${ask.c.ip}` })}</p>
             <div class="warn-actions">
               <button type="button" class="serial-btn" onClick=${closeAsk}>${t("devices.confirmCancel")}</button>
@@ -2091,7 +2122,7 @@ function OnboardModel({ onBack, onPickModel }) {
         <div class=${"blk-modal" + (confirm === "closing" ? " is-closing" : "")}
           onClick=${(e) => { if (e.target === e.currentTarget) closeConfirm(); }}>
           <div class="blk-modal-frame warn-frame" role="alertdialog" aria-label=${t("onboard.legacyWarnTitle")}>
-            <span class="warn-title">${t("onboard.legacyWarnTitle")}</span>
+            <span class="warn-title"><${Icon} n="warn" /> ${t("onboard.legacyWarnTitle")}</span>
             <p>${t("onboard.legacyWarnBody")}</p>
             <div class="warn-actions">
               <button type="button" class="serial-btn" onClick=${closeConfirm}>${t("onboard.legacyCancel")}</button>
@@ -2836,11 +2867,13 @@ function App() {
       const pad = [...navigator.getGamepads()].find(Boolean);
       if (!pad || tourOpen) return;
       // △ = 3, ○ = 1, OPTIONS/start = 9, ✕ = 0, SHARE/select = 8.
+      // everything but △ is fpv-only: off the hud those four are padnav's (press,
+      // back, menu), and one button can't mean both without a mode nobody can see.
       const now = [!!pad.buttons[3]?.pressed, !!pad.buttons[1]?.pressed, !!pad.buttons[9]?.pressed,
         !!pad.buttons[0]?.pressed, !!pad.buttons[8]?.pressed];
       if (now[0] && !was[0]) toggleFpvRef.current();
-      if (now[1] && !was[1]) fpvMicRef.current.toggle();
-      if (now[2] && !was[2]) cycleZoomRef.current?.();
+      if (now[1] && !was[1] && fpvRef.current) fpvMicRef.current.toggle();
+      if (now[2] && !was[2] && fpvRef.current) cycleZoomRef.current?.();
       if (now[3] && !was[3] && fpvRef.current && !VIEWER) recActRef.current?.rec();
       if (now[4] && !was[4] && fpvRef.current) recActRef.current?.replays();
       was = now;
@@ -2924,6 +2957,20 @@ function App() {
   const toggleDrawer = useCallback(() => {
     if (drawerRef.current === "open") closeDrawer(); else openDrawer();
   }, [closeDrawer, openDrawer]);
+
+  /* the pad owns the ui too, not just the wheels: d-pad roams focus, ✕ presses,
+     ○/SHARE backs out of whatever is on top, OPTIONS is the menu (the console).
+     fpv and the tour take the pad back while they're up — both have their own
+     bindings for the same buttons. mounted once; the refs keep it current. */
+  const toggleDrawerRef = useRef(toggleDrawer);
+  toggleDrawerRef.current = toggleDrawer;
+  useEffect(() => {
+    const id = initPadNav({
+      blocked: () => fpvRef.current || tourOpen,
+      onMenu: () => toggleDrawerRef.current(),
+    });
+    return () => clearInterval(id);
+  }, []);
 
   // tutorial runs once per browser; the console's restart button clears the flag.
   // first run leads with the onboard flow (hero → model → pair), then the spotlight tour.
@@ -3087,7 +3134,7 @@ function App() {
                 ◎ ${ai.analyzing ? t("agent.analyzing") : t("agent.runAnalysis")}
               </button>
               <button type="button" class="hud-btn" onClick=${() => cycleZoomRef.current()}>
-                ⚙ ${FPV_ZOOMS[fpvZoom].label}
+                <${Icon} n="gear" /> ${FPV_ZOOMS[fpvZoom].label}
               </button>
               ${!VIEWER && html`
                 <button type="button" class=${"hud-btn is-rec" + (rec ? " is-on" : "") + (recErr ? " is-err" : "")}
@@ -3178,7 +3225,7 @@ function App() {
         <div class=${"blk-modal" + (warn === "closing" ? " is-closing" : "")}
           onClick=${(e) => { if (e.target === e.currentTarget) closeWarn(); }}>
           <div class="blk-modal-frame warn-frame">
-            <span class="warn-title">⚠ DEBUG MENU</span>
+            <span class="warn-title"><${Icon} n="warn" /> DEBUG MENU</span>
             <p>This is a debug menu. If you don't know what you are doing, turn back!</p>
             <div class="warn-actions">
               <button type="button" class="serial-btn" onClick=${closeWarn}>Turn back</button>
