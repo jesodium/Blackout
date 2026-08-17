@@ -51,13 +51,41 @@ spin() {
     i=$(( (i + 1) % ${#s[@]} ))
     sleep 0.08
   done
-  wait "$pid"
-  local rc=$?
+  # `wait` must be part of a || list: a bare failing wait trips `set -e` and kills
+  # the script right here, which is how a failed compile used to exit silently
+  # mid-spinner with no message at all.
+  local rc=0
+  wait "$pid" || rc=$?
   if [[ $rc -eq 0 ]]; then
     printf "\r\033[32m✔\033[0m %s\n" "$msg"
   else
     printf "\r\033[31m✘\033[0m %s\n" "$msg" >&2
+    # the whole point of the spinner is hiding arduino-cli's noise — but hiding it
+    # on failure too is why "flash.sh doesn't work" used to come with no reason.
+    [[ -s "$log" ]] && cat "$log" >&2
+    hint >&2
     exit $rc
+  fi
+}
+
+# known failures that look like "the script is broken" but aren't. one line each,
+# matched against arduino-cli's own output.
+hint() {
+  if grep -q "bad CPU type in executable" "$log"; then
+    cat <<'EOT'
+
+  → Apple Silicon Mac without Rosetta 2. arduino:mbed_giga ships an x86_64
+    arm-none-eabi-gcc (7-2017q4), so the compiler can't even start. Install it
+    once and this works forever:
+
+        softwareupdate --install-rosetta --agree-to-license
+
+EOT
+  elif grep -qi "no device found\|failed uploading\|can't open device" "$log"; then
+    echo
+    echo "  → Board didn't answer on the port. Double-tap RST on the Giga to force"
+    echo "    the bootloader, then run this again."
+    echo
   fi
 }
 
@@ -110,7 +138,11 @@ while IFS='|' read -r dir fqbn port label; do
   fresh=$(detect_boards | grep "^$dir|" | head -1 | cut -d'|' -f3)
   port="${fresh:-$port}"
 
-  ( arduino-cli upload -p "$port" --fqbn "$fqbn" "$src" >"$log" 2>&1 ) &
+  # one silent retry: the board is mid-re-enumeration often enough that the first
+  # upload hits a port that existed a second ago. anything that fails twice is real.
+  ( arduino-cli upload -p "$port" --fqbn "$fqbn" "$src" >"$log" 2>&1 ||
+    { sleep 2; port=$(detect_boards | grep "^$dir|" | head -1 | cut -d'|' -f3 || true)
+      arduino-cli upload -p "${port:-$fresh}" --fqbn "$fqbn" "$src" >"$log" 2>&1; } ) &
   spin $! "  Upload → $port"
   record "$dir" "$ref"
 done < "$boards_ts"

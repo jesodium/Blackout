@@ -11,16 +11,15 @@ Node.js PC server/dashboard.
   temp/humidity registers go unread) and HC-SR04 (ultrasonic, D49/D47) wired
   so far, rest of the CSV
   field set sends 0 until a sensor lands. Also drives an
-  L298N (D3-D8, connector order) and runs on-board `Step` motion routines
+  L298N (ENA/IN1-IN4 on D3-D7, ENB on D2 — D8 is SCL2, kept free for Wire2)
+  and runs on-board `Step` motion routines
   (`routines.h`, see "Dictated routines" below) or direct gamepad/dashboard
   drive commands over the same BLE `cmdChar` — routines run standalone on
   the board so a BLE drop mid-run doesn't strand it. `motor_test/` is a
   bench-only sketch for wiring/direction checks, not part of the build.
-  - **OLED video** (`vidChar`, see "OLED video" below): the panel can play an
-    operator's clip instead of the HUD. The clip is uploaded into the Giga's 8MB
-    SDRAM first and then played from there, so playback never depends on the
-    link. It reverts to the HUD when the clip ends, when the link drops, or when
-    no chunk arrives for 4s *mid-upload* — it can never be left stuck on a meme.
+  - **Matrix rain** (see "Matrix rain" below): the console can put a matrix
+    screensaver on the panel instead of the HUD. The board animates it; the
+    link only carries the on/off switch, and a BLE drop turns it off.
 - `esp32-cam/` — ESP32-CAM (AI-Thinker) (`main/`): standalone MJPEG streamer
   on its own WiFi + power. Never touches the Giga/BLE path; the dashboard
   `<img>` pulls `http://blackout-cam.local/stream` directly.
@@ -79,11 +78,28 @@ Node.js PC server/dashboard.
     loaded it over loopback, and the server decides that from the socket's
     address, so a granted client is enforced server-side too (`stop` is never
     gated). `npm run test:mirror` covers grant + revoke.
-  - **Height/altitude** is derived in `server.js` (`altitudeM`) from the pressure
-    the board already sends — same barometric formula as
-    `bme.readAltitude()`, but the sea-level reference is `SEA_LEVEL_HPA` (env,
-    default 1013.25) so the venue is a knob, not a reflash. No CSV field: the
-    board sends pressure, the server adds `alt` to the packet.
+  - **Elevation** is derived in `server.js` (`altitudeM`) from the pressure the
+    board already sends — same barometric formula as `bme.readAltitude()`, but the
+    reference defaults to the **first valid reading**, so the tile reads metres
+    climbed/descended *since the rover started* and self-zeroes at any venue. A
+    fixed 1013.25 read tens of metres off (often negative) whenever the day's QNH
+    differed, which is what made the tile look broken. Set `SEA_LEVEL_HPA` (env,
+    venue QNH) to get true height above sea level instead — an explicit QNH is
+    absolute and is never leaked.
+    **The zero leaks toward ambient** (`REF_TAU`, 300s, `REF_TAU_S` to override):
+    a fixed zero *drifts on its own* and that is weather, not a bug — the air moves
+    1-2 hPa an hour, which the formula reads as 8-17 m of climbing while the rover
+    sits still. Leaking the reference is a high-pass: slower than `REF_TAU` is
+    absorbed as weather, faster than it shows, and a ramp takes seconds. Cost: a
+    *held* height decays to 0 over ~`REF_TAU`. Don't chase the remaining ~1 m of
+    jitter with more filtering — that's the bme's own noise floor; sub-metre
+    absolute height needs a tof/sonar to the floor, not a better filter. No CSV field: the board
+    sends pressure, the server adds `alt` to the packet (2dp, so cm resolution).
+    **Clicking the tile switches it to cm** — same number, unit swap only, for
+    steps and ramps. Below ~10cm it's fiction anyway: the board prints pressure
+    with 2 decimals (0.01 hPa ≈ 8cm) and the bme's own noise is around a metre.
+    `npm run test:elev` is the check (needs a *freshly started* server — a server
+    that already has a reference pressure fails the "first reading is zero" assert).
 - `OUTDATED/` — retired Mega 2560 + Uno R3 two-board setup, kept only for
   porting reference. Not part of the current build.
 - `cad/`, `step/` — mechanical
@@ -116,58 +132,35 @@ off the board, `routines.h` runs on it.
   the interpreter's `runList`, and `prompts/blk.md` (what Sage is allowed to
   write). `node server/test-blk.mjs` is the self-check — extend it too.
 
-## OLED video
+## Matrix rain
 
-Play a clip on the robot's own 64x128 panel from the dashboard (Drive zone →
-OLED VIDEO, so it's in the Electron app too), then the panel goes back to the
-HUD by itself.
+A matrix screensaver on the robot's own 64x128 panel, toggled from the console
+drawer (topbar → CONSOLE → MATRIX, so it's in the Electron app too). BLE carries
+`mtx,on` / `mtx,off` and nothing else — the board animates it in `drawMatrix()` /
+`stepMatrix()`, one fall step per 20ms draw tick.
 
-**Upload first, then play** — no ffmpeg and no server round-trip, but the whole
-clip does go into the board's RAM before anything appears. Three phases, and only
-the middle one touches BLE:
-
-1. **Capture** — a detached `<video>` plays the picked file and
-   `requestVideoFrameCallback` hands over every decoded frame; each is
-   center-cropped + thresholded to the panel's 1-bit bitmap
-   (`public/js/oledvid.mjs`) into an array. Real-time, so a 10s clip takes 10s.
-2. **Upload** — `vid,load,<frames>,<fps>` reserves the frames in the Giga's 8MB
-   external SDRAM (`SDRAM.malloc`), then the bitmaps go out `vidChar` as one flat
-   byte stream. Chunks are appended in arrival order and deliberately do **not**
-   respect frame boundaries, so `VID_CHUNK` needn't divide 1024.
-3. **Play** — the board runs the clip off its own `micros()` clock (`tickVideo`).
-   The link is irrelevant from here: a BLE drop mid-clip can't stutter or strand it.
-
-- Don't go back to streaming frame-by-frame. It capped at single-digit fps and
-  that is not a code problem: 60fps is ~61KB/s and a with-response write is
-  round-trip bound at the ~15ms connection interval. Uploading pays the link cost
-  once instead of every frame.
-- **`VID_CHUNK` must stay under the board's ATT MTU** (~240 — ArduinoBLE takes it
-  from the controller's ACL packet length, `utility/HCI.cpp`). Above that the
-  central splits each write into prepare-write PDUs of `mtu - 5`, each its own
-  round trip plus an execute — which is exactly what made the old 512-byte chunks
-  ~4x slower than they looked. `test-oledvid.mjs` asserts this and cross-checks
-  every `VID_*` constant against `main.ino`, since the two files can't import
-  each other.
-- Writes stay **with response** (the board appends by arrival order and can't spot
-  a gap) and go through the same `bleWrite` chain as every other GATT write.
-  Without-response would upload several times faster but needs a per-chunk
-  sequence number first.
+- **The board owns the animation, not the browser.** This is the same wall the
+  old OLED-video feature hit: BLE can't carry 1KB frames at video rates (60fps
+  is ~61KB/s and a with-response write is round-trip bound at the ~15ms
+  connection interval). Anything animated on that panel has to run on the board.
+- **Contrast on a 1-bit panel is density, not brightness.** Four tiers down the
+  tail: head glyph knocked *out of a filled cell* (the only way to read brighter
+  than white), two solid behind it, then half-dimmed by erasing every other
+  scanline through the glyph, then quarter for the last third. Erasing scanlines
+  is what "grey" means here — don't reach for a dither pattern, at 5px it just
+  eats the glyph.
+- Glyphs are ASCII (`MTX_GLYPHS`). Katakana means shipping a u8g2 japanese font,
+  tens of KB of flash for shapes nobody can resolve at 5px.
+- It takes the panel over the HUD and the operator message both, and the **only**
+  things that end it are `mtx,off` and a BLE drop — the panel can never be left
+  stuck on it with no console to switch it off.
 - The panel is on **SPI1** (d13 sck, d11 copi) via a custom u8g2 byte callback, not
   bit-banged sw-spi: u8g2's `*_HW_SPI` constructors only know the `SPI` object, which
   on the Giga is d89-d91 on the high-density connector. Don't "fix" that by going back
-  to sw-spi — it cost ~20ms a frame.
-- Each frame is auto-levelled (its own min/max stretched to full range) then hard
-  thresholded — `DITHER` is 0. On a 64x128 panel the dither texture was never
-  resolvable across a room, it only greyed the shot down. Put it back to 1-2 only
-  if a gradient-heavy clip blobs up.
-- The threshold slider is the per-clip knob: a 1-bit panel has no grey, so a dark
-  source needs a lower threshold. It applies at **capture** — once a clip is
-  uploaded it's a fixed bitmap, so changing it means re-picking the file.
-- Playback frame rate is the clip's own, measured from what actually decoded, and
-  capped at 60. Don't pad a 24/30fps source up to 60: identical motion, twice the
-  upload wait.
-- The flash-time twin is `giga-r1/oled_video_test/` (`pack_xbm.py` + a bench
-  sketch) — same bit order, same geometry, but baked into the firmware.
+  to sw-spi — it cost ~20ms a frame, which is the whole draw tick.
+- `npm run test:matrix` re-runs the fall/draw loops in js against the `MTX_*` constants
+  read out of `main.ino` — a drop that walks off `mtxCell[][]` is a silent out-of-bounds
+  write on a board with no MPU, so the indexing is checked off-board.
 
 ## Dictated routines
 

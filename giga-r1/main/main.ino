@@ -1,6 +1,6 @@
 // giga r1 wifi — sensor hub + motion routines. reads sensors, broadcasts csv over
 // ble notify. same "s:" format the server already parses (temp,humid,dist,
-// smoke,airq,roll,pitch,yaw,co,co_alert,pressure,routine). everything from co
+// smoke,airq,roll,pitch,yaw,co,co_alert,pressure,routine,lux). everything from co
 // onward is optional, so older lines without them still parse.
 // also emits "e:analyze" lines: routine events for the dashboard, not
 // telemetry. the server ignores anything that isn't "s:".
@@ -10,7 +10,6 @@
 #include <Adafruit_BME280.h> // pressure — install "Adafruit BME280 Library"
 #include <DHT11.h> // temp/humidity — install "DHT11" (dhrubasaha08)
 #include <U8g2lib.h> // oled debug screen — spi, install "U8g2" (oliver) via library manager
-#include <SDRAM.h> // giga's 8MB external ram — holds an uploaded oled clip, see "operator video"
 #include "routines.h" // op/step + the presentation and run tables
 
 // swapped from trig=47/echo=49 — the panel was wired the other way round.
@@ -19,7 +18,7 @@
 #define TRIG_PIN 49
 #define ECHO_PIN 47
 // dht11 (temp + humidity). a6 = normal gpio (digital 82), no conflict with the
-// sonar (d47/d49), the oled (d11/d13 + d22/d24) or the motor pwm pins (d3-d8).
+// sonar (d47/d49), the oled (d11/d13 + d22/d24) or the motor pins (d2-d7).
 // IMPORTANT NOTE: a8-a11 are pure-analog on the giga — pinMode/digitalWrite on
 // them is a hard compile error from the core, so the dht can't go there.
 #define DHT_PIN A6
@@ -29,11 +28,12 @@
 // sda = d20, scl = d21, 3v3 + gnd. IMPORTANT NOTE: it can NOT sit on d44/d46 —
 // those are pg_10/ph_15, neither has an i2c alternate function on the h747, so
 // Wire can't be pointed at them (the other two buses are the dedicated sda1/scl1
-// pins and d8/d9, and d8 is ENB). bit-banging i2c there would need a soft-i2c
+// pins and d8/d9 = Wire2, free since enb moved off d8). bit-banging i2c there
+// would need a soft-i2c
 // library for no gain — move the two wires instead.
 // oled debug screen, hardware spi. was bit-banged (sw) spi on d26/d28, which cost
-// ~20ms a frame in digitalWrite calls — invisible for static debug text, but it was
-// the ceiling on oled video (below), so clock + data moved onto a real spi peripheral.
+// ~20ms a frame in digitalWrite calls — invisible for static debug text, the ceiling
+// on anything animated, so clock + data moved onto a real spi peripheral.
 // IMPORTANT NOTE: giga has two spi buses and u8g2's *_4W_HW_SPI constructors are
 // hardwired to the arduino "SPI" object, which on this board is d89-d91 — high-density
 // connector pins, not header pins. the header d11/d13 are "SPI1", a separate object
@@ -116,50 +116,30 @@ unsigned long lastOledPhase = 0;
 #define OLED_DRAW_INTERVAL 20
 #define OLED_PHASE_INTERVAL 120 // ~1s per breathing cycle (8 phase steps) — unrelated to draw fps
 
-/* operator video: the dashboard dithers a clip to 1-bit 64x128 in the browser and
-   uploads the *whole thing* into the giga's 8MB external sdram, then the board plays it
-   back on its own clock. it used to stream frame-by-frame and draw whatever arrived,
-   which capped out in single-digit fps: ble can't carry 1KB a frame at video rates
-   (60fps would be ~61KB/s, and a with-response write is round-trip bound at the ~15ms
-   connection interval). uploading first moves the link cost to a one-time wait and
-   playback becomes a memcpy from ram — the panel's own ~1.1ms sendBuffer at 8MHz spi is
-   then the only limit, so the clip's real frame rate is what plays.
-   the load is one linear byte stream, not framed: the board appends chunks in arrival
-   order until it has the byte count "vid,load" declared. so the chunk size is free to be
-   whatever the link likes and doesn't have to divide into 1024.
-   playback is autonomous — once loaded, a ble drop can't stutter or strand the clip. */
-#define VID_W 64
-#define VID_H 128
-#define VID_BYTES (VID_W / 8 * VID_H) // 1024 — one full frame
-/* one ATT write, not a long write. anything over (mtu - 3) makes the central split the
-   write into prepare-write PDUs of (mtu - 5) bytes, each its own round trip, plus an
-   execute — that's what made 512-byte chunks cost ~4 round trips instead of 1.
-   ArduinoBLE takes its mtu from the controller's ACL packet length (utility/HCI.cpp,
-   `ATT.setMaxMtu(pktLen - 9)`), ~240 here, so 224 stays comfortably inside it.
-   IMPORTANT NOTE: writes stay *with response* — the board appends by arrival order and a
-   silently dropped chunk would corrupt the rest of the clip. without-response would
-   upload several times faster but needs a sequence number per chunk to be safe. */
-#define VID_CHUNK 224
-#define VID_MAX_FRAMES 6000 // 6MB of the 8MB sdram — 200s at 30fps, leaves room for everything else
-#define VID_TIMEOUT 4000    // no chunk for this long *while loading* = link died, give the screen back
-uint8_t *vidBuf = nullptr;  // SDRAM.malloc'd at "vid,load", freed at stop
-uint32_t vidTotal = 0;      // bytes the clip declared
-uint32_t vidGot = 0;        // bytes received so far
-uint16_t vidFrames = 0;     // vidTotal / VID_BYTES
-uint16_t vidAt = 0;         // frame currently on screen while playing
-unsigned long vidFrameUs = 33333; // per-frame period, from the fps "vid,load" declared
-unsigned long vidNextUs = 0;      // micros() deadline for the next frame
-enum VidState { VID_IDLE, VID_LOADING, VID_PLAYING };
-VidState vidState = VID_IDLE;
-bool vidOn = false;         // loading or playing — the panel belongs to the clip either way
-unsigned long vidLast = 0;  // last chunk arrival, for the loading-stall timeout
+/* matrix rain — operator toy, toggled from the dashboard console ("mtx,on"/"mtx,off").
+   ten 6px columns of 8px cells, each dropping at its own rate. contrast on a 1-bit panel
+   has to be faked with density, so the tail fades in four tiers: the head is knocked out
+   of a filled cell (the only way to read *brighter* than white), the two behind it are
+   solid, the middle is dimmed by erasing every other scanline through the glyph and the
+   end by erasing three in four. glyphs also re-roll in place so a column shimmers instead
+   of just scrolling. costs nothing but the normal 20ms draw tick — no buffers, no link. */
+#define MTX_CW 6                 // cell width: the 5x8 font plus a pixel of air
+#define MTX_CH 8
+#define MTX_COLS (64 / MTX_CW)   // 10
+#define MTX_ROWS (128 / MTX_CH)  // 16
+bool matrixOn = false;
+int8_t mtxY[MTX_COLS];      // head row; starts negative so a drop enters from off-screen
+uint8_t mtxSpd[MTX_COLS];   // draw ticks per row of fall — bigger = slower
+uint8_t mtxTick[MTX_COLS];
+uint8_t mtxTail[MTX_COLS];
+char mtxCell[MTX_COLS][MTX_ROWS];
 
 #define BOARD_NAME "BLACKOUT-V3" // shown on the status screen and the ble local
                                   // name/serial banner below — one literal, three
                                   // spots, so they can't drift out of sync again
-// l298n on d3-d8, one run of six in connector order (ena in1 in2 in3 in4 enb),
-// so the board's header maps straight across with no crossed wires.
-// d13 is the onboard led, so d3 is as low as the run comfortably starts.
+// l298n on d3-d7 plus d2 for enb — was one straight run d3-d8, but d8 is scl2,
+// so enb moved to d2 to leave d8/d9 free as the Wire2 bus. enb is the one
+// crossed wire on the connector now.
 // IMPORTANT NOTE: the run has to stay inside d2-d13 — that's the giga's whole
 // pwm band. the analog header (and d41+) can't do pwm at all, and a8-a11 can't
 // even do digital (the core errors out on digitalWrite there).
@@ -170,9 +150,9 @@ unsigned long vidLast = 0;  // last chunk arrival, for the loading-stall timeout
 #define IN4 7
 // important note: pull the ena/enb jumpers off the l298n first — left on, they
 // tie enable to 5v and these pins do nothing (motors stay full speed).
-// IMPORTANT NOTE: d3 is bench-proven pwm, d8 is not yet — if motor b runs at
-// one speed while motor a ramps, d8 has no timer channel: put ENB back on d10.
-#define ENB 8  // motor b speed (pwm)
+// IMPORTANT NOTE: d3 is bench-proven pwm, d2 is not yet — if motor b runs at
+// one speed while motor a ramps, d2 has no timer channel: put ENB on d10.
+#define ENB 2  // motor b speed (pwm)
 #define SONAR_ITER 3            // pings per reading, median drops spikes
 #define SONAR_TIMEOUT_US 25000UL // ~430cm round-trip + margin, no echo = timeout
 #define DIST_ALPHA 0.6 // ema smoothing on distance — ultrasonic is already clean
@@ -192,13 +172,6 @@ BLEStringCharacteristic sensorChar("19b10001-e8f2-537e-4f6c-d104768a1214", BLERe
 // att mtu >=67 bytes; if oled text arrives truncated on a given os/browser,
 // that's the ceiling to check first, not a firmware bug.
 BLEStringCharacteristic cmdChar("19b10002-e8f2-537e-4f6c-d104768a1214", BLEWrite | BLEWriteWithoutResponse, 64);
-// video channel: raw 1-bit frames for the oled, streamed live from the dashboard
-// (see "oled video" in app.js). 512 is the att spec's max attribute size, so a
-// 1024-byte frame is exactly two writes — chrome splits each one into prepared
-// writes under the hood, we just memcpy them in arrival order.
-// IMPORTANT NOTE: order/no-loss only holds for *with-response* writes. the browser
-// must not send these without response or a dropped chunk shifts every later frame.
-BLECharacteristic vidChar("19b10003-e8f2-537e-4f6c-d104768a1214", BLEWrite, VID_CHUNK);
 
 // the routine tables live in routines.h — edit that file to change what
 // the robot does. everything here is the machinery that runs them: the board plays
@@ -217,6 +190,25 @@ bool bmeOk = false;
 DHT11 dht(DHT_PIN);
 int temp = 0, humid = 0;  // °C, % — last good dht read, cached
 float pressure = 0;       // hPa — last good bme read, cached
+
+// gy-302 (bh1750) ambient light. shares the bme's bus — i2c is a bus, and 0x23
+// doesn't collide with 0x76/0x77, so it needs no pins of its own: sda d20, scl
+// d21, vcc 3v3 (the module has a regulator, but 3v3 keeps sda/scl at the h747's
+// level), addr left floating.
+// IMPORTANT NOTE: no library. continuous h-res mode is one command byte out and
+// two bytes back — the driver below is shorter than the #include would be.
+#define BH1750_ADDR 0x23
+#define BH1750_CONT_HRES 0x10 // 1 lx steps, ~120ms a conversion — well inside ENV_INTERVAL
+bool luxOk = false;
+float lux = 0;            // lx — last good read, cached
+
+// -1 on a short read, so a yanked wire freezes the last value instead of
+// reporting pitch dark. 1.2 is the datasheet's counts-per-lx at default mtreg.
+float readLux() {
+  if (Wire.requestFrom(BH1750_ADDR, 2) < 2) return -1;
+  uint16_t raw = (Wire.read() << 8) | Wire.read();
+  return raw / 1.2f;
+}
 
 unsigned long lastSend = 0;
 unsigned long lastEnv = 0;
@@ -351,85 +343,79 @@ void drawCustom() {
   oled.drawDisc(56, top + 6, 1 + (phase < 4 ? phase : 7 - phase) / 2); // "live message" pulse
 }
 
-// redrawn on every draw tick (see OLED_DRAW_INTERVAL in loop()), not just
-// on state change — a static screen doesn't read as "alive" on a panel this size.
-// an operator message beats the auto status screen.
-// upload takes tens of seconds, so the panel says so rather than sitting on a stale hud.
-void drawVidLoad() {
-  oled.setFont(u8g2_font_5x7_tr);
-  oledCenter("LOADING", 56);
-  uint8_t pct = vidTotal ? (uint32_t)100 * vidGot / vidTotal : 0;
-  oled.drawFrame(6, 62, 52, 8);
-  oled.drawBox(8, 64, (uint32_t)48 * pct / 100, 4);
-  oledCenter((String(pct) + "%").c_str(), 82);
+// glyph pool. ascii only: the katakana in a u8g2 japanese font costs tens of KB of
+// flash for characters nobody can resolve at 5px anyway.
+static const char MTX_GLYPHS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<>*+=-#$%&@?/\\|";
+#define MTX_NGLYPHS (sizeof(MTX_GLYPHS) - 1)
+static inline char mtxGlyph() { return MTX_GLYPHS[random(MTX_NGLYPHS)]; }
+
+// a drop re-enters from above with a fresh speed/length, so columns never sync up.
+void mtxRespawn(uint8_t c) {
+  mtxY[c] = -(int8_t)random(MTX_ROWS);
+  mtxSpd[c] = random(1, 5);
+  mtxTail[c] = random(5, MTX_ROWS);
+  mtxTick[c] = 0;
 }
 
+void startMatrix() {
+  randomSeed(micros()); // otherwise every boot rains the identical pattern
+  for (uint8_t c = 0; c < MTX_COLS; c++) {
+    mtxRespawn(c);
+    for (uint8_t r = 0; r < MTX_ROWS; r++) mtxCell[c][r] = mtxGlyph();
+  }
+  matrixOn = true;
+}
+
+// one step per draw tick (called from loop(), not from the draw — a hud push mid-frame
+// must not make the rain run faster).
+void stepMatrix() {
+  for (uint8_t c = 0; c < MTX_COLS; c++) {
+    if (++mtxTick[c] < mtxSpd[c]) continue;
+    mtxTick[c] = 0;
+    if (++mtxY[c] - mtxTail[c] >= MTX_ROWS) { mtxRespawn(c); continue; }
+    if (mtxY[c] >= 0 && mtxY[c] < MTX_ROWS) mtxCell[c][mtxY[c]] = mtxGlyph(); // fresh glyph under the head
+    mtxCell[c][random(MTX_ROWS)] = mtxGlyph(); // and one shimmer somewhere in the column
+  }
+}
+
+void drawMatrix() {
+  oled.setFont(u8g2_font_5x8_tr);
+  for (uint8_t c = 0; c < MTX_COLS; c++) {
+    int x = 2 + c * MTX_CW; // 10 columns = 60px, centred in 64
+    for (uint8_t i = 0; i <= mtxTail[c]; i++) {
+      int r = mtxY[c] - i;
+      if (r < 0 || r >= MTX_ROWS) continue;
+      int top = r * MTX_CH;
+      if (i == 0) { // head: glyph knocked out of a solid cell — the panel's only "brighter"
+        oled.drawBox(x - 1, top, MTX_CW, MTX_CH);
+        oled.setDrawColor(0);
+        oled.drawGlyph(x, top + MTX_CH - 1, mtxCell[c][r]);
+        oled.setDrawColor(1);
+        continue;
+      }
+      oled.drawGlyph(x, top + MTX_CH - 1, mtxCell[c][r]);
+      // fake grey by erasing scanlines through the glyph: keep 1 row in `keep`.
+      // 0 = solid (the two behind the head), 2 = half, 4 = quarter for the last third.
+      uint8_t keep = i <= 2 ? 0 : (i * 3 <= mtxTail[c] * 2 ? 2 : 4);
+      if (!keep) continue;
+      oled.setDrawColor(0);
+      for (uint8_t yy = 0; yy < MTX_CH; yy++)
+        if (yy % keep) oled.drawHLine(x - 1, top + yy, MTX_CW);
+      oled.setDrawColor(1);
+    }
+  }
+}
+
+// redrawn on every draw tick (see OLED_DRAW_INTERVAL in loop()), not just
+// on state change — a static screen doesn't read as "alive" on a panel this size.
+// an operator message beats the auto status screen, the rain beats everything.
 void updateOled() {
   oled.clearBuffer();
-  if (vidState == VID_PLAYING) oled.drawXBM(0, 0, VID_W, VID_H, vidBuf + (uint32_t)vidAt * VID_BYTES);
-  else if (vidState == VID_LOADING) drawVidLoad();
+  if (matrixOn) drawMatrix();
   else if (customMsg.length()) drawCustom();
   else if (bleConnected && millis() - connectAt >= HUD_BLINK_MS) drawHud();
   else drawStatus(); // splash, and the blinking handoff for the first HUD_BLINK_MS
   oled.sendBuffer();
-}
-
-/* clip bytes, in arrival order — no sequence number: the browser writes with response,
-   so ble delivers them in order or not at all. a stray chunk (board reset mid-upload,
-   "vid,load" missed) is dropped by the state check, and the tail guard means a chunk
-   that would overrun the allocation truncates instead of scribbling past it. */
-void onVidWrite(BLEDevice, BLECharacteristic ch) {
-  if (vidState != VID_LOADING) return;
-  int n = ch.valueLength();
-  if (n <= 0) return;
-  uint32_t room = vidTotal - vidGot;
-  if ((uint32_t)n > room) n = room;
-  memcpy(vidBuf + vidGot, ch.value(), n);
-  vidGot += n;
-  vidLast = millis();
-  if (vidGot >= vidTotal) { // whole clip is in ram — from here the link doesn't matter
-    vidState = VID_PLAYING;
-    vidAt = 0;
-    vidNextUs = micros();
-    Serial.print("video loaded, "); Serial.print(vidFrames); Serial.println(" frames");
-  }
-}
-
-// "vid,load,<frames>,<fps>" — reserve sdram and start taking chunks. returns false (and
-// tells the dashboard) if the clip won't fit, so the browser can stop rather than upload
-// into nothing.
-bool startVideoLoad(long frames, long fps) {
-  stopVideo();
-  if (frames < 1 || frames > VID_MAX_FRAMES || fps < 1 || fps > 60) return false;
-  vidBuf = (uint8_t *)SDRAM.malloc((uint32_t)frames * VID_BYTES);
-  if (!vidBuf) return false;
-  vidFrames = frames;
-  vidTotal = (uint32_t)frames * VID_BYTES;
-  vidGot = 0;
-  vidFrameUs = 1000000UL / fps;
-  vidState = VID_LOADING;
-  vidOn = true;
-  vidLast = millis();
-  return true;
-}
-
-// advance playback off micros(), not a per-frame delay: the deadline accumulates so a
-// slow redraw is absorbed by the next frame instead of stretching the whole clip.
-void tickVideo() {
-  if (vidState != VID_PLAYING) return;
-  if ((long)(micros() - vidNextUs) < 0) return;
-  vidNextUs += vidFrameUs;
-  updateOled();
-  if (++vidAt >= vidFrames) stopVideo(); // played out — hand the screen back
-}
-
-void stopVideo() {
-  if (vidBuf) { SDRAM.free(vidBuf); vidBuf = nullptr; } // a clip is megabytes — don't sit on it
-  vidState = VID_IDLE;
-  vidOn = false;
-  vidGot = vidTotal = 0;
-  vidFrames = vidAt = 0;
-  updateOled(); // straight back to the hud/status screen, same frame
 }
 
 void setup() {
@@ -449,13 +435,18 @@ void setup() {
   bmeOk = bme.begin(0x76) || bme.begin(0x77);
   Serial.println(bmeOk ? "BME280 ok" : "BME280 not found");
 
+  // same one-shot probe as the bme: putting it into continuous mode is also the
+  // presence check, since a missing chip won't ack the command byte.
+  Wire.beginTransmission(BH1750_ADDR);
+  Wire.write(BH1750_CONT_HRES);
+  luxOk = (Wire.endTransmission() == 0);
+  Serial.println(luxOk ? "BH1750 ok" : "BH1750 not found");
+
   oled.getU8x8()->byte_cb = oledSpi1; // before begin(): SPI1, not the d89-d91 "SPI" bus
   oled.setBusClock(OLED_SPI_HZ);
   oled.begin();
-  oled.setContrast(255); // ssd1306 boots at ~0x7F; full drive is the cheapest win video has
+  oled.setContrast(255); // ssd1306 boots at ~0x7F; full drive is the cheapest contrast win there is
   updateOled();
-
-  SDRAM.begin(); // external ram, only ever used to hold an uploaded oled clip
 
   for (int p = IN1; p <= IN4; p++) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
   pinMode(ENA, OUTPUT); pinMode(ENB, OUTPUT);
@@ -476,10 +467,6 @@ void setup() {
   BLE.setAdvertisedService(sensorService);
   sensorService.addCharacteristic(sensorChar);
   sensorService.addCharacteristic(cmdChar);
-  // event handler, not written() polling like cmdChar: video chunks arrive far
-  // faster than one per loop() and a polled read would drop every one but the last.
-  vidChar.setEventHandler(BLEWritten, onVidWrite);
-  sensorService.addCharacteristic(vidChar);
   BLE.addService(sensorService);
   BLE.advertise();
   Serial.println("BLE advertising as " BOARD_NAME); // adjacent string literals fold at compile time
@@ -607,15 +594,9 @@ void handleCmd(String c) {
     hudMetrics = (sep < 0) ? "" : c.substring(sep + 1);
     updateOled();
   }
-  /* "vid,load,<frames>,<fps>" reserves sdram and hands the screen to the upload;
-     "vid,off" gives it back. the board answers on serial either way — the browser waits
-     for nothing, it just uploads, but a rejected load has to be visible somewhere. */
-  else if (c.startsWith("vid,load,")) {
-    int sep = c.indexOf(',', 9);
-    bool ok = sep > 0 && startVideoLoad(c.substring(9, sep).toInt(), c.substring(sep + 1).toInt());
-    Serial.println(ok ? "video load started" : "video load rejected");
-  }
-  else if (c == "vid,off") stopVideo();
+  // matrix rain takes the whole panel until it's switched off (or the link drops).
+  else if (c == "mtx,on") startMatrix();
+  else if (c == "mtx,off") { matrixOn = false; updateOled(); }
   else if (c.startsWith("oled,")) {
     String msg = c.substring(5);
     customMsg = (msg == "clear") ? "" : msg; // literal word "clear" reverts to auto status
@@ -666,7 +647,9 @@ void loop() {
     connectAt = millis();
     Serial.println(bleConnected ? "BLE central connected" : "BLE central gone");
     // a drop invalidates the hud — the server's verdict is only as fresh as the link.
-    if (!bleConnected) { hudLevel = ""; hudMetrics = ""; stopVideo(); }
+    // the rain goes with it: nothing else can switch it off, so it must never outlive
+    // the console that turned it on.
+    if (!bleConnected) { hudLevel = ""; hudMetrics = ""; matrixOn = false; }
     updateOled();
   }
 
@@ -679,19 +662,9 @@ void loop() {
 
   unsigned long nowAnim = millis();
   if (nowAnim - lastOledPhase >= OLED_PHASE_INTERVAL) { lastOledPhase = nowAnim; oledFrame++; }
-  // an upload that dies half-way (link drop, browser tab closed) must not leave the panel
-  // stuck on a progress bar — no chunk for VID_TIMEOUT and the hud comes back. only while
-  // *loading*: once it's playing the clip is in ram and the link is irrelevant.
-  if (vidState == VID_LOADING && nowAnim - vidLast > VID_TIMEOUT) {
-    stopVideo();
-    Serial.println("video upload stalled");
-  }
-  // playing: the clip's own frame clock drives the redraw (tickVideo). loading: the
-  // progress bar only needs the normal slow tick.
-  if (vidState == VID_PLAYING) {
-    tickVideo();
-  } else if (nowAnim - lastOledDraw >= OLED_DRAW_INTERVAL) {
+  if (nowAnim - lastOledDraw >= OLED_DRAW_INTERVAL) {
     lastOledDraw = nowAnim;
+    if (matrixOn) stepMatrix(); // one fall step per drawn frame, see stepMatrix
     updateOled();
   }
 
@@ -704,10 +677,9 @@ void loop() {
   // so while anything is moving (routine *or* live drive) take a single ~25ms ping:
   // noisier distance, but steps land on time and remote control stays responsive.
   // consecutive pings still land send_interval (100ms) apart, clear of the 60ms ring-down.
-  // a clip counts as "busy" for the same reason a routine does: the median's ~200ms of
-  // blocking pings is ~200ms of neither ble.poll() nor tickVideo() — it stalls the
-  // upload and, once playing, drops ~6 frames of the clip's own clock on the floor.
-  float raw = (routine || drvEnd || vidOn) ? pingCm() : medianPingCm();
+  // the rain counts as "busy" for the same reason a routine does: the median's ~200ms of
+  // blocking pings is ~200ms of no redraw, which stutters it visibly.
+  float raw = (routine || drvEnd || matrixOn) ? pingCm() : medianPingCm();
   if (raw >= 0) {
     distF = (distF < 0) ? raw : distF + DIST_ALPHA * (raw - distF);
   } else {
@@ -734,10 +706,14 @@ void loop() {
       float p = bme.readPressure() / 100.0F; // Pa -> hPa
       if (p > 300 && p < 1100) pressure = p;
     }
+    if (luxOk) {
+      float l = readLux();
+      if (l >= 0) lux = l;
+    }
   }
 
-  // important note: only dht11 + bme280 + hc-sr04 exist — no gas sensor, no imu.
-  // smoke/airq/roll/pitch/yaw/co/co_alert stay 0 until a real one lands.
+  // important note: only dht11 + bme280 + bh1750 + hc-sr04 exist — no gas sensor,
+  // no imu. smoke/airq/roll/pitch/yaw/co/co_alert stay 0 until a real one lands.
   String line = "S:";
   line += temp;
   line += ",";
@@ -750,6 +726,9 @@ void loop() {
   // every line rather than as a start/end event — a dropped event
   // would strand the server thinking a routine runs forever, a flag self-heals.
   line += routine ? ",1" : ",0";
+  // field 12: lux. appended last and nothing reads it yet — recorded only.
+  line += ",";
+  line += lux;
 
   Serial.println(line);
   sensorChar.writeValue(line);
