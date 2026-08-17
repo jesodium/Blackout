@@ -172,14 +172,35 @@ app.post("/api/scan", async (req, res) => {
   }
 });
 
-// height above sea level from the bme280's pressure. the board sends pressure and
-// nothing else on purpose: this is the same barometric formula Adafruit's
-// readAltitude() runs, so deriving it here instead makes the sea-level reference a
-// venue knob (SEA_LEVEL_HPA, hPa at the venue's own sea level on the day) rather than
-// a reflash — set it from the local METAR/QNH and the tile reads true elevation.
+// elevation from the bme280's pressure — same barometric formula Adafruit's
+// readAltitude() runs, derived here so the reference is a knob, not a reflash.
+// the reference defaults to the FIRST valid reading, so the tile reads elevation
+// *relative to where the rover started*: metres climbed/descended, self-zeroing at
+// any venue. that's the number a rover in a cave needs, and 1013.25 was flat wrong
+// anywhere the day's QNH differed (it read tens of metres off, often negative).
+// set SEA_LEVEL_HPA (venue QNH) to get true height above sea level instead.
 // IMPORTANT NOTE: pressure 0 means no bme wired, not sea level — no reading, not 0m.
-const SEA_LEVEL_HPA = parseFloat(process.env.SEA_LEVEL_HPA || "1013.25");
-const altitudeM = (hPa) => (hPa > 0 ? 44330 * (1 - Math.pow(hPa / SEA_LEVEL_HPA, 1 / 5.255)) : 0);
+//
+// the zero LEAKS toward ambient (REF_TAU). a fixed zero looks broken over a session
+// and it isn't the code: the weather moves the air 1-2 hPa an hour, which the same
+// formula reads as 8-17 m of climbing while the rover sits still. leaking the
+// reference is a high-pass — anything slower than REF_TAU is absorbed as weather,
+// anything faster than it shows. a ramp takes seconds, so it lands well inside.
+// IMPORTANT NOTE: the cost is that a HELD height decays to 0 over ~REF_TAU, and
+// ~1m of instantaneous noise is the bme's own, not fixable here. sub-metre absolute
+// height needs a different sensor (tof/sonar to the floor), not a better filter.
+const REF_TAU = +process.env.REF_TAU_S || 300; // s. shorter = flatter but forgets a climb sooner.
+const absRef = !!process.env.SEA_LEVEL_HPA; // an explicit QNH is absolute — never leak it
+let refHPa = absRef ? parseFloat(process.env.SEA_LEVEL_HPA) : null;
+let refT = 0;
+const altitudeM = (hPa) => {
+  if (!(hPa > 0)) return 0;
+  const now = Date.now();
+  if (refHPa == null) refHPa = hPa;  // first reading is the zero
+  else if (!absRef) refHPa += (hPa - refHPa) * (1 - Math.exp(-(now - refT) / 1000 / REF_TAU));
+  refT = now;
+  return 44330 * (1 - Math.pow(hPa / refHPa, 1 / 5.255));
+};
 
 // process a raw line: emit to serial monitor, parse "S:" telemetry for dashboard.
 function processLine(raw) {
@@ -204,9 +225,12 @@ function processLine(raw) {
     // board says whether a motion routine is running. absent on older firmware —
     // false keeps auto-analysis behaving as before.
     routine: parts.length > 11 ? parts[11].trim() === "1" : false,
+    // bh1750 ambient light. parsed so runs record it; nothing displays it yet.
+    lux: parts.length > 12 ? parseFloat(parts[12]) : 0,
     timestamp: Date.now(),
   };
-  data.alt = Math.round(altitudeM(data.pressure) * 10) / 10; // derived, not a csv field
+  // derived, not a csv field. 2dp = cm resolution, which the dashboard's cm view reads.
+  data.alt = Math.round(altitudeM(data.pressure) * 100) / 100;
   latestData = data;
   dataHistory.push(data);
   if (dataHistory.length > 1000) dataHistory.shift();
@@ -746,7 +770,7 @@ function readingLines(data) {
     `Temperature: ${data.temp}°C [${s.temp}]`,
     `Humidity: ${data.humid}%`,
     data.pressure ? `Pressure: ${data.pressure} hPa` : null,
-    data.pressure ? `Height: ${Math.round(data.alt)} m above sea level` : null,
+    data.pressure ? `Elevation: ${Math.round(data.alt)} m relative to where you started` : null,
     `Distance to the rock face ahead: ${data.dist} cm [${s.dist}]`,
     data.smoke ? `Smoke/gas level: ${data.smoke} [${s.smoke}]` : null,
     data.airq ? `Air quality: ${data.airq} [${s.airq}]` : null,
@@ -996,14 +1020,16 @@ io.on("connection", (socket) => {
   socket.on("mock-data", () => {
     const r = (lo, hi, d = 0) => +(lo + Math.random() * (hi - lo)).toFixed(d);
     latestData = {
-      temp: r(20, 50, 1), humid: r(20, 90, 1), pressure: r(980, 1030, 1), dist: r(10, 200),
+      // pressure jitters over a few hPa, not the full 980-1030 range: elevation is
+      // relative now, and a 50 hPa swing reads as the rover teleporting 400m.
+      temp: r(20, 50, 1), humid: r(20, 90, 1), pressure: r(1011, 1015, 1), dist: r(10, 200),
       smoke: r(0, 800), airq: r(50, 900), co: r(0, 600),
       co_alert: Math.random() > 0.7,
       roll: r(-8, 8, 1), pitch: r(-8, 8, 1), yaw: r(0, 30, 1), // keep rover ~level
 
       timestamp: Date.now(),
     };
-    latestData.alt = Math.round(altitudeM(latestData.pressure) * 10) / 10;
+    latestData.alt = Math.round(altitudeM(latestData.pressure) * 100) / 100;
     console.log("Mock data injected");
     io.emit("sensor-data", latestData);
     runAiAnalysis();

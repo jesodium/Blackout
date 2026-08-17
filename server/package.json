@@ -19,10 +19,11 @@
     "test:tour": "node test-tour.mjs",
     "test:pairing": "node test-electron-pairing.mjs",
     "test:face": "node test-sageface.mjs",
-    "test:oledvid": "node test-oledvid.mjs",
+    "test:matrix": "node test-matrix.mjs",
     "test:padnav": "node test-padnav.mjs",
     "test:icons": "node test-icons.mjs",
-    "test:rec": "node test-rec.js"
+    "test:rec": "node test-rec.js",
+    "test:elev": "node test-elev.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
