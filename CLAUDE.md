@@ -17,9 +17,9 @@ Node.js PC server/dashboard.
   drive commands over the same BLE `cmdChar` — routines run standalone on
   the board so a BLE drop mid-run doesn't strand it. `motor_test/` is a
   bench-only sketch for wiring/direction checks, not part of the build.
-  - **Matrix rain** (see "Matrix rain" below): the console can put a matrix
+  - **Screensavers** (see "Screensavers" below): the console can put a
     screensaver on the panel instead of the HUD. The board animates it; the
-    link only carries the on/off switch, and a BLE drop turns it off.
+    link only carries which one, and a BLE drop turns it off.
 - `esp32-cam/` — ESP32-CAM (AI-Thinker) (`main/`): standalone MJPEG streamer
   on its own WiFi + power. Never touches the Giga/BLE path; the dashboard
   `<img>` pulls `http://blackout-cam.local/stream` directly.
@@ -107,9 +107,8 @@ Node.js PC server/dashboard.
 ## BLK
 
 Operator-authored workflows, saved as plain `.blk` text in `server/workflows/`
-and run **in the browser** (the browser owns the BLE link) by `BlkCtl` in
-`app.js`. Not to be confused with the on-board `Step` routines below — BLK runs
-off the board, `routines.h` runs on it.
+and driven by `BlkCtl` in `app.js`. Not to be confused with the on-board `Step`
+routines below — those are compiled-in tables, BLK is authored on the dashboard.
 
 - Ops: `forward/back/left/right <expr>` (or `… until <cond> [timeout <ms>]`),
   `speed`, `wait`, `wait until`, `repeat n|until|while`, `forever`, `if/else`,
@@ -127,18 +126,58 @@ off the board, `routines.h` runs on it.
   `draggable`), hit targets are 44px, and every destructive action is on the
   selection action bar or the drag-to-bin target, never keyboard-only.
   `npm run test:editor` drives the real page over CDP and checks exactly that.
-- Anything added to the language must land in **all four** places or it silently
+- **A workflow is uploaded to the board and run there whenever it can be.**
+  `compile()` in `blk.mjs` turns the tree into a flat instruction list; `BlkCtl`
+  writes it over the same BLE `cmdChar` (`blk,n` → one `blk,i` line per
+  instruction → `blk,go`) and the `blk vm` in `main.ino` plays it. The reason is
+  latency, not robustness: `forward until dist < 15` interpreted up here costs a
+  ~400ms round trip per burst (write → drive → notify → decide) and the rover
+  overshoots; on the board the same check is one `loop()` pass, and a BLE drop
+  mid-run no longer strands the program. The board only ever *starts* moving on
+  its own — every instruction is still time-limited, and `stop` still ends it.
+  - **The PC stays in the loop for what only it has** — Sage, TTS, the camera,
+    the HTTP headlamp. `say/log/led/analyze/ask/find` compile to `evt`: the board
+    halts, notifies `E:blk,<node>,<kind>,<vars…>`, and for `ask`/`find` parks
+    until the browser writes back `blk,res,<0|1>`. It ships its variables with
+    every event so `{name}` still interpolates up here. A silent browser times
+    out (60s) and the program carries on rather than hanging.
+  - **The instruction set is deliberately narrow** — constant arguments, one-term
+    comparisons. Anything else (`forward n * 100`, `dist < temp`, `and`/`or`,
+    >8 variables) throws `Unsupported` and that workflow runs in the browser
+    interpreter exactly as before, so the *language* never has to shrink to fit
+    the firmware. The run panel says which one it picked, and why, before you
+    press RUN. Don't "fix" a fallback by widening the VM unless the workflow
+    actually needs on-board timing.
+- Anything added to the language must land in **all five** places or it silently
   half-works: `parse` + `serialize` (roundtrip), `NODE_META` (editor blocks),
-  the interpreter's `runList`, and `prompts/blk.md` (what Sage is allowed to
-  write). `node server/test-blk.mjs` is the self-check — extend it too.
+  the interpreter's `runList`, `compile` (or it quietly falls back to the
+  browser), and `prompts/blk.md` (what Sage is allowed to write).
+  `node server/test-blk.mjs` is the self-check — it runs a JS mirror of the
+  firmware VM against the browser interpreter and asserts the same trace, so
+  extend it too, and keep `BOPS` in step with `blkvm.h`.
 
-## Matrix rain
+## Screensavers
 
-A matrix screensaver on the robot's own 64x128 panel, toggled from the console
-drawer (topbar → CONSOLE → MATRIX, so it's in the Electron app too). BLE carries
-`mtx,on` / `mtx,off` and nothing else — the board animates it in `drawMatrix()` /
-`stepMatrix()`, one fall step per 20ms draw tick.
+Screensavers on the robot's own 128x64 panel (landscape, U8G2_R0 — layouts are
+written against `OLED_W`/`OLED_H`, so a remount is those two defines plus the
+rotation, not the drawing code), picked from the dropdown in the
+console drawer (topbar → CONSOLE, so it's in the Electron app too). BLE carries
+`scr,<n>` and nothing else — `0` is off, and the rest are the `SCR_*` enum in
+`main.ino` (matrix rain, a bouncing BLACKOUT, a falling starfield, a self-playing
+tetris). The board animates them off the same 20ms draw tick, in
+`startSaver()` / `stepSaver()` /
+`drawSaver()`; adding one is a case in each of those three, an entry in `SAVERS`
+in `app.js` (**the index is the wire value** — same order as the enum), and a
+`drawer.*` string in `i18n.js`.
 
+- **A screensaver drops the sensor cadence to 2Hz** while the rover is otherwise idle
+  (`SAVER_SEND_INTERVAL` / `SAVER_ENV_INTERVAL`). Everything below the send gate in
+  `loop()` blocks the panel: one sonar ping is ~25ms of dead time and a dht11 read ~30ms,
+  inside a 20ms draw tick — at 10Hz that's a dropped frame in five, which is exactly what
+  reads as stutter. Anything moving (routine, blk, live drive) clears `busy` and puts the
+  full 10Hz back, so this only ever costs telemetry resolution on a parked rover. If the
+  animation ever stutters again, look for something new that blocks in `loop()` — not at
+  the draw code.
 - **The board owns the animation, not the browser.** This is the same wall the
   old OLED-video feature hit: BLE can't carry 1KB frames at video rates (60fps
   is ~61KB/s and a with-response write is round-trip bound at the ~15ms
@@ -152,15 +191,17 @@ drawer (topbar → CONSOLE → MATRIX, so it's in the Electron app too). BLE car
 - Glyphs are ASCII (`MTX_GLYPHS`). Katakana means shipping a u8g2 japanese font,
   tens of KB of flash for shapes nobody can resolve at 5px.
 - It takes the panel over the HUD and the operator message both, and the **only**
-  things that end it are `mtx,off` and a BLE drop — the panel can never be left
+  things that end it are `scr,0` and a BLE drop — the panel can never be left
   stuck on it with no console to switch it off.
 - The panel is on **SPI1** (d13 sck, d11 copi) via a custom u8g2 byte callback, not
   bit-banged sw-spi: u8g2's `*_HW_SPI` constructors only know the `SPI` object, which
   on the Giga is d89-d91 on the high-density connector. Don't "fix" that by going back
   to sw-spi — it cost ~20ms a frame, which is the whole draw tick.
-- `npm run test:matrix` re-runs the fall/draw loops in js against the `MTX_*` constants
-  read out of `main.ino` — a drop that walks off `mtxCell[][]` is a silent out-of-bounds
-  write on a board with no MPU, so the indexing is checked off-board.
+- `npm run test:matrix` re-runs the fall/draw/bounce/star loops in js against the
+  `MTX_*` / `ST_N` / `TET_*` constants (and the tetromino table) read out of
+  `main.ino` — a drop that walks off `mtxCell[][]`, or a piece merged past the wall,
+  is a silent out-of-bounds write on a board with no MPU, so the indexing is checked
+  off-board.
 
 ## Dictated routines
 
