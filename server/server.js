@@ -286,10 +286,12 @@ app.get("/api/bridge", (req, res) => res.json({ running: bleActive, last: "" }))
 
 // the laptop's lan address, so the judges' tablet can be pointed at this dashboard
 // without anyone opening a terminal. first non-internal ipv4 — on a hotspot that's the only one.
+const lanIp = () => Object.values(os.networkInterfaces()).flat()
+  .find(i => i.family === "IPv4" && !i.internal)?.address;
+
 app.get("/api/lan", (req, res) => {
-  const ip = Object.values(os.networkInterfaces()).flat()
-    .find(i => i.family === "IPv4" && !i.internal)?.address;
-  res.json({ url: ip ? `http://${ip}:${PORT}` : null });
+  const ip = lanIp();
+  res.json({ url: ip ? `http://${ip}:${PORT}` : null, host: `http://blackout.local:${PORT}` });
 });
 
 app.post("/api/bridge/start", (req, res) => {
@@ -1036,7 +1038,30 @@ io.on("connection", (socket) => {
   });
 });
 
+// --- mdns: answer to blackout.local ---
+// the judges' tablet needs one address that survives dhcp. macos already
+// advertises the laptop's own hostname, but that name follows the laptop, not
+// the robot — this pins the rover's dashboard to the same naming as
+// blackout-cam.local. ios resolves .local natively, so it's http://blackout.local:PORT
+// in safari and nothing to type twice.
+// IMPORTANT NOTE: unicast responses only for A queries we're asked for. no
+// service (_http._tcp) record — nothing browses for one, add it if a client does.
+const MDNS_HOST = process.env.MDNS_HOST || "blackout.local";
+const mdnsServer = require("multicast-dns")();
+mdnsServer.on("query", (q) => {
+  const want = q.questions.find(
+    (x) => (x.type === "A" || x.type === "ANY") && x.name.toLowerCase() === MDNS_HOST
+  );
+  if (!want) return;
+  const ip = lanIp();
+  if (!ip) return;
+  mdnsServer.respond({
+    answers: [{ name: MDNS_HOST, type: "A", ttl: 120, data: ip }],
+  });
+});
+
 server.listen(PORT, () => {
   console.log(`Server at http://localhost:${PORT}`);
+  console.log(`Tablet:   http://${MDNS_HOST}:${PORT}`);
   pregenOnboarding(); // warm onboarding audio cache (skips already-generated clips)
 });

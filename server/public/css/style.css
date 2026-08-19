@@ -1020,6 +1020,9 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 }
 .serial-btn:hover { color: var(--ink); border-color: var(--ink-2); }
 .serial-btn[aria-pressed="true"] { color: var(--bg); background: var(--ink); border-color: var(--ink); }
+/* the screensaver picker is a plain <select> wearing the button's skin */
+.drawer-saver { appearance: none; padding-right: 11px; }
+.drawer-saver option { color: var(--ink); background: var(--bg); }
 .serial-line { display: flex; gap: 12px; padding: 1px 0; }
 .serial-line .t { color: var(--ink-3); flex-shrink: 0; }
 .serial-line .m { color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
@@ -1492,6 +1495,8 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   font: 500 10.5px/1.6 var(--mono); white-space: pre;
 }
 .blk-warn { color: var(--warn, #ffab19); margin-top: 4px; }
+/* where the workflow will actually run — on the board, or interpreted here */
+.blk-where { margin-top: 6px; color: var(--ink-2); }
 
 /* the blk editor takes the whole screen on a tablet — 86vw of a small screen
    is a lot of wasted room, and the editor has its own drawers for the panels */

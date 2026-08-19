@@ -11,6 +11,7 @@
 #include <DHT11.h> // temp/humidity — install "DHT11" (dhrubasaha08)
 #include <U8g2lib.h> // oled debug screen — spi, install "U8g2" (oliver) via library manager
 #include "routines.h" // op/step + the presentation and run tables
+#include "blkvm.h"    // instruction set for uploaded blk workflows
 
 // swapped from trig=47/echo=49 — the panel was wired the other way round.
 // symptom of getting this backwards: pulseIn always times out, so dist reads the
@@ -51,10 +52,13 @@
 #define OLED_RST 24
 #define OLED_DC 22
 #define OLED_SPI_HZ 8000000 // ssd1306 is spec'd to ~10MHz; drop this if the panel glitches
-// panel's mounted portrait in the enclosure (64 wide x 128 tall as drawn), not
-// landscape — U8G2_R1 rotates the buffer 90° to match. swap to U8G2_R3 if a
-// remount ever flips which edge is "up".
-U8G2_SSD1306_128X64_NONAME_F_4W_HW_SPI oled(U8G2_R1, /* cs=*/ U8X8_PIN_NONE, /* dc=*/ OLED_DC, /* reset=*/ OLED_RST);
+// panel's mounted landscape — the ssd1306's native 128x64, so no rotation.
+// swap to U8G2_R2 if a remount ever flips which edge is "up" (R1/R3 are the
+// portrait mounts; every layout below is written against OLED_W/OLED_H, so a
+// portrait remount means changing these two defines, not the drawing code).
+#define OLED_W 128
+#define OLED_H 64
+U8G2_SSD1306_128X64_NONAME_F_4W_HW_SPI oled(U8G2_R0, /* cs=*/ U8X8_PIN_NONE, /* dc=*/ OLED_DC, /* reset=*/ OLED_RST);
 
 // u8g2 byte callback, identical to its arduino hw-spi one except it talks to SPI1.
 // installed in setup() — see the note above for why there's no constructor for this.
@@ -108,15 +112,15 @@ unsigned long connectAt = 0; // ble connect instant — the hud fades in after a
 uint8_t oledFrame = 0; // wraps freely — every pulse/spinner draw is frame % something
 unsigned long lastOledDraw = 0;
 unsigned long lastOledPhase = 0;
-// measured on this board (micros() around clearBuffer+draw+sendBuffer): ~17.5ms/frame
-// regardless of screen — bit-banged spi shoving the 1024-byte buffer over dominates,
-// draw calls are noise by comparison. that's a hard ~57fps ceiling; 20ms keeps us
-// pinned near it without spending every single loop() iteration in a blocking spi
-// write (ble.poll/drive/routine ticks all wait behind an in-flight redraw).
+// measured back when the panel was on sw-spi: ~17.5ms/frame regardless of screen —
+// shoving the 1024-byte buffer over dominated, draw calls were noise by comparison.
+// hardware spi1 (see the byte callback up top) cut that; 20ms is kept because ~50fps
+// is plenty and every redraw still blocks ble.poll/drive/routine ticks behind it.
+// re-measure with micros() around clearBuffer+draw+sendBuffer before trusting a number.
 #define OLED_DRAW_INTERVAL 20
 #define OLED_PHASE_INTERVAL 120 // ~1s per breathing cycle (8 phase steps) — unrelated to draw fps
 
-/* matrix rain — operator toy, toggled from the dashboard console ("mtx,on"/"mtx,off").
+/* matrix rain — operator toy, one of the screensavers picked from the console ("scr,1").
    ten 6px columns of 8px cells, each dropping at its own rate. contrast on a 1-bit panel
    has to be faked with density, so the tail fades in four tiers: the head is knocked out
    of a filled cell (the only way to read *brighter* than white), the two behind it are
@@ -125,14 +129,14 @@ unsigned long lastOledPhase = 0;
    of just scrolling. costs nothing but the normal 20ms draw tick — no buffers, no link. */
 #define MTX_CW 6                 // cell width: the 5x8 font plus a pixel of air
 #define MTX_CH 8
-#define MTX_COLS (64 / MTX_CW)   // 10
-#define MTX_ROWS (128 / MTX_CH)  // 16
-bool matrixOn = false;
+#define MTX_COLS (OLED_W / MTX_CW)  // 21
+#define MTX_ROWS (OLED_H / MTX_CH)  // 8
 int8_t mtxY[MTX_COLS];      // head row; starts negative so a drop enters from off-screen
 uint8_t mtxSpd[MTX_COLS];   // draw ticks per row of fall — bigger = slower
 uint8_t mtxTick[MTX_COLS];
 uint8_t mtxTail[MTX_COLS];
 char mtxCell[MTX_COLS][MTX_ROWS];
+
 
 #define BOARD_NAME "BLACKOUT-V3" // shown on the status screen and the ble local
                                   // name/serial banner below — one literal, three
@@ -158,10 +162,53 @@ char mtxCell[MTX_COLS][MTX_ROWS];
 #define DIST_ALPHA 0.6 // ema smoothing on distance — ultrasonic is already clean
                         // (median-of-3 kills spikes), so light smoothing is enough.
 
+/* the other screensavers. same deal as the rain: the board animates them off the 20ms
+   draw tick, the link only carries which one (`scr,<n>`, 0 = off). keep the order in
+   step with SAVERS in app.js — the wire value is the index, nothing else. */
+enum { SCR_OFF, SCR_MATRIX, SCR_BOUNCE, SCR_STARS, SCR_TETRIS, SCR_N };
+uint8_t saver = SCR_OFF;
+// bounce: the dvd-logo one. 1px per draw tick ≈ 50px/s, so a full crossing is ~1.3s.
+static const char BN_TEXT[] = "BLACKOUT"; // 8 chars = 40px, leaves 88px of travel
+                                           // on a 128px panel
+int16_t bnX, bnY;   // int16 for headroom on the sums, not just the range
+int8_t bnDX, bnDY;
+uint8_t bnW;
+// stars: sparse dots falling at three depths. on 1 bit, size is the only depth cue.
+#define ST_N 24
+uint8_t stX[ST_N], stY[ST_N], stZ[ST_N]; // z = 1..3 = px/tick and dot size
+// tetris: it plays itself, badly on purpose — pieces drop into the deepest column with
+// no lookahead, so the well tops out every minute or so and wipes. the well stays
+// portrait (a 16-wide, 8-deep one isn't tetris) and is centred on the landscape panel,
+// which also keeps a row one byte: one bit per cell, bit c = column c, full = 0xFF.
+#define TET_COLS 8
+#define TET_ROWS 10
+#define TET_CELL 6
+#define TET_X0 ((OLED_W - TET_COLS * TET_CELL) / 2) // 40
+#define TET_Y0 ((OLED_H - TET_ROWS * TET_CELL) / 2) // 2
+#define TET_SPD 4 // draw ticks per row of fall
+// 7 tetrominoes x 4 rotations as 4x4 bitmaps: nibble r = row r, bit c = column c.
+// rotating a bitmap at runtime is more code than just listing them.
+static const uint16_t TET_PIECES[7][4] = {
+  { 0x000F, 0x1111, 0x000F, 0x1111 }, // I
+  { 0x0033, 0x0033, 0x0033, 0x0033 }, // O
+  { 0x0027, 0x0131, 0x0072, 0x0232 }, // T
+  { 0x0036, 0x0231, 0x0036, 0x0231 }, // S
+  { 0x0063, 0x0132, 0x0063, 0x0132 }, // Z
+  { 0x0071, 0x0113, 0x0047, 0x0322 }, // J
+  { 0x0074, 0x0311, 0x0017, 0x0223 }, // L
+};
+uint8_t tetWell[TET_ROWS];
+uint16_t tetM;              // the falling piece's bitmap
+int8_t tetX, tetY;          // its top-left cell; y starts above the well
+uint8_t tetTick;
+
 // dht11 tops out around 1hz and its read blocks in the same loop as ble.poll;
 // pressure doesn't move fast either — both on one 2s cadence, cached between.
 #define ENV_INTERVAL 2000
 #define SEND_INTERVAL 100
+// the idle-under-a-screensaver cadences — see the note in loop()
+#define SAVER_ENV_INTERVAL 6000
+#define SAVER_SEND_INTERVAL 500
 
 BLEService sensorService("19b10000-e8f2-537e-4f6c-d104768a1214");
 BLEStringCharacteristic sensorChar("19b10001-e8f2-537e-4f6c-d104768a1214", BLERead | BLENotify, 100);
@@ -190,6 +237,9 @@ bool bmeOk = false;
 DHT11 dht(DHT_PIN);
 int temp = 0, humid = 0;  // °C, % — last good dht read, cached
 float pressure = 0;       // hPa — last good bme read, cached
+// the filtered ultrasonic reading, published so the blk vm can compare against it
+// without waiting for the telemetry line. refreshed once per send_interval.
+float distCm = 999;       // cm, 999 = nothing in range
 
 // gy-302 (bh1750) ambient light. shares the bme's bus — i2c is a bus, and 0x23
 // doesn't collide with 0x76/0x77, so it needs no pins of its own: sda d20, scl
@@ -215,19 +265,25 @@ unsigned long lastEnv = 0;
 float distF = -1; // ema state, -1 = uninitialised
 
 void oledCenter(const char* s, int y) {
-  oled.drawStr((64 - oled.getStrWidth(s)) / 2, y, s);
+  oled.drawStr((OLED_W - oled.getStrWidth(s)) / 2, y, s);
 }
 
-// status screen: wordmark + pairing state, nothing else. panel is 64px wide
-// (portrait), so the name splits over two lines to get any real size.
+// centred inside a column, not the whole panel — landscape puts the hud glyph and its
+// text side by side, so "centre" means "centre of my half".
+void oledCenterIn(const char* s, int x0, int w, int y) {
+  oled.drawStr(x0 + (w - oled.getStrWidth(s)) / 2, y, s);
+}
+
+// status screen: wordmark + pairing state, nothing else. 128px of width means the
+// name fits on one line, so the 20px face is spent on it instead of on "V3".
 // IMPORTANT NOTE: cam state is no longer drawn — the dashboard still sends
 // "cam,<state>" and camState still tracks it, ready if it ever earns a line back.
 void drawStatus() {
-  oled.setFont(u8g2_font_7x13B_tr);
-  oledCenter("BLACKOUT", 44);          // 8 chars x 7px = 56, fits 64 with margin
   oled.setFont(u8g2_font_logisoso20_tr);
-  oledCenter("V3", 70);
-  oled.drawHLine(8, 80, 48);
+  oledCenter("BLACKOUT", 26);
+  oled.setFont(u8g2_font_7x13B_tr);
+  oledCenter("V3", 42);
+  oled.drawHLine(24, 47, OLED_W - 48);
 
   // animated ellipsis while pairing — a stalled pair shouldn't look like a
   // frozen screen. oledFrame ticks every OLED_PHASE_INTERVAL (~120ms).
@@ -235,10 +291,10 @@ void drawStatus() {
   if (bleConnected) {
     // blink on the way in — the splash only stays up for HUD_BLINK_MS after a
     // connect, so this is the handoff animation, not a steady state.
-    if ((millis() / 180) % 2) oledCenter("CONNECTED", 100);
+    if ((millis() / 180) % 2) oledCenter("CONNECTED", 61);
   } else {
     static const char* dots[4] = {"PAIRING", "PAIRING.", "PAIRING..", "PAIRING..."};
-    oledCenter(dots[(oledFrame / 4) % 4], 100);
+    oledCenter(dots[(oledFrame / 4) % 4], 61);
   }
 }
 
@@ -273,55 +329,58 @@ void drawWarn(int x, int y, bool filled) {
   oled.setDrawColor(1);
 }
 
-// the connected screen: wordmark and link state shrunk to the top, the server's
-// safety verdict big in the middle, its metrics line(s) small at the bottom.
+// the connected screen: a one-line banner across the top, then the server's safety
+// glyph on the left and its verdict + metrics stacked in the column beside it —
+// landscape has no room to stack all four, but plenty to sit them side by side.
+#define HUD_COL_X 54                  // right column: starts clear of the 44px warn glyph
+#define HUD_COL_W (OLED_W - HUD_COL_X)
 void drawHud() {
   oled.setFont(u8g2_font_5x7_tr);
-  oledCenter("BLACKOUT V3", 9);
-  oled.setFont(u8g2_font_4x6_tr);
-  oledCenter("CONNECTED", 18);
-  oled.drawHLine(6, 22, 52);
+  oledCenter("BLACKOUT V3 - CONNECTED", 7);
+  oled.drawHLine(6, 11, OLED_W - 12);
 
   const char* label = "STANDBY";
-  if (hudLevel == "ok") { drawSmile(14, 38); label = "SAFE"; }
-  else if (hudLevel == "warn") { drawWarn(10, 38, false); label = "CAUTION"; }
+  if (hudLevel == "ok") { drawSmile(10, 16); label = "SAFE"; }
+  else if (hudLevel == "warn") { drawWarn(4, 16, false); label = "CAUTION"; }
   else if (hudLevel == "bad") {
     // ~480ms blink (oledFrame ticks every OLED_PHASE_INTERVAL) — an alarm the
     // operator catches out of the corner of an eye.
-    if ((oledFrame / 2) % 2) drawWarn(10, 38, true);
+    if ((oledFrame / 2) % 2) drawWarn(4, 16, true);
     label = "DANGER";
   }
-  oled.setFont(u8g2_font_5x7_tr);
-  oledCenter(label, 92);
+  oled.setFont(u8g2_font_7x13B_tr);
+  oledCenterIn(label, HUD_COL_X, HUD_COL_W, 26);
 
   // metrics arrive pre-formatted from the server, "|" splits lines. straight to
   // the glass — the board doesn't decide what's worth showing.
   oled.setFont(u8g2_font_4x6_tr);
-  int y = 110;
+  int y = 38;
   int from = 0;
-  while (from <= (int)hudMetrics.length() && y < 128) {
+  while (from <= (int)hudMetrics.length() && y < OLED_H) {
     int cut = hudMetrics.indexOf('|', from);
     if (cut < 0) cut = hudMetrics.length();
-    oledCenter(hudMetrics.substring(from, cut).c_str(), y);
-    y += 9;
+    oledCenterIn(hudMetrics.substring(from, cut).c_str(), HUD_COL_X, HUD_COL_W, y);
+    y += 8;
     from = cut + 1;
   }
 }
 
-// operator message from the dashboard's oled panel, word-wrapped to the 64px
-// panel width with a breathing frame + corner pulse so a static string still
-// reads as "live", not frozen.
+// operator message from the dashboard's oled panel, word-wrapped to the panel
+// width with a breathing frame + corner pulse so a static string still reads as
+// "live", not frozen. IMPORTANT NOTE: 4 lines max — 4 x 12px is all 64px of height
+// holds, and the ble message cap is 64 chars, which wraps to ~4 lines at this width.
+#define CUST_LINES 4
 void drawCustom() {
   oled.setFont(u8g2_font_6x10_tf);
-  String lines[6];
+  String lines[CUST_LINES];
   uint8_t n = 0;
   String word, cur;
   String src = customMsg + " ";
-  for (uint16_t i = 0; i < src.length() && n < 6; i++) {
+  for (uint16_t i = 0; i < src.length() && n < CUST_LINES; i++) {
     char c = src[i];
     if (c != ' ') { word += c; continue; }
     String trial = cur.length() ? cur + " " + word : word;
-    if (oled.getStrWidth(trial.c_str()) > 58 && cur.length()) {
+    if (oled.getStrWidth(trial.c_str()) > OLED_W - 16 && cur.length()) {
       lines[n++] = cur;
       cur = word;
     } else {
@@ -329,18 +388,20 @@ void drawCustom() {
     }
     word = "";
   }
-  if (cur.length() && n < 6) lines[n++] = cur;
+  if (cur.length() && n < CUST_LINES) lines[n++] = cur;
 
   int lineH = 12;
-  int startY = 64 - (n * lineH) / 2 + 10;
+  int startY = OLED_H / 2 - (n * lineH) / 2 + 9;
   for (uint8_t i = 0; i < n; i++) oledCenter(lines[i].c_str(), startY + i * lineH);
 
   int boxH = n * lineH + 6;
   if (boxH < 20) boxH = 20;
-  int top = startY - 14;
-  oled.drawRFrame(2, top, 60, boxH, 4);
+  int top = startY - 12;
+  if (top < 1) top = 1;
+  if (top + boxH > OLED_H - 1) boxH = OLED_H - 1 - top;
+  oled.drawRFrame(2, top, OLED_W - 4, boxH, 4);
   uint8_t phase = oledFrame % 8;
-  oled.drawDisc(56, top + 6, 1 + (phase < 4 ? phase : 7 - phase) / 2); // "live message" pulse
+  oled.drawDisc(OLED_W - 8, top + 6, 1 + (phase < 4 ? phase : 7 - phase) / 2); // "live message" pulse
 }
 
 // glyph pool. ascii only: the katakana in a u8g2 japanese font costs tens of KB of
@@ -358,12 +419,10 @@ void mtxRespawn(uint8_t c) {
 }
 
 void startMatrix() {
-  randomSeed(micros()); // otherwise every boot rains the identical pattern
   for (uint8_t c = 0; c < MTX_COLS; c++) {
     mtxRespawn(c);
     for (uint8_t r = 0; r < MTX_ROWS; r++) mtxCell[c][r] = mtxGlyph();
   }
-  matrixOn = true;
 }
 
 // one step per draw tick (called from loop(), not from the draw — a hud push mid-frame
@@ -381,7 +440,7 @@ void stepMatrix() {
 void drawMatrix() {
   oled.setFont(u8g2_font_5x8_tr);
   for (uint8_t c = 0; c < MTX_COLS; c++) {
-    int x = 2 + c * MTX_CW; // 10 columns = 60px, centred in 64
+    int x = 1 + c * MTX_CW; // 21 columns = 126px, centred in 128
     for (uint8_t i = 0; i <= mtxTail[c]; i++) {
       int r = mtxY[c] - i;
       if (r < 0 || r >= MTX_ROWS) continue;
@@ -406,12 +465,158 @@ void drawMatrix() {
   }
 }
 
+void startBounce() {
+  oled.setFont(u8g2_font_5x8_tr);
+  bnW = oled.getStrWidth(BN_TEXT);
+  bnX = random(OLED_W - bnW); bnY = random(8, OLED_H);
+  bnDX = random(2) ? 1 : -1; bnDY = random(2) ? 1 : -1;
+}
+
+void stepBounce() {
+  bnX += bnDX; bnY += bnDY;
+  if (bnX <= 0 || bnX + bnW >= OLED_W) bnDX = -bnDX;
+  if (bnY <= 8 || bnY >= OLED_H) bnDY = -bnDY; // y is the text baseline, hence the 8
+}
+
+void drawBounce() {
+  oled.setFont(u8g2_font_5x8_tr);
+  oled.drawStr(bnX, bnY, BN_TEXT);
+}
+
+void stRespawn(uint8_t i, bool anywhere) {
+  stX[i] = random(OLED_W);
+  stY[i] = anywhere ? random(OLED_H) : 0;
+  stZ[i] = random(1, 4);
+}
+
+void startStars() { for (uint8_t i = 0; i < ST_N; i++) stRespawn(i, true); }
+
+void stepStars() {
+  for (uint8_t i = 0; i < ST_N; i++) {
+    if (stY[i] + stZ[i] >= OLED_H) { stRespawn(i, false); continue; }
+    stY[i] += stZ[i];
+  }
+}
+
+void drawStars() {
+  for (uint8_t i = 0; i < ST_N; i++) {
+    if (stZ[i] >= 3) oled.drawBox(stX[i] > OLED_W - 2 ? OLED_W - 2 : stX[i], stY[i], 2, 2); // near: 2x2
+    else if (stZ[i] == 2) oled.drawVLine(stX[i], stY[i], 2);                // mid: 2px streak
+    else oled.drawPixel(stX[i], stY[i]);                                     // far: one dot
+  }
+}
+
+// overlap test for the piece at (px, py): the floor, the right wall and the well.
+bool tetHit(uint16_t m, int8_t px, int8_t py) {
+  for (uint8_t r = 0; r < 4; r++) {
+    uint8_t bits = (m >> (r * 4)) & 0xF;
+    if (!bits) continue;
+    int8_t y = py + r;
+    if (y < 0) continue; // still above the well — nothing to hit up there
+    if (y >= TET_ROWS) return true;
+    uint16_t row = (uint16_t)bits << px;
+    if (row > 0xFF) return true; // ran off the right edge
+    if (tetWell[y] & row) return true;
+  }
+  return false;
+}
+
+// random piece, but not a random column: drop it wherever it lands deepest, ties
+// broken by coin flip. one loop's worth of "ai" — with a purely random column the well
+// tops out every ~10 pieces, which is a wipe every 15 seconds and no lines ever cleared.
+void tetSpawn() {
+  tetM = TET_PIECES[random(7)][random(4)];
+  tetY = -3; // enters from off the top
+  tetTick = 0;
+  // width, not a flat 0..4: a 1-wide piece has to be able to reach column 7, or the
+  // right of the well never fills and lines stop completing.
+  uint8_t w = 0;
+  for (uint8_t b = 0; b < 16; b++)
+    if ((tetM >> b) & 1 && (b % 4) + 1 > w) w = (b % 4) + 1;
+  int8_t bestX = 0, bestY = -100;
+  for (int8_t x = 0; x + w <= TET_COLS; x++) {
+    int8_t y = -3;
+    while (!tetHit(tetM, x, y + 1)) y++;
+    if (y > bestY || (y == bestY && random(2))) { bestY = y; bestX = x; }
+  }
+  tetX = bestX;
+}
+
+void startTetris() {
+  memset(tetWell, 0, sizeof tetWell);
+  tetSpawn();
+}
+
+// merge the landed piece, clear any full rows, and wipe if the stack reached the top.
+void tetLand() {
+  for (uint8_t r = 0; r < 4; r++) {
+    uint8_t bits = (tetM >> (r * 4)) & 0xF;
+    int8_t y = tetY + r;
+    if (bits && y >= 0 && y < TET_ROWS) tetWell[y] |= bits << tetX;
+  }
+  for (int8_t y = TET_ROWS - 1; y >= 0; y--)
+    while (tetWell[y] == 0xFF) { // while, not if: the row that drops in may be full too
+      for (int8_t k = y; k > 0; k--) tetWell[k] = tetWell[k - 1];
+      tetWell[0] = 0;
+    }
+  if (tetWell[0]) memset(tetWell, 0, sizeof tetWell); // topped out, start the well over
+  tetSpawn();
+}
+
+void stepTetris() {
+  if (++tetTick < TET_SPD) return;
+  tetTick = 0;
+  if (tetHit(tetM, tetX, tetY + 1)) tetLand();
+  else tetY++;
+}
+
+void drawTetris() {
+  // the well is narrower than the panel now, so it needs an outline or the pieces
+  // look like they're falling through open space.
+  oled.drawFrame(TET_X0 - 2, TET_Y0 - 1, TET_COLS * TET_CELL + 3, TET_ROWS * TET_CELL + 2);
+  // stack hollow, falling piece solid — that's the readable contrast pair on 1 bit.
+  for (uint8_t r = 0; r < TET_ROWS; r++)
+    for (uint8_t c = 0; c < TET_COLS; c++)
+      if (tetWell[r] & (1 << c)) oled.drawFrame(TET_X0 + c * TET_CELL, TET_Y0 + r * TET_CELL, TET_CELL - 1, TET_CELL - 1);
+  for (uint8_t r = 0; r < 4; r++) {
+    uint8_t bits = (tetM >> (r * 4)) & 0xF;
+    int8_t y = tetY + r;
+    if (!bits || y < 0 || y >= TET_ROWS) continue;
+    for (uint8_t c = 0; c < 4; c++)
+      if (bits & (1 << c)) oled.drawBox(TET_X0 + (tetX + c) * TET_CELL, TET_Y0 + y * TET_CELL, TET_CELL - 1, TET_CELL - 1);
+  }
+}
+
+// the whole screensaver layer is these three calls — adding one is a case in each.
+void startSaver(uint8_t which) {
+  randomSeed(micros()); // otherwise every boot plays the identical pattern
+  saver = which < SCR_N ? which : SCR_OFF;
+  if (saver == SCR_MATRIX) startMatrix();
+  else if (saver == SCR_BOUNCE) startBounce();
+  else if (saver == SCR_STARS) startStars();
+  else if (saver == SCR_TETRIS) startTetris();
+}
+
+void stepSaver() {
+  if (saver == SCR_MATRIX) stepMatrix();
+  else if (saver == SCR_BOUNCE) stepBounce();
+  else if (saver == SCR_STARS) stepStars();
+  else if (saver == SCR_TETRIS) stepTetris();
+}
+
+void drawSaver() {
+  if (saver == SCR_MATRIX) drawMatrix();
+  else if (saver == SCR_BOUNCE) drawBounce();
+  else if (saver == SCR_STARS) drawStars();
+  else if (saver == SCR_TETRIS) drawTetris();
+}
+
 // redrawn on every draw tick (see OLED_DRAW_INTERVAL in loop()), not just
 // on state change — a static screen doesn't read as "alive" on a panel this size.
 // an operator message beats the auto status screen, the rain beats everything.
 void updateOled() {
   oled.clearBuffer();
-  if (matrixOn) drawMatrix();
+  if (saver) drawSaver();
   else if (customMsg.length()) drawCustom();
   else if (bleConnected && millis() - connectAt >= HUD_BLINK_MS) drawHud();
   else drawStatus(); // splash, and the blinking handoff for the first HUD_BLINK_MS
@@ -521,7 +726,188 @@ void applyStep(const Step& s) {
 // never leaves the wheels spinning. overrides any running routine.
 unsigned long drvEnd = 0;
 
-void stopRoutine() { routine = nullptr; drvEnd = 0; halt(); }
+Ins blkCode[BLK_MAX];
+uint8_t blkLen = 0, blkWant = 0; // received / declared by the upload — a short upload never runs
+float blkVar[BLK_VARS];
+int blkPc = -1;                  // -1 = idle
+uint8_t blkPwm = 140;            // what `speed` last set; every move uses it
+unsigned long blkUntil = 0;      // deadline for the instruction in flight (0 = none)
+bool blkWaitEvt = false;         // parked on an evt the browser has to answer
+// an upload is in flight. only used to keep loop() quick while it lands: the idle
+// median ping blocks ~200ms, and every one of those is 200ms the browser's next
+// write sits waiting on ble.poll() — 40 instructions would take 8s to upload.
+bool blkLoading = false;
+bool blkResume = false;          // guard tripped mid-run: resume *at* blkpc, don't advance past it
+uint8_t blkResSlot = 0xFF;       // slot an evt answer lands in (0xff = the evt wants no value)
+
+// lhs: 0-49 index into blk.mjs's SENSORS, 50 = our own speed, 100+ = a variable.
+// sensors this board doesn't carry read 0 — same as the fields in the telemetry line.
+float blkRead(uint8_t lhs) {
+  if (lhs >= 100) return blkVar[(uint8_t)(lhs - 100) % BLK_VARS];
+  if (lhs == 50) return blkPwm;
+  switch (lhs) {
+    case 0: return distCm;
+    case 1: return temp;
+    case 2: return humid;
+    case 6: return pressure;
+  }
+  return 0;
+}
+
+bool blkTest(const Ins& i) { // cmp indexes match CMPS in blk.mjs
+  float l = blkRead(i.lhs), r = i.rhs;
+  switch (i.cmp) {
+    case 0: return l < r;
+    case 1: return l > r;
+    case 2: return l <= r;
+    case 3: return l >= r;
+    case 4: return l == r;
+    default: return l != r;
+  }
+}
+
+void blkDrive(uint8_t verb, uint8_t pwm) {
+  switch (verb) {
+    case 0: forward(pwm); break;
+    case 1: back(pwm);    break;
+    case 2: left(pwm);    break;
+    default: right(pwm);  break;
+  }
+}
+
+void blkHalt() { blkPc = -1; blkWaitEvt = false; blkLoading = false; blkResume = false; blkUntil = 0; halt(); }
+void blkFinish() { blkHalt(); sensorChar.writeValue("E:blkend"); Serial.println("E:blkend"); }
+
+// run instructions from blkpc until one needs time to pass, then return. never
+// blocks: timed ops set blkuntil and tickblk() finishes them. the guard stops a
+// body-less `forever` from spinning loop() to death — it just resumes next tick.
+void blkEnter() {
+  for (uint8_t guard = 0; guard < 64; guard++) {
+    if (blkPc < 0 || blkPc >= blkLen) { blkFinish(); return; }
+    const Ins& i = blkCode[blkPc];
+    switch (i.op) {
+      case B_END: blkFinish(); return;
+      case B_STOP: blkFinish(); return;
+      case B_MOVE:  blkDrive(i.a, blkPwm); blkUntil = millis() + (uint16_t)i.c; return;
+      case B_MOVEU:
+        if (blkTest(i)) { halt(); break; }        // already true, don't move at all
+        blkDrive(i.a, blkPwm);
+        blkUntil = millis() + (i.c ? (uint16_t)i.c : 30000); // same cap as the browser's until
+        return;
+      case B_WAIT: halt(); blkUntil = millis() + (uint16_t)i.c; return;
+      case B_WAITU:
+        if (blkTest(i)) break;
+        halt();
+        blkUntil = i.c ? millis() + (uint16_t)i.c : 0; // no timeout = wait forever
+        return;
+      case B_SPEED: blkPwm = i.b; break;
+      case B_SET: blkVar[i.a % BLK_VARS] = i.rhs; break;
+      case B_ADD: blkVar[i.a % BLK_VARS] += i.rhs; break;
+      case B_JMP: blkPc = i.c; continue;
+      case B_JMPF: if (!blkTest(i)) { blkPc = i.c; continue; } break;
+      case B_EVT: {
+        halt(); // the camera wants a still frame, and nothing should roll while sage thinks
+        String e = "E:blk,"; e += i.b; e += ","; e += i.a;
+        for (uint8_t v = 0; v < BLK_VARS; v++) { e += ","; e += blkVar[v]; } // vars, so the browser can interpolate {name}
+        sensorChar.writeValue(e);
+        Serial.println(e);
+        if (i.a == 0) break; // fire and forget
+        blkWaitEvt = true;
+        blkResSlot = (i.a == 2) ? i.c : 0xFF; // analyze answers "done", not a value — slot 0 isn't its
+
+        blkUntil = millis() + BLK_EVT_MS;
+        return;
+      }
+    }
+    blkPc++;
+  }
+  blkResume = true; // guard tripped: pick up *at* this instruction next tick, not after it
+}
+
+// finish the instruction in flight if its time is up (or its condition tripped).
+// called every loop() — must stay non-blocking.
+void tickBlk() {
+  if (blkPc < 0) return;
+  if (blkResume) { blkResume = false; blkEnter(); return; }
+  const Ins& i = blkCode[blkPc];
+  if (blkWaitEvt) {
+    if (millis() < blkUntil) return; // browser never answered — carry on rather than hang
+    blkWaitEvt = false;
+  } else if (i.op == B_MOVEU || i.op == B_WAITU) {
+    if (!blkTest(i) && (!blkUntil || millis() < blkUntil)) return;
+  } else if (blkUntil && millis() < blkUntil) return;
+  halt(); // every instruction ends with the wheels still, like a timed "drv," burst
+  blkUntil = 0;
+  blkPc++;
+  blkEnter();
+}
+
+void blkStart() {
+  if (!blkLen || blkLen != blkWant) { // a truncated upload must never half-run
+    sensorChar.writeValue("E:blkerr");
+    Serial.println("E:blkerr");
+    return;
+  }
+  routine = nullptr;
+  drvEnd = 0; // kill any pending debug-drive auto-halt or it fires mid-instruction
+  for (uint8_t v = 0; v < BLK_VARS; v++) blkVar[v] = 0;
+  blkPwm = 140;
+  blkUntil = 0;
+  blkWaitEvt = false;
+  blkPc = 0;
+  Serial.print("blk start: "); Serial.print(blkLen); Serial.println(" ins");
+  blkEnter();
+}
+
+// nth comma-separated field, "" past the end
+String blkFld(const String& s, uint8_t n) {
+  int start = 0;
+  for (uint8_t k = 0; k < n; k++) {
+    start = s.indexOf(',', start);
+    if (start < 0) return "";
+    start++;
+  }
+  int end = s.indexOf(',', start);
+  return end < 0 ? s.substring(start) : s.substring(start, end);
+}
+
+// upload + control, one line per instruction so a lost write is just a short
+// upload (caught by blkstart) rather than a corrupt program:
+//   "blk,n,<count>"  begin, clears whatever was here
+//   "blk,i,<idx>,<op>,<a>,<b>,<c>,<lhs>,<cmp>,<rhs>"
+//   "blk,go"         run from 0
+//   "blk,res,<v>"    answer the evt the program is parked on
+void handleBlk(const String& c) {
+  String k = blkFld(c, 1);
+  if (k == "n") {
+    blkHalt();
+    memset(blkCode, 0, sizeof(blkCode)); // op 0 = b_end: a lost write ends the program, never runs stale
+    blkLen = 0;
+    blkWant = blkFld(c, 2).toInt();
+    blkLoading = true;
+    sensorChar.writeValue("E:blkrdy"); // the browser waits for this before uploading
+  } else if (k == "i") {
+    int idx = blkFld(c, 2).toInt();
+    if (idx < 0 || idx >= BLK_MAX) return;
+    Ins& i = blkCode[idx];
+    i.op  = blkFld(c, 3).toInt();
+    i.a   = blkFld(c, 4).toInt();
+    i.b   = blkFld(c, 5).toInt();
+    i.c   = blkFld(c, 6).toInt();
+    i.lhs = blkFld(c, 7).toInt();
+    i.cmp = blkFld(c, 8).toInt();
+    i.rhs = blkFld(c, 9).toFloat();
+    if (idx + 1 > blkLen) blkLen = idx + 1;
+  } else if (k == "go") {
+    blkLoading = false;
+    blkStart();
+  } else if (k == "res" && blkWaitEvt) {
+    if (blkResSlot < BLK_VARS) blkVar[blkResSlot] = blkFld(c, 2).toFloat();
+    blkUntil = 0; // resume on the next tick
+  }
+}
+
+void stopRoutine() { routine = nullptr; drvEnd = 0; blkHalt(); }
 
 void startDrive(const String& c) {
   int a = c.indexOf(',', 4);
@@ -587,16 +973,17 @@ void handleCmd(String c) {
   if (c == "stop") stopRoutine();
   else if (c.startsWith("go,")) startRoutine(c.substring(3));
   else if (c.startsWith("drv,")) startDrive(c);
-  else if (c.startsWith("cam,")) { camState = c.substring(4); updateOled(); }
+  // uploaded blk workflow: instructions in, then "blk,go". see the blk vm above.
+  else if (c.startsWith("blk,")) handleBlk(c);
+  else if (c.startsWith("cam,")) { camState = c.substring(4); if (!saver) updateOled(); }
   else if (c.startsWith("hud,")) {
     int sep = c.indexOf(',', 4);
     hudLevel = (sep < 0) ? c.substring(4) : c.substring(4, sep);
     hudMetrics = (sep < 0) ? "" : c.substring(sep + 1);
-    updateOled();
+    if (!saver) updateOled(); // under a screensaver the draw tick owns the panel
   }
-  // matrix rain takes the whole panel until it's switched off (or the link drops).
-  else if (c == "mtx,on") startMatrix();
-  else if (c == "mtx,off") { matrixOn = false; updateOled(); }
+  // a screensaver takes the whole panel until it's switched off (or the link drops).
+  else if (c.startsWith("scr,")) { startSaver(c.substring(4).toInt()); updateOled(); }
   else if (c.startsWith("oled,")) {
     String msg = c.substring(5);
     customMsg = (msg == "clear") ? "" : msg; // literal word "clear" reverts to auto status
@@ -647,9 +1034,9 @@ void loop() {
     connectAt = millis();
     Serial.println(bleConnected ? "BLE central connected" : "BLE central gone");
     // a drop invalidates the hud — the server's verdict is only as fresh as the link.
-    // the rain goes with it: nothing else can switch it off, so it must never outlive
+    // the screensaver goes with it: nothing else can switch it off, so it must never outlive
     // the console that turned it on.
-    if (!bleConnected) { hudLevel = ""; hudMetrics = ""; matrixOn = false; }
+    if (!bleConnected) { hudLevel = ""; hudMetrics = ""; saver = SCR_OFF; }
     updateOled();
   }
 
@@ -659,17 +1046,24 @@ void loop() {
   tickRoutine(); // before the send_interval return below — that skips the rest
                  // of loop() most iterations, which would stall the routine.
   tickDrive();
+  tickBlk();
 
   unsigned long nowAnim = millis();
   if (nowAnim - lastOledPhase >= OLED_PHASE_INTERVAL) { lastOledPhase = nowAnim; oledFrame++; }
   if (nowAnim - lastOledDraw >= OLED_DRAW_INTERVAL) {
     lastOledDraw = nowAnim;
-    if (matrixOn) stepMatrix(); // one fall step per drawn frame, see stepMatrix
+    stepSaver(); // one animation step per drawn frame
     updateOled();
   }
 
   unsigned long now = millis();
-  if (now - lastSend < SEND_INTERVAL) return;
+  bool busy = routine || blkPc >= 0 || blkLoading || drvEnd;
+  // a screensaver on an idle rover: the panel is the only thing anyone is looking at,
+  // and everything below this line blocks it. one ping is ~25ms of dead time inside a
+  // 20ms draw tick, so at 100ms it drops one frame in five — that's the stutter. back
+  // the whole sensor cadence off to 2hz while the rover isn't doing anything, and the
+  // rain runs smooth. anything that moves clears `busy` back to the full 10hz.
+  if (now - lastSend < (saver && !busy ? SAVER_SEND_INTERVAL : SEND_INTERVAL)) return;
   lastSend = now;
 
   // median-of-3 blocks ~180-250ms (60ms forced between pings). nothing else runs
@@ -677,9 +1071,9 @@ void loop() {
   // so while anything is moving (routine *or* live drive) take a single ~25ms ping:
   // noisier distance, but steps land on time and remote control stays responsive.
   // consecutive pings still land send_interval (100ms) apart, clear of the 60ms ring-down.
-  // the rain counts as "busy" for the same reason a routine does: the median's ~200ms of
+  // a screensaver counts as "busy" for the same reason a routine does: the median's ~200ms of
   // blocking pings is ~200ms of no redraw, which stutters it visibly.
-  float raw = (routine || drvEnd || matrixOn) ? pingCm() : medianPingCm();
+  float raw = (busy || saver) ? pingCm() : medianPingCm();
   if (raw >= 0) {
     distF = (distF < 0) ? raw : distF + DIST_ALPHA * (raw - distF);
   } else {
@@ -688,9 +1082,12 @@ void loop() {
   // miss = no echo within ~430cm = clear ahead. send 999, never 0 — 0 reads as
   // "touching a wall" downstream (dashboard "too close", server "near" blurt).
   float dist = (distF < 0) ? 999 : distF;
+  distCm = dist;
 
-  // env sensor on its own slow cadence, hold last good values.
-  if (now - lastEnv >= ENV_INTERVAL) {
+  // env sensor on its own slow cadence, hold last good values. the dht11 read blocks
+  // ~30ms (its wire protocol is timed delays), which is a visible hitch under a
+  // screensaver — same deal as the ping, so it slows down too.
+  if (now - lastEnv >= (saver && !busy ? SAVER_ENV_INTERVAL : ENV_INTERVAL)) {
     lastEnv = now;
     int t = 0, h = 0;
     // 0 = ok; a checksum/timeout error leaves the cached values alone, so a
@@ -725,7 +1122,7 @@ void loop() {
   // field 11: routine running? the server gates auto-analysis on this. sent on
   // every line rather than as a start/end event — a dropped event
   // would strand the server thinking a routine runs forever, a flag self-heals.
-  line += routine ? ",1" : ",0";
+  line += (routine || blkPc >= 0) ? ",1" : ",0";
   // field 12: lux. appended last and nothing reads it yet — recorded only.
   line += ",";
   line += lux;

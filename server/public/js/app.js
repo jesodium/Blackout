@@ -4,7 +4,8 @@ import { createPortal, flushSync } from "react-dom";
 import htm from "htm";
 import { createRoverScene } from "./scene.js";
 import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./i18n.js";
-import { parse as blkParse, run as blkRun, lint as blkLint, estimate as blkEstimate, fmtMs } from "./blk.mjs";
+import { parse as blkParse, run as blkRun, lint as blkLint, estimate as blkEstimate, fmtMs,
+         compile as blkCompile, insLine as blkInsLine, interp as blkInterp, evalExpr as blkEval, clampArg as blkClamp } from "./blk.mjs";
 import { SageFace } from "./sageface.js";
 import { initPadNav, cursorOn } from "./padnav.mjs";
 
@@ -403,9 +404,14 @@ function MotorDebug({ onCmd, enabled }) {
 }
 
 /* blk workflow control: pick a saved .blk program, run/stop it from here */
-// programs are authored in the popup editor (blk.html) and saved server-side;
-// the runner lives here because the browser holds the ble link. each drive step
-// is one timed "drv," burst, so a mid-run stop or ble drop auto-halts on firmware.
+// programs are authored in the popup editor (blk.html) and saved server-side.
+// a workflow runs in one of two places, and the first that fits wins:
+//   on the board — compiled to instructions and uploaded over ble before it starts,
+//     so `forward until dist < 15` is checked in one loop() pass instead of a ~400ms
+//     round trip, and a link drop mid-run doesn't strand it. the steps only the pc
+//     can do (sage, tts, the headlamp) come back here as events and the board waits.
+//   in the browser — the tree interpreter below, unchanged, for everything the
+//     compiler can't express. same language, slower conditions.
 function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
   const [files, setFiles] = useState([]);
   const [sel, setSel] = useState(() => localStorage.getItem("blkSel") || "");
@@ -417,6 +423,14 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
   const token = useRef(0);
   const runRef = useRef(false); // mirrors run for unmount cleanup
   runRef.current = !!run;
+  // the board's blk vm answers on the notify channel; onblenotify re-broadcasts those
+  // lines as a window event, so whoever is mid-run just parks a handler here.
+  const evtRef = useRef(null);
+  useEffect(() => {
+    const fn = (e) => evtRef.current?.(e.detail);
+    window.addEventListener("blk:evt", fn);
+    return () => window.removeEventListener("blk:evt", fn);
+  }, []);
 
   // play the exit animation, then unmount
   const closeEditor = useCallback(() => {
@@ -459,7 +473,11 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
       .then(text => {
         if (!live) return;
         const { program, errors } = blkParse(text);
-        setPreview({ text, warns: errors.length ? errors : blkLint(program), ms: fmtMs(blkEstimate(program)) });
+        // compile it now too — the operator should know before pressing run whether
+        // the board will play it or the browser will, and why not if not.
+        let board;
+        try { board = blkCompile(program).code.length; } catch (e) { board = e.message; }
+        setPreview({ text, warns: errors.length ? errors : blkLint(program), ms: fmtMs(blkEstimate(program)), board });
       })
       .catch(() => live && setPreview(null));
     return () => { live = false; };
@@ -500,9 +518,10 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
         return !!d.yes;
       } catch { setNote("AI didn't answer — treating as no"); return false; }
     };
-    // interpreter walks the tree live: conditions read the latest telemetry packet,
-    // forever/until loops run until STOP (or their condition trips)
-    await blkRun(program, {
+    // every step a workflow can take that the board cannot: the camera, sage, tts,
+    // the http headlamp. shared by both runners — on-board, these are the events the
+    // program parks on; in the browser, the tree interpreter calls them directly.
+    const io = {
       stopped, sleep,
       drive: async (verb, pwm, ms) => { onCmd(`drv,${verb},${pwm},${ms}`); await sleep(ms + 150); },
       analyze: async (focus) => { // fire the agent, wait until it's done (30s cap)
@@ -519,7 +538,70 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
       sensors: () => packetRef?.current,
       halt: () => onCmd("stop"),
       onStep: (node, n, st) => setRun({ n, label: node.op.replace("_", " "), vars: { ...st.vars } }),
+    };
+
+    // park a one-shot handler on the board's event channel; null on timeout.
+    const waitFor = (pred, ms, kick) => new Promise((res) => {
+      const to = setTimeout(() => { evtRef.current = null; res(null); }, ms);
+      evtRef.current = (line) => { if (!pred(line)) return; clearTimeout(to); evtRef.current = null; res(line); };
+      kick?.();
     });
+
+    // upload the compiled program and let the board play it, servicing the steps it
+    // parks on. false = the board never answered (firmware without the vm, or the ble
+    // link is held by another browser and we're relaying over the socket), so the
+    // caller falls back to interpreting up here.
+    const runOnBoard = async ({ code, nodes, slots }) => {
+      if (!await waitFor(l => l.startsWith("E:blkrdy"), 2000, () => onCmd(`blk,n,${code.length}`))) return false;
+      // one write per instruction: a lost write leaves the upload short, which the
+      // board refuses to run, rather than leaving a corrupt program to drive on.
+      for (let i = 0; i < code.length; i++) {
+        if (stopped()) return true;
+        await onCmd(blkInsLine(i, code[i]));
+      }
+      let n = 0;
+      const ran = await new Promise((res) => {
+        const finish = (v) => { clearInterval(poll); evtRef.current = null; res(v); };
+        const poll = setInterval(() => { if (stopped()) finish(true); }, 200);
+        evtRef.current = async (line) => {
+          if (line.startsWith("E:blkend")) return finish(true);
+          if (line.startsWith("E:blkerr")) return finish(false); // short upload — run it here instead
+          if (!line.startsWith("E:blk,")) return;
+          const f = line.slice(6).split(",");
+          const node = nodes[+f[0]];
+          const kind = +f[1];
+          if (!node) return void onCmd("blk,res,0");
+          // the board ships its variables with every event, so {name} still interpolates
+          const vars = {};
+          for (const [name, i] of Object.entries(slots)) vars[name] = +f[2 + i] || 0;
+          setRun({ n: ++n, label: node.op.replace("_", " "), vars, board: true });
+          const ctx = { st: { vars }, sensors: io.sensors };
+          const txt = () => blkInterp(node.text, ctx);
+          let val = 0;
+          switch (node.op) {
+            case "say": io.say(txt()); break;
+            case "log": io.log(txt()); break;
+            case "led": io.led(blkClamp("led", blkEval(node.arg, ctx) || 0)); break;
+            case "analyze": await io.analyze(txt()); break;
+            case "ask": val = (await io.ask(txt())) ? 1 : 0; break;
+            case "find": val = (await io.find(txt())) ? 1 : 0; break;
+          }
+          if (kind) await onCmd(`blk,res,${val}`); // kind 0 is fire-and-forget, board didn't wait
+        };
+        onCmd("blk,go");
+      });
+      return ran;
+    };
+
+    // board first. anything the compiler refuses (live-value arguments, and/or
+    // conditions, too many variables) throws and runs in the browser as before.
+    let built = null;
+    try { built = blkCompile(program); } catch (e) { setNote(`running in browser — ${e.message}`); }
+    if (built && await runOnBoard(built)) { if (!stopped()) setRun(null); return; }
+
+    // interpreter walks the tree live: conditions read the latest telemetry packet,
+    // forever/until loops run until STOP (or their condition trips)
+    await blkRun(program, io);
     if (!stopped()) setRun(null);
   };
 
@@ -542,11 +624,14 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
         <button type="button" class="btn btn--ghost" onClick=${() => setEditorOpen("open")}>EDITOR</button>
       </div>
       ${run
-        ? html`<button type="button" class="btn blk-stop" onClick=${stop}>■ STOP — step ${run.n} · ${run.label.toUpperCase()}</button>`
+        ? html`<button type="button" class="btn blk-stop" onClick=${stop}>■ STOP — ${run.board ? "on board · " : ""}step ${run.n} · ${run.label.toUpperCase()}</button>`
         : html`<button type="button" class="btn btn--primary" disabled=${!enabled || !sel} onClick=${() => start()}>▶ RUN WORKFLOW</button>`}
       ${preview && !run && html`
         <details class="blk-prev">
           <summary>${preview.text.split("\n").filter(l => l.trim()).length} lines · ~${preview.ms} per pass${preview.warns.length ? ` · ${preview.warns.length} warning${preview.warns.length === 1 ? "" : "s"}` : ""}</summary>
+          <div class="blk-where">${typeof preview.board === "number"
+            ? `runs on the board — ${preview.board} instructions uploaded first`
+            : `runs in the browser — ${preview.board}`}</div>
           <pre>${preview.text}</pre>
           ${preview.warns.map(w => html`<div class="blk-warn" key=${w}><${Icon} n="warn" /> ${w}</div>`)}
         </details>`}
@@ -1682,7 +1767,7 @@ function SerialMonitor({ lines, onClear }) {
 }
 
 /* topbar — slim command strip: identity, link, connection, vitals, lang, console */
-function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, lang, onLang, onConsole, consoleOpen, clients, onDevices, granted, onSettings }) {
+function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, lanIp, lang, onLang, onConsole, consoleOpen, clients, onDevices, granted, onSettings }) {
   return html`
     <header class="topbar">
       <div class="brand">
@@ -1711,7 +1796,7 @@ function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, la
         <dl class="stat"><dt>${t("mast.uptime")}</dt><dd>${uptime}</dd></dl>
         ${lanUrl && html`
           <dl class="stat stat-lan"><dt>${t("mast.tablet")}</dt>
-            <dd><button type="button" class="lan-btn" title=${t("mast.tabletTitle")}
+            <dd><button type="button" class="lan-btn" title=${lanIp ? `${t("mast.tabletTitle")} — ${lanIp}` : t("mast.tabletTitle")}
               onClick=${() => navigator.clipboard?.writeText(lanUrl)}>${lanUrl.replace("http://", "")}</button></dd>
           </dl>`}
       </div>
@@ -1731,8 +1816,13 @@ function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, la
     </header>`;
 }
 
+/* the board's screensavers, in the order of the enum in main.ino — the index *is* the
+   wire value of "scr,<n>", and 0 is off. adding one is a case in each of startSaver/
+   stepSaver/drawSaver there, an entry here, and a "drawer.<key>" string in i18n.js. */
+const SAVERS = ["saverOff", "matrix", "saverBounce", "saverStars", "saverTetris"];
+
 /* console drawer — logs, findings, serial, motor bench. slides over the cockpit */
-function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, enabled, onTutorial, matrix, onMatrix }) {
+function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, enabled, onTutorial, saver, onSaver }) {
   if (!open) return null;
   const tabs = [["logs", t("zone.logs")], ["findings", t("zone.analysis")], ["serial", t("zone.serial")], ["motor", t("colo.motor")]];
   return html`
@@ -1743,9 +1833,12 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
             class=${"drawer-tab" + (tab === k ? " is-active" : "")} onClick=${() => onTab(k)}>${lbl}</button>`)}
         </div>
         <button type="button" class="serial-btn drawer-tour" onClick=${onTutorial}>${t("tour.restart")}</button>
-        ${/* the rain runs on the board itself — this is only its switch */""}
-        <button type="button" class="serial-btn" disabled=${!enabled} aria-pressed=${matrix}
-          onClick=${onMatrix} title=${t("drawer.matrixTitle")}>▚ ${t("drawer.matrix")}</button>
+        ${/* the screensavers run on the board itself — this is only the picker */""}
+        <select class="serial-btn drawer-saver" disabled=${!enabled} value=${saver}
+          onChange=${(e) => onSaver(Number(e.target.value))} title=${t("drawer.saverTitle")}
+          aria-label=${t("drawer.saver")}>
+          ${SAVERS.map((k, i) => html`<option key=${k} value=${i}>${i ? "▚ " : ""}${t("drawer." + k)}</option>`)}
+        </select>
         <button type="button" class="drawer-x" onClick=${onClose} aria-label="Close">✕</button>
       </div>
       <div class="drawer-body">
@@ -2243,7 +2336,8 @@ function App() {
   const [bridge, setBridge] = useState({ running: false, busy: false });
   const [toasts, setToasts] = useState([]);
   const [uptime, setUptime] = useState("00:00:00");
-  const [lanUrl, setLanUrl] = useState(null); // this laptop's lan address, for pointing the judges' tablet at it
+  const [lanUrl, setLanUrl] = useState(null); // blackout.local — what the judges' tablet types
+  const [lanIp, setLanIp] = useState(null);   // raw ip, tooltip fallback if mdns is blocked
   const [serialLines, setSerialLines] = useState([]);
   const [tour, setTour] = useState(false);     // false | "open" | "closing" — first-run walkthrough (once per browser)
   const [drawer, setDrawer] = useState(false); // false | "open" | "closing"
@@ -2467,7 +2561,9 @@ function App() {
     if (sk) sk.textContent = t("skip");
   }, [lang]);
 
-  useEffect(() => { fetch("/api/lan").then(r => r.json()).then(d => setLanUrl(d.url)).catch(() => {}); }, []);
+  // prefer the mdns name: it survives dhcp, the raw ip doesn't. `url` (the ip)
+  // stays as the button's tooltip so a network with multicast blocked isn't a dead end.
+  useEffect(() => { fetch("/api/lan").then(r => r.json()).then(d => { setLanUrl(d.host || d.url); setLanIp(d.url); }).catch(() => {}); }, []);
 
   // uptime
   useEffect(() => {
@@ -2517,6 +2613,10 @@ function App() {
       presentingRef.current = false;
       return;
     }
+    // an uploaded blk workflow talks back on this channel too: it parks on the steps
+    // only the pc can do (sage, tts, the headlamp) and waits for an answer. blkctl owns
+    // that conversation, so hand the line over and stay out of it.
+    if (line.startsWith("E:blk")) { window.dispatchEvent(new CustomEvent("blk:evt", { detail: line })); return; }
     fetch("/api/mega/sensor", { method: "POST", headers: { "Content-Type": "text/plain" }, body: line })
       .then((r) => { if (!r.ok) console.error("BLE forward failed:", r.status); })
       .catch((err) => console.error("BLE forward error:", err.message));
@@ -2543,7 +2643,8 @@ function App() {
     if (!cmd) { toast(t("toast.cmdNoChar"), "danger"); return false; } // linked but firmware lacks cmd char
     try {
       await bleWrite(() => cmd.writeValue(new TextEncoder().encode(word)));
-      addLog(t("log.cmdSent", { cmd: word }), "system");
+      // a blk upload is one write per instruction — logging each would bury the console
+      if (!word.startsWith("blk,i,")) addLog(t("log.cmdSent", { cmd: word }), "system");
       return true;
     } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); return false; }
   }, [addLog, toast, bleWrite]);
@@ -2551,16 +2652,16 @@ function App() {
   const sendCmdRef = useRef(sendCmd);
   sendCmdRef.current = sendCmd;
 
-  /* matrix rain on the robot's panel. the board owns the animation (it has to — the link
-     can't carry frames), so this is only the on/off switch. state lives up here because
-     the console drawer unmounts when it's closed and the rain doesn't stop with it. */
-  const [matrix, setMatrix] = useState(false);
-  const toggleMatrix = useCallback(async () => {
-    const on = !matrix;
-    if (await sendCmd(on ? "mtx,on" : "mtx,off")) setMatrix(on);
-  }, [matrix, sendCmd]);
-  // firmware drops the rain when the link does, so the button can't stay lit through it.
-  useEffect(() => { if (!bridge.running) setMatrix(false); }, [bridge.running]);
+  /* screensavers on the robot's panel. the board owns the animation (it has to — the
+     link can't carry frames), so this is only the picker: the value *is* the wire value
+     ("scr,<n>"), so SAVERS must stay in the order of the enum in main.ino. state lives up
+     here because the console drawer unmounts when it's closed and the panel doesn't. */
+  const [saver, setSaver] = useState(0);
+  const pickSaver = useCallback(async (n) => {
+    if (await sendCmd("scr," + n)) setSaver(n);
+  }, [sendCmd]);
+  // firmware drops the screensaver when the link does, so the picker can't stay set through it.
+  useEffect(() => { if (!bridge.running) setSaver(0); }, [bridge.running]);
 
   const loadBridge = useCallback(async () => {
     try { const r = await fetch("/api/bridge"); const d = await r.json();
@@ -3011,7 +3112,7 @@ function App() {
           <//>`}
         ${window.blackout?.platform === "darwin" && html`<div class="mac-titlebar"></div>`}
         <${Topbar} connected=${connected} bridge=${bridge} onBridge=${toggleBridge}
-          ping=${ping} packets=${packets} uptime=${uptime} lanUrl=${lanUrl}
+          ping=${ping} packets=${packets} uptime=${uptime} lanUrl=${lanUrl} lanIp=${lanIp}
           lang=${lang} onLang=${changeLang} onConsole=${toggleDrawer} consoleOpen=${drawer === "open"}
           clients=${clients} onDevices=${() => setDevicesOpen("open")} granted=${granted}
           onSettings=${() => setSettingsOpen("open")} />
@@ -3043,7 +3144,7 @@ function App() {
         <${Drawer} open=${drawer} tab=${drawerTab} onTab=${setDrawerTab} onClose=${closeDrawer}
           logs=${logs} serialLines=${serialLines} onClearSerial=${clearSerial}
           chat=${activeChat} onCmd=${sendCmd} enabled=${canDrive} onTutorial=${restartTour}
-          matrix=${matrix} onMatrix=${toggleMatrix} />
+          saver=${saver} onSaver=${pickSaver} />
       </div>
 
       <${Toasts} items=${toasts} />

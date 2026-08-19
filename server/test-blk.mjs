@@ -1,6 +1,8 @@
 // self-check for the blk parser + interpreter: node test-blk.mjs
 import assert from "node:assert";
-import { parse, serialize, evalCond, evalExpr, parseExpr, parseCond, condStr, exprStr, interp, lint, estimate, run } from "./public/js/blk.mjs";
+import fs from "node:fs";
+import { parse, serialize, evalCond, evalExpr, parseExpr, parseCond, condStr, exprStr, interp, lint, estimate, run,
+         compile, insLine, BOPS, BLK_MAX, SENSORS, CMPS, VERBS, clampArg, Unsupported } from "./public/js/blk.mjs";
 
 /* parse + roundtrip */
 const src = `# demo
@@ -197,5 +199,113 @@ const log3 = await exec("forward until dist < 30", { sensors: () => ({ dist: (dd
 assert.ok(log3.filter(l => l.startsWith("drv")).length >= 2 && log3.at(-1) === "halt");
 // wait until with a timeout gives up instead of hanging
 assert.deepEqual(await exec("wait until dist < 1 timeout 50\nsay done", { sensors: { dist: 99 } }), ["say:done"]);
+
+/* ───────── on-board compiler + vm ─────────
+   compile() hands the giga a flat instruction list it plays by itself. simVm below
+   mirrors blkEnter()/tickBlk() in giga-r1/main/main.ino instruction for instruction —
+   if the two ever drift, an "until" that walks past its jump target is a rover that
+   doesn't stop, so the semantics are checked here rather than on the field.
+   time is faked as 100ms ticks (the board's sensor cadence). */
+function simVm(text, { sensors = {}, ai = {}, maxTicks = 4000 } = {}) {
+  const { program, errors } = parse(text);
+  assert.deepEqual(errors, [], "simVm source should parse: " + errors[0]);
+  const { code, nodes, slots } = compile(program);
+  const log = [], vars = new Array(8).fill(0);
+  let pc = 0, pwm = 140, ticks = 0, guard = 0; // guard: blkenter() yields after 64 straight instructions
+  const pkt = () => (typeof sensors === "function" ? sensors() : sensors);
+  const read = (lhs) => lhs >= 100 ? vars[(lhs - 100) % 8] : lhs === 50 ? pwm : (+pkt()[SENSORS[lhs]] || 0);
+  const test = (i) => {
+    const l = read(i.lhs), r = i.rhs;
+    return [l < r, l > r, l <= r, l >= r, l === r, l !== r][i.cmp];
+  };
+  // one poll of an "until" instruction = one 100ms tick, the rate distcm refreshes at
+  const untilTicks = (i) => (i.c ? Math.ceil(i.c / 100) : 300);
+  const ctx = (n) => ({ st: { vars: Object.fromEntries(Object.entries(slots).map(([k, v]) => [k, vars[v]])) }, sensors: pkt });
+  while (pc >= 0 && pc < code.length && ticks++ < maxTicks) {
+    const i = code[pc];
+    switch (i.op) {
+      case BOPS.end: pc = -1; break;
+      case BOPS.stop: log.push("halt"); pc = -1; break;
+      case BOPS.move: log.push(`drv,${VERBS[["forward", "back", "left", "right"][i.a]]},${pwm},${i.c}`); pc++; break;
+      case BOPS.moveu: case BOPS.waitu: {
+        const cap = untilTicks(i);
+        for (let k = 0; k < cap && !test(i); k++) {
+          if (i.op === BOPS.moveu) log.push(`drv,${VERBS[["forward", "back", "left", "right"][i.a]]},${pwm},until`);
+          ticks++;
+        }
+        pc++;
+        break;
+      }
+      case BOPS.wait: pc++; break;
+      case BOPS.speed: pwm = i.b; pc++; break;
+      case BOPS.set: vars[i.a % 8] = i.rhs; pc++; break;
+      case BOPS.add: vars[i.a % 8] += i.rhs; pc++; break;
+      case BOPS.jmp: pc = i.c; break;
+      case BOPS.jmpf: pc = test(i) ? pc + 1 : i.c; break;
+      case BOPS.evt: {
+        const n = nodes[i.b], c = ctx();
+        if (n.op === "led") log.push("led:" + clampArg("led", evalExpr(n.arg, c) || 0));
+        else log.push(n.op + ":" + interp(n.text, c));
+        // the browser answers every evt the board parks on (kind 1 and 2) with "blk,res,<v>",
+        // but only ask/find asked for a value — kind 1's 0 must not land in a variable slot
+        const slot = i.a === 2 ? i.c % 8 : 0xFF;
+        if (i.a >= 1 && slot < 8) vars[slot] = (n.op === "ask" ? ai.ask : ai.find) ? 1 : 0;
+        pc++;
+        break;
+      }
+      default: throw new Error("simVm: unknown op " + i.op);
+    }
+    guard = [BOPS.move, BOPS.moveu, BOPS.wait, BOPS.waitu, BOPS.evt].includes(i.op) ? 0 : guard + 1;
+    if (guard >= 64) { guard = 0; ticks++; } // yields to loop(), resumes at pc — no instruction skipped
+  }
+  return log;
+}
+
+// the board must do what the browser interpreter does — same source, same trace
+for (const [src, opts] of [
+  ["speed 90\nrepeat 2\n  forward 100\nend", {}],
+  ["if dist < 20\n  back 100\nelse\n  forward 100\nend", { sensors: { dist: 5 } }],
+  ["if dist < 20\n  back 100\nelse\n  forward 100\nend", { sensors: { dist: 50 } }],
+  ["set n 0\nrepeat 3\n  change n 1\n  if n = 2\n    continue\n  end\n  say {n}\nend", {}],
+  ["set n 0\nrepeat while n < 3\n  change n 1\nend\nsay {n}", {}],
+  ["repeat 5\n  forward 100\n  break\nend", {}],
+  ["def turn\n  right 400\nend\ncall turn\ncall turn", {}],
+  ["forward 100\nstop\nforward 100", {}],
+  ["led 999\nsay hi\n# nope\n~say skipped", {}],
+  ["ask is it clear\nif answer\n  forward 100\nend", { ai: { ask: true } }],
+  ["find bison\nif not found\n  say nothing\nend", { ai: { find: false } }],
+  ["set n 5\nanalyze the wall\nsay {n}", {}],                    // an evt answer must not clobber slot 0
+  ["set n 0\nrepeat 60\n  change n 1\nend\nsay {n}", {}],        // long enough to trip blkenter()'s guard
+]) assert.deepEqual(simVm(src, opts), await exec(src, opts), "board vs browser: " + src.split("\n")[0]);
+
+// "until" polls on board until the condition trips, then moves on
+let sd = 100;
+const su = simVm("forward until dist < 30\nsay clear", { sensors: () => ({ dist: (sd -= 25) }) });
+assert.deepEqual(su.at(-1), "say:clear");
+assert.equal(su.filter(l => l.startsWith("drv")).length, 2); // 100 -> 75 -> 50, tripped at 25
+// and gives up on its timeout rather than driving forever
+assert.equal(simVm("forward until dist < 1 timeout 500", { sensors: { dist: 99 } }).length, 5);
+// a condition already true never moves at all
+assert.deepEqual(simVm("forward until dist < 30", { sensors: { dist: 5 } }), []);
+
+// every jump lands inside the program, for the real workflows as well as these
+for (const src of ["forever\n  forward 100\n  if dist < 5\n    break\n  end\nend",
+                   fs.readFileSync(new URL("./workflows/BLK Full Test.blk", import.meta.url), "utf8")]) {
+  const { code } = compile(parse(src).program);
+  assert.ok(code.length <= BLK_MAX);
+  assert.equal(code.at(-1).op, BOPS.end);
+  for (const i of code) if (i.op === BOPS.jmp || i.op === BOPS.jmpf) assert.ok(i.c >= 0 && i.c < code.length, "jump target out of range");
+  for (let n = 0; n < code.length; n++) assert.ok(insLine(n, code[n]).length <= 64, "upload line must fit cmdchar");
+}
+
+// what the board can't express is refused by name, so the browser runs it instead
+for (const [src, bit] of [
+  ["forward n * 100", "live value"],
+  ["if dist < 20 and temp > 5\nend", "and/or"],
+  ["if dist < temp\nend", "two live values"],
+  ["wait until time > 500\nend", "browser"],
+  ["set a 1\nset b 1\nset c 1\nset d 1\nset e 1\nset f 1\nset g 1\nset h 1\nset i 1", "variables"],
+  ["call nope", "not defined"],
+]) assert.throws(() => compile(parse(src).program), (e) => e instanceof Unsupported && e.message.includes(bit), src);
 
 console.log("blk ok");
