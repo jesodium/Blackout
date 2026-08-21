@@ -1,6 +1,7 @@
 // mirror mode + the host's device roster. the dashboard served to the judges' tablet
 // (any non-loopback hostname) is telemetry only — no link controls, no updater, no drive —
-// until the host flips it to full control from CONNECTED DEVICES.
+// until the host flips it to full control from CONNECTED DEVICES. the same picker also
+// has a judge view: still telemetry-only, but a bare presentation layout.
 // same CDP pattern as test-layout.mjs:
 //   PORT=3111 node server.js  +  chrome --headless=new --remote-debugging-port=9333
 import assert from "node:assert";
@@ -40,6 +41,8 @@ async function open(origin, query = "") {
       control: !!document.querySelector('.top-mirror.is-go'),
       devices: !!document.querySelector('.topbar .console-btn'),
       drive:   !!document.querySelector('.zone.drive'),
+      judge:   !!document.querySelector('.judge'),
+      cockpit: !!document.querySelector('.cockpit'),
       pad:     [...document.querySelectorAll('.pad-btn')].every(b => b.disabled),
       chips:   [...document.querySelectorAll('.routine-row .chip')].every(b => b.disabled),
     })`),
@@ -69,18 +72,29 @@ assert(!s.drive, "tablet sees the drive zone before being granted");
 // carry a switch — wait for the roster to settle on exactly one, or a socket still
 // closing from a reload would leave two rows for the same tablet and we'd click the ghost.
 const roster = () => host.ev(`[...document.querySelectorAll('.device-row')].map(r => r.textContent).join(' | ')`);
-const flip = () => host.ev(`document.querySelector('.device-row .serial-btn').click(), true`);
-// granting goes through a confirm that arms after 3s; revoking is immediate.
+const setMode = (m) => host.ev(`(() => {
+  const s = document.querySelector('.device-row select');
+  if (!s) return false;
+  // react patches the node's own value setter to track it — a plain assignment goes
+  // through that tracker and react then swallows onChange. the prototype setter gets past it.
+  Object.getOwnPropertyDescriptor(Object.getPrototypeOf(s), 'value').set.call(s, ${JSON.stringify(m)});
+  s.dispatchEvent(new Event('change', { bubbles: true }));
+  return true;
+})()`);
+// full control goes through a confirm that arms after 3s; every other mode applies at once.
 const confirmGrant = () => host.ev(`(() => { const b = document.querySelector('.warn-go:not([disabled])'); if (!b) return false; b.click(); return true; })()`);
 await host.click(".topbar .console-btn");
-for (let i = 0; i < 20; i++) {
-  if (await host.ev(`document.querySelectorAll('.device-row .serial-btn').length`) === 1) break;
-  await sleep(300);
-}
-assert(await host.ev(`document.querySelectorAll('.device-row .serial-btn').length`) === 1,
+const settle = async () => {
+  for (let i = 0; i < 20; i++) {
+    if (await host.ev(`document.querySelectorAll('.device-row select').length`) === 1) return;
+    await sleep(300);
+  }
+};
+await settle();
+assert(await host.ev(`document.querySelectorAll('.device-row select').length`) === 1,
   `roster should show exactly one switchable device — ${await roster()}`);
 
-await flip();
+await setMode("full");
 await sleep(600);
 assert(!(await tab.state()).control, "the grant confirm was skipped — one click handed over the robot");
 await sleep(3000);
@@ -95,22 +109,27 @@ assert(s.pad && s.chips, "granted tablet drives with no ble link of its own");
 await tab.ev("location.reload()");
 await sleep(3000);
 assert((await tab.state()).control, "the tablet lost its grant just by reconnecting");
-// wait for the dropped socket to fall off the roster, or flip() clicks the ghost row.
-for (let i = 0; i < 20; i++) {
-  if (await host.ev(`document.querySelectorAll('.device-row .serial-btn').length`) === 1) break;
-  await sleep(300);
-}
+// wait for the dropped socket to fall off the roster, or setMode() drives the ghost row.
+await settle();
 
-await flip();                                  // revoke
-await sleep(600);
+// judge view: still telemetry-only, but the cockpit is replaced by the flat layout.
+await setMode("judge");
+await sleep(800);
+s = await tab.state();
+assert(s.judge && !s.cockpit, `judge view never replaced the cockpit — ${await roster()}`);
+assert(!s.control && !s.drive, "judge view kept control — it is a layout, not a permission");
+
+await setMode("mirror");                       // revoke
+await sleep(800);
 s = await tab.state();
 assert(!s.control && !s.drive, `control was revoked but the tablet kept driving — ${await roster()}`);
+assert(!s.judge && s.cockpit, "back to mirror but the judge layout stayed");
 
 const unlocked = await open(lan, "?operator"); pages.push(unlocked);
 const u = await unlocked.state();
 assert(u.conn && !u.mirror, "?operator did not unlock a second machine");
 
-console.log("mirror ok — tablet read-only, host grants and revokes live, ?operator unlocks");
+console.log("mirror ok — tablet read-only, host sets mirror/judge/full live, ?operator unlocks");
 } finally {
   for (const p of pages) await p.close(); // a live page keeps polluting the next run's roster
 }

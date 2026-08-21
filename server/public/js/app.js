@@ -35,11 +35,14 @@ const camUrl = (host) => `http://${host}:81/stream`;
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
 
 // min/max define the meter's travel. st() returns [labelkey, kind] — label is i18n key resolved at render.
+// zeroOk: this sensor can legitimately read 0. everything else sends 0 only because
+// nothing is wired to that pin yet, and a 0 rendered as "normal/good" is a green lamp
+// for hardware that isn't on the robot — see reads() below.
 const SENSORS = [
   { key: "temp",  unit: "°C",  d: 1, min: 0, max: 60,   st: v => v > 45 ? ["st.critical", "abort"] : v > 35 ? ["st.high", "warn"] : ["st.normal", "go"] },
   { key: "humid", unit: "%",   d: 1, min: 0, max: 100,  st: v => v > 75 ? ["st.humid", "warn"] : v < 20 ? ["st.dry", "warn"] : ["st.good", "go"] },
   // distance is navigation cue, never hazard: caution when close to wall (<10cm), clear otherwise
-  { key: "dist",  unit: "cm",  d: 0, min: 0, max: 200,  invert: true, st: v => v < 10 ? ["st.tooClose", "warn"] : ["st.clear", "go"] },
+  { key: "dist",  unit: "cm",  d: 0, min: 0, max: 200,  invert: true, zeroOk: true, st: v => v < 10 ? ["st.tooClose", "warn"] : ["st.clear", "go"] },
   { key: "smoke", unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 600 ? ["st.hazard", "abort"] : v > 300 ? ["st.warning", "warn"] : ["st.normal", "go"] },
   { key: "airq",  unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 800 ? ["st.poor", "abort"] : v > 450 ? ["st.moderate", "warn"] : ["st.good", "go"] },
   // elevation, derived server-side from the bme280's pressure — metres above/below
@@ -49,8 +52,14 @@ const SENSORS = [
   // verdict and elevation must never sway it.
   // cm: tap the tile to read centimetres instead. the server rounds alt to 0.1 m,
   // so cm moves in 10s — it's for close-up steps/ramps, not extra precision.
-  { key: "alt",   unit: "m",   d: 0, min: -25, max: 25, cm: true, st: () => ["st.normal", "go"] },
+  { key: "alt",   unit: "m",   d: 0, min: -25, max: 25, cm: true, zeroOk: true, st: () => ["st.normal", "go"] },
 ];
+
+// a reading only counts if it's a number and not a bare 0 from an unwired pin.
+// dist and alt are the exceptions (nothing in range / level with the start), so they
+// carry zeroOk. everything reading a sensor walks through here: the tile, the trend
+// line, and the go/no-go verdict — otherwise a sensor that doesn't exist votes "safe".
+const reads = (s, v) => v != null && !isNaN(v) && (v !== 0 || s.zeroOk);
 
 // voice/chat command triggers: saying one of these fires ble directly instead of going to llm
 // routines are fixed on-board scripts and drive is live joystick. accents stripped, dots/commas survive.
@@ -235,12 +244,13 @@ function Trends({ packet }) {
       ctx.fillText(t("trend.awaiting"), 0, 0); ctx.restore(); return;
     }
     TRENDS.forEach(s => {
-      const vals = H.map(d => d[s.key]).filter(v => v != null && !isNaN(v));
+      const spec = SENSORS.find(x => x.key === s.key) || {};
+      const vals = H.map(d => d[s.key]).filter(v => reads(spec, v));
       if (vals.length < 2) return;
       const min = Math.min(...vals), max = Math.max(...vals), rng = (max - min) || 1;
       ctx.beginPath(); let n = 0;
       H.forEach((d, i) => {
-        const v = d[s.key]; if (v == null || isNaN(v)) return;
+        const v = d[s.key]; if (!reads(spec, v)) return;
         const x = (i / (H.length - 1)) * w, y = h - ((v - min) / rng) * (h - 16) - 8;
         n++ ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
       });
@@ -255,15 +265,17 @@ function Trends({ packet }) {
 function Reading({ s, value }) {
   const [inCm, setInCm] = useState(false);
   const cm = s.cm && inCm; // unit swap only, the meter keeps its own scale
-  const has = value != null && !isNaN(value);
+  const has = reads(s, value);
   const [labelKey, kind] = has ? s.st(value) : [null, ""];
-  const label = has ? t(labelKey) : "—";
+  // no reading at all vs. a sensor that hasn't reported yet — both get "—", but a
+  // pin sending 0 forever is the one worth naming out loud.
+  const label = has ? t(labelKey) : value === 0 ? t("st.noRead") : "—";
   const name = t("sensor." + s.key);
   const raw = has ? Math.max(0, Math.min(100, ((value - s.min) / (s.max - s.min)) * 100)) : 0;
   const pct = s.invert ? 100 - raw : raw;
   const toggle = s.cm ? () => setInCm(v => !v) : undefined;
   return html`
-    <div class="reading" onClick=${toggle}
+    <div class=${"reading" + (has ? "" : " is-dead")} onClick=${toggle}
       role=${s.cm ? "button" : undefined} tabIndex=${s.cm ? 0 : undefined}
       onKeyDown=${s.cm ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } } : undefined}>
       <div class="reading-head">
@@ -271,7 +283,7 @@ function Reading({ s, value }) {
         <span class=${"pill " + (kind ? "is-" + kind : "")}>${label}</span>
       </div>
       <div class="reading-body">
-        <span class="reading-num">${fmt(cm ? value * 100 : value, cm ? 0 : s.d)}</span>
+        <span class="reading-num">${has ? fmt(cm ? value * 100 : value, cm ? 0 : s.d) : "--"}</span>
         <span class="reading-unit">${cm ? "cm" : s.unit}</span>
       </div>
       <div class="meter" role="meter" aria-label=${name}
@@ -363,6 +375,9 @@ function ThreeDeeBox({ packet, onLog }) {
 // bench tool — labels stay english, not worth 6-language i18n keys.
 // every button sends "drv,<verb>,<pwm>,<ms>": firmware auto-halts when <ms> runs out, so dropped ble link never leaves wheels spinning.
 // 360s are timed spins (no IMU feedback) — "360 ms" knob is calibration. knobs persist in localStorage.
+// the A/B-only row drives one side at a time via "drv,tank" — the four verbs are all the
+// same two lines of firmware, so "back half-works but fwd is dead" is never a code fault.
+// these four say which motor and which direction is actually dead: enable, in-pin, or wire.
 function MotorDebug({ onCmd, enabled }) {
   const knob = (key, def) => {
     const [v, setV] = useState(+localStorage.getItem(key) || def);
@@ -391,6 +406,10 @@ function MotorDebug({ onCmd, enabled }) {
           ${btn("↻ 360 CW",   () => drv("right", spinMs))}
           ${btn("▶▶ Fwd 3s",  () => drv("fwd", 3000))}
           ${btn("◀◀ Back 3s", () => drv("back", 3000))}
+          ${btn("A ▲ only", () => onCmd(`drv,tank,${pwm},0,${ms}`))}
+          ${btn("A ▼ only", () => onCmd(`drv,tank,${-pwm},0,${ms}`))}
+          ${btn("B ▲ only", () => onCmd(`drv,tank,0,${pwm},${ms}`))}
+          ${btn("B ▼ only", () => onCmd(`drv,tank,0,${-pwm},${ms}`))}
           <button type="button" class="btn dbg-stop" onClick=${() => onCmd("stop")}>■ STOP</button>
         </div>
         <div class="dbg-knobs">
@@ -1256,6 +1275,38 @@ function SensorStrip({ packet }) {
     <//>`;
 }
 
+/* judge view — a mirror the host switched to presentation. same telemetry, no controls
+   at all, big enough to read across a table. deliberately flat: verdict, camera, numbers.
+   it is a *layout*, not a permission level — the server still has it as telemetry-only. */
+function JudgeView({ packet, connected, ai }) {
+  const v = assess(packet);
+  return html`
+    <main class="judge" id="sensors">
+      <div class="judge-head">
+        <span class=${"judge-verdict is-" + v.kind}>${v.label}</span>
+        <span class="judge-cause">${v.cause}</span>
+        <span class=${"pill " + (connected ? "is-go" : "is-abort")}>
+          ${connected ? t("mast.linkLive") : t("mast.noSignal")}</span>
+      </div>
+      <div class="judge-body">
+        <div class="judge-cam"><${CamView} /></div>
+        <div class="judge-grid">
+          ${SENSORS.map(s => {
+            const val = packet?.[s.key], on = reads(s, val);
+            return html`
+              <div key=${s.key} class=${"judge-cell" + (on ? "" : " is-dead")}>
+                <span class="judge-key">${t("sensor." + s.key)}</span>
+                <span class="judge-val">${on ? fmt(val, s.d) : t("st.noRead")}
+                  ${on && html`<i>${s.unit}</i>`}</span>
+              </div>`;
+          })}
+        </div>
+      </div>
+      ${/* only what sage actually said — the idle placeholder contradicts a live verdict */""}
+      ${ai.text && ai.text !== t("ai.awaiting") && html`<p class="judge-say">${ai.text}</p>`}
+    </main>`;
+}
+
 /* analysis / mission memory (drawer tab) */
 function Memory({ chat }) {
   const findings = (chat?.findings || []).slice().reverse();
@@ -1296,7 +1347,7 @@ function worstSensor(packet) {
   let rank = -1;
   for (const s of SENSORS) {
     const v = packet[s.key];
-    if (v == null || isNaN(v)) continue;
+    if (!reads(s, v)) continue;
     const k = s.st(v)[1];
     rank = Math.max(rank, k === "abort" ? 2 : k === "warn" ? 1 : 0);
   }
@@ -1311,7 +1362,7 @@ function assess(packet) {
   if (rank > 0) {
     for (const s of SENSORS) {
       const v = packet[s.key];
-      if (v == null || isNaN(v)) continue;
+      if (!reads(s, v)) continue;
       const [lblKey, k] = s.st(v);
       if ((k === "abort" ? 2 : k === "warn" ? 1 : 0) === rank) { cause = `${t("sensor." + s.key)} · ${t(lblKey)}`; break; }
     }
@@ -1767,7 +1818,7 @@ function SerialMonitor({ lines, onClear }) {
 }
 
 /* topbar — slim command strip: identity, link, connection, vitals, lang, console */
-function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, lanIp, lang, onLang, onConsole, consoleOpen, clients, onDevices, granted, onSettings }) {
+function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, lanIp, lang, onLang, onConsole, consoleOpen, clients, onDevices, granted, cloud, onSettings }) {
   return html`
     <header class="topbar">
       <div class="brand">
@@ -1790,6 +1841,11 @@ function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, la
             disabled=${bridge.busy} onClick=${() => onBridge("reconnect")}>⟳</button>
         </div>
       </div>`}
+      ${/* the venue has no internet: these two die quietly, so say so out loud */""}
+      ${cloud && html`<span class="top-cloud">
+        <span class=${"pill " + (cloud.sage ? "is-go" : "is-abort")} title=${t("cloud.title")}>${t("cloud.sage")}</span>
+        <span class=${"pill " + (cloud.tts ? "is-go" : "is-abort")} title=${t("cloud.title")}>${t("cloud.tts")}</span>
+      </span>`}
       <div class="top-stats">
         <dl class="stat"><dt>${t("mast.ping")}</dt><dd>${ping}</dd></dl>
         <dl class="stat"><dt>${t("mast.packets")}</dt><dd>${packets}</dd></dl>
@@ -1961,9 +2017,13 @@ function Toasts({ items }) {
   return html`<div class="toasts">${items.map(t => html`<div key=${t.id} class=${"toast k-" + t.kind + (t.leaving ? " is-leaving" : "")}>${t.msg}</div>`)}</div>`;
 }
 
+/* what the host can set a device to. "mirror" and "judge" are both telemetry-only —
+   they differ in layout, not in what they can do — so only "full" needs the confirm. */
+const DEV_MODES = [["mirror", "devices.view"], ["judge", "devices.judge"], ["full", "devices.full"]];
+
 /* connected devices — the host's roster of every dashboard on the lan, with the
-   control switch for each. the server decides who's host (loopback) and enforces it. */
-function DevicesModal({ open, clients, selfId, onGrant, onClose }) {
+   mode picker for each. the server decides who's host (loopback) and enforces it. */
+function DevicesModal({ open, clients, selfId, onMode, onClose }) {
   // granting is one-way dangerous, so it goes through a confirm with a 3s arm timer.
   // revoking never asks. { c, closing } — `closing` keeps it mounted for the exit animation.
   const [ask, setAsk] = useState(null);
@@ -1993,10 +2053,17 @@ function DevicesModal({ open, clients, selfId, onGrant, onClose }) {
               </span>
               ${c.host
                 ? html`<span class="pill is-go">${t("devices.host")}</span>`
-                : html`<button type="button" class=${"serial-btn" + (c.granted ? " is-on" : "")}
-                    onClick=${() => (c.granted ? onGrant(c.id, false) : setAsk({ c }))}>
-                    ${c.granted ? t("devices.full") : t("devices.view")}
-                  </button>`}
+                : html`<select class=${"serial-btn device-mode" + (c.granted ? " is-on" : "")}
+                    value=${c.mode || "mirror"} aria-label=${t("devices.modeLabel")}
+                    onChange=${(e) => {
+                      const m = e.target.value;
+                      // full control is the one-way dangerous pick: bounce the select back
+                      // and let the confirm apply it, so a stray tap can't hand over the robot.
+                      if (m === "full") { e.target.value = c.mode || "mirror"; setAsk({ c }); }
+                      else onMode(c.id, m);
+                    }}>
+                    ${DEV_MODES.map(([v, k]) => html`<option key=${v} value=${v}>${t(k)}</option>`)}
+                  </select>`}
             </li>`)}
         </ul>
       </div>
@@ -2009,7 +2076,7 @@ function DevicesModal({ open, clients, selfId, onGrant, onClose }) {
             <div class="warn-actions">
               <button type="button" class="serial-btn" onClick=${closeAsk}>${t("devices.confirmCancel")}</button>
               <button type="button" class="serial-btn warn-go" disabled=${count > 0}
-                onClick=${() => { onGrant(ask.c.id, true); closeAsk(); }}>
+                onClick=${() => { onMode(ask.c.id, "full"); closeAsk(); }}>
                 ${t("devices.confirmGo")}<span class=${"warn-count" + (count > 0 ? "" : " is-done")}> (${count || 1})</span>
               </button>
             </div>
@@ -2366,6 +2433,10 @@ function App() {
   const [onboardClosing, setOnboardClosing] = useState(false); // true while the exit transition plays
   // a mirror drives only while the host has granted it; the host is always granted.
   const [granted, setGranted] = useState(!VIEWER);
+  // "judge" is the same telemetry-only client in a presentation layout, set by the host
+  // from the devices roster. purely cosmetic — drive stays gated on `granted` either way.
+  const [judge, setJudge] = useState(false);
+  const [cloud, setCloud] = useState(null); // { sage, tts } — null until the first probe
   const grantedRef = useRef(!VIEWER);
   grantedRef.current = granted;
   const canDrive = granted && !!bridge.running;
@@ -2475,6 +2546,7 @@ function App() {
         return list || [];
       });
       const me = (list || []).find(c => c.id === socket.id);
+      if (me) setJudge(me.mode === "judge");
       if (me) setGranted(g => {
         if (me.granted !== g) addLog(t(me.granted ? "log.controlGranted" : "log.controlRevoked"), me.granted ? "system" : "warn");
         return me.granted;
@@ -2651,6 +2723,35 @@ function App() {
   // the socket effect above relays commands through this — sendCmd is defined below it, so it can't reference it directly
   const sendCmdRef = useRef(sendCmd);
   sendCmdRef.current = sendCmd;
+
+  /* panic stop, anywhere. Drive has its own space handler, but it only listens while the
+     drive zone is armed — a rover running a routine or a blk program with the console open
+     had no key at all. stop is never gated (not by mirror mode, not by the server), so this
+     is bound for every client. buttons and links keep space for activation, and typing keeps
+     it for spaces. */
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== " " || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(el.tagName) ||
+        el.getAttribute?.("role") === "button")) return;
+      e.preventDefault();
+      sendCmdRef.current("stop");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  /* cloud reachability for the topbar pills. the venue has no internet and both Sage and
+     Deepgram fail silently when it's gone — better to know before the demo than during it. */
+  useEffect(() => {
+    let live = true;
+    const probe = () => fetch("/api/cloud").then(r => r.json())
+      .then(d => { if (live) setCloud(d); }).catch(() => { if (live) setCloud({ sage: false, tts: false }); });
+    probe();
+    const id = setInterval(probe, 30000);
+    return () => { live = false; clearInterval(id); };
+  }, []);
 
   /* screensavers on the robot's panel. the board owns the animation (it has to — the
      link can't carry frames), so this is only the picker: the value *is* the wire value
@@ -3115,10 +3216,11 @@ function App() {
           ping=${ping} packets=${packets} uptime=${uptime} lanUrl=${lanUrl} lanIp=${lanIp}
           lang=${lang} onLang=${changeLang} onConsole=${toggleDrawer} consoleOpen=${drawer === "open"}
           clients=${clients} onDevices=${() => setDevicesOpen("open")} granted=${granted}
-          onSettings=${() => setSettingsOpen("open")} />
+          cloud=${cloud} onSettings=${() => setSettingsOpen("open")} />
 
         ${!VIEWER && flashBoards.status !== "none" && html`<${UpdateBar} boards=${flashBoards} onUpdate=${openUpdate} />`}
 
+        ${judge ? html`<${JudgeView} packet=${view} connected=${connected} ai=${ai} />` : html`
         <main class="cockpit" id="sensors">
           <div class="col-main">
             <div class="stage-row">
@@ -3139,12 +3241,12 @@ function App() {
               <${Drive} onCmd=${sendCmd} onAnalyze=${analyze} enabled=${canDrive} leaving=${!granted}
                 busyRef=${analyzingRef} packetRef=${packetRef} />`}
           </aside>
-        </main>
+        </main>`}
 
-        <${Drawer} open=${drawer} tab=${drawerTab} onTab=${setDrawerTab} onClose=${closeDrawer}
+        ${!judge && html`<${Drawer} open=${drawer} tab=${drawerTab} onTab=${setDrawerTab} onClose=${closeDrawer}
           logs=${logs} serialLines=${serialLines} onClearSerial=${clearSerial}
           chat=${activeChat} onCmd=${sendCmd} enabled=${canDrive} onTutorial=${restartTour}
-          saver=${saver} onSaver=${pickSaver} />
+          saver=${saver} onSaver=${pickSaver} />`}
       </div>
 
       <${Toasts} items=${toasts} />
@@ -3156,7 +3258,7 @@ function App() {
 
       ${devicesOpen && createPortal(html`
         <${DevicesModal} open=${devicesOpen} clients=${clients} selfId=${socketRef.current?.id}
-          onGrant=${(id, on) => socketRef.current?.emit("grant", { id, on })}
+          onMode=${(id, mode) => socketRef.current?.emit("grant", { id, mode })}
           onClose=${closeDevices} />`, document.body)}
 
       ${settingsOpen && createPortal(html`

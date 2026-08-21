@@ -294,6 +294,24 @@ app.get("/api/lan", (req, res) => {
   res.json({ url: ip ? `http://${ip}:${PORT}` : null, host: `http://blackout.local:${PORT}` });
 });
 
+// cloud reachability for the dashboard's pills. the venue has no internet and both of
+// these fail silently without it. a 401/404 still means the host answered — only a thrown
+// request counts as unreachable. cached, because every dashboard on the lan polls it.
+// the api roots, not real endpoints: the question is only whether the host answers at
+// all. an authenticated path hangs for an unauthenticated probe and reads as "offline".
+const CLOUD_HOSTS = { sage: "https://api.cerebras.ai/", tts: "https://api.deepgram.com/" };
+let cloudSeen = { at: 0, state: null };
+app.get("/api/cloud", async (_req, res) => {
+  if (cloudSeen.state && Date.now() - cloudSeen.at < 25000) return res.json(cloudSeen.state);
+  const ping = async (url) => {
+    try { await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(4000) }); return true; }
+    catch { return false; }
+  };
+  const [sage, tts] = await Promise.all([ping(CLOUD_HOSTS.sage), ping(CLOUD_HOSTS.tts)]);
+  cloudSeen = { at: Date.now(), state: { sage, tts } };
+  res.json(cloudSeen.state);
+});
+
 app.post("/api/bridge/start", (req, res) => {
   disconnectSerial(); // close usb when bt takes over
   bleActive = true;
@@ -960,12 +978,14 @@ else console.log("USB serial auto-connect off — select a port in the dashboard
 
 // connected dashboards. the host is whoever loaded this over loopback — the operator's
 // own laptop. everything else is a tablet: telemetry only until the host grants it drive.
-const clients = new Map(); // socket.id -> { ip, kind, host, granted }
+const clients = new Map(); // socket.id -> { ip, kind, host, mode, granted }
 // grants are held by ip, not socket.id: a tablet that drops wifi for two seconds
 // reconnects as a new socket, and re-granting it blind mid-run is worse than
 // remembering. IMPORTANT NOTE: ip is the identity — dhcp handing that lease to
 // another device would inherit the grant. fine for a match-length competition lan.
-const grants = new Set();
+// mode: "mirror" (telemetry) | "judge" (telemetry, presentation layout) | "full" (drive).
+// granted is just mode === "full" — the client and the cmd gate below still read that.
+const grants = new Map(); // ip -> mode
 const isHost = (s) => ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(s.handshake.address);
 const kindOf = (ua = "") => /iPad|Tablet/.test(ua) ? "iPad" : /iPhone/.test(ua) ? "iPhone"
   : /Android/.test(ua) ? "Android" : /Macintosh/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "device";
@@ -975,10 +995,11 @@ io.on("connection", (socket) => {
   console.log("Client connected");
   const host = isHost(socket);
   const ip = String(socket.handshake.address).replace("::ffff:", "");
+  const mode = host ? "full" : (grants.get(ip) || "mirror");
   clients.set(socket.id, {
     ip,
     kind: kindOf(socket.handshake.headers["user-agent"]),
-    host, granted: host || grants.has(ip),
+    host, mode, granted: mode === "full",
   });
   pushClients();
   socket.on("disconnect", () => { clients.delete(socket.id); pushClients(); });
@@ -987,11 +1008,11 @@ io.on("connection", (socket) => {
     if (!isHost(socket)) return;
     const c = clients.get(d?.id);
     if (!c || c.host) return;
-    c.granted = !!d?.on;
-    if (c.granted) grants.add(c.ip); else grants.delete(c.ip);
-    // the grant belongs to the device, so a revoke has to catch its other tabs too.
-    for (const o of clients.values()) if (!o.host && o.ip === c.ip) o.granted = c.granted;
-    console.log(`Control ${c.granted ? "granted to" : "revoked from"} ${c.ip} (${c.kind})`);
+    const m = ["mirror", "judge", "full"].includes(d?.mode) ? d.mode : "mirror";
+    if (m === "mirror") grants.delete(c.ip); else grants.set(c.ip, m);
+    // the mode belongs to the device, so it has to catch its other tabs too.
+    for (const o of clients.values()) if (!o.host && o.ip === c.ip) { o.mode = m; o.granted = m === "full"; }
+    console.log(`${c.ip} (${c.kind}) set to ${m}`);
     pushClients();
   });
   if (latestData) socket.emit("sensor-data", latestData);

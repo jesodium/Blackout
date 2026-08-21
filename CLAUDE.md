@@ -8,10 +8,15 @@ Node.js PC server/dashboard.
 - `giga-r1/` — Giga R1 WiFi (`main/`): sensor hub + motor driver + BLE
   command endpoint, one board. Reads sensors, broadcasts CSV over BLE notify;
   DHT11 (temp/humidity, A6), BME280 (pressure, I2C on D20/D21 — its own
-  temp/humidity registers go unread) and HC-SR04 (ultrasonic, D49/D47) wired
-  so far, rest of the CSV
-  field set sends 0 until a sensor lands. Also drives an
-  L298N (ENA/IN1-IN4 on D3-D7, ENB on D2 — D8 is SCL2, kept free for Wire2)
+  temp/humidity registers go unread) and RCWL-1601 (ultrasonic, TRIG D50 /
+  ECHO D52) wired so far, rest of the CSV
+  field set sends 0 until a sensor lands.
+  **Every sensor runs off the 3V3 rail, not 5V** — the Giga's pins are 3.3V and
+  not 5V tolerant, so the ultrasonic is an RCWL-1601 (3.3V-capable, HC-SR04
+  drop-in) rather than an HC-SR04, and the dht11 is powered at 3V too. A 5V
+  sensor here means a 5V signal into a 3.3V pin. Also drives an
+  L298N (ENA D3, IN1 D2, IN2 D7, IN3 D6, IN4 D4, ENB D10 — pins follow the
+  loom's wire colours, not connector order; D8 is SCL2, kept free for Wire2)
   and runs on-board `Step` motion routines
   (`routines.h`, see "Dictated routines" below) or direct gamepad/dashboard
   drive commands over the same BLE `cmdChar` — routines run standalone on
@@ -77,7 +82,29 @@ Node.js PC server/dashboard.
     host grants it from CONNECTED DEVICES in the topbar. The host is whoever
     loaded it over loopback, and the server decides that from the socket's
     address, so a granted client is enforced server-side too (`stop` is never
-    gated). `npm run test:mirror` covers grant + revoke.
+    gated). Each device is one of three modes in that roster's dropdown:
+    `mirror` (the read-only dashboard), `judge` (**JudgeView** — the same telemetry
+    in a flat presentation layout: verdict, camera, big numbers, nothing to press),
+    and `full` (drive, behind a 3s confirm). Judge is a *layout*, not a permission —
+    the server holds it as telemetry-only exactly like mirror, so nothing about the
+    drive gate changes. Modes are held by ip and survive a reconnect.
+    `npm run test:mirror` covers all three.
+  - **A sensor sending a bare 0 is not wired** — the CSV pads unlanded fields with
+    zeroes, and 0 ppm rendered as "normal/good" is a green lamp for hardware that
+    isn't on the robot, in the tile *and* in the go/no-go verdict. `reads()` in
+    `app.js` is the one gate: `zeroOk` on `dist` (nothing in range) and `alt` (level
+    with the start) marks the two that really can read zero; everything else shows
+    NOT READING. Add the flag when a sensor's zero becomes real, not when a tile
+    looks empty.
+  - **Panic stop is global** — space fires `stop` from anywhere, bound at the app root
+    (Drive's own space key only listens while the drive zone is armed, which left a
+    running routine with no key at all). Buttons, links and text inputs keep space for
+    themselves. Every client binds it, mirror included: `stop` is never gated.
+  - **Cloud pills** (SAGE / VOICE in the topbar) are a reachability probe, not a health
+    check: `/api/cloud` HEADs the two api roots, cached ~25s, and the dashboard polls it
+    every 30s. The venue has no internet and both Cerebras and Deepgram fail quietly
+    without it. Probe the api *root* — an authenticated path just hangs for an
+    unauthenticated request and reads as offline.
   - **Elevation** is derived in `server.js` (`altitudeM`) from the pressure the
     board already sends — same barometric formula as `bme.readAltitude()`, but the
     reference defaults to the **first valid reading**, so the tile reads metres
