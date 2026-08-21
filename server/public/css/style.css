@@ -1846,3 +1846,74 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .icn-timer { --icn: url("/icons/timer.svg"); }
 .icn-warn { --icn: url("/icons/warn.svg"); }
 .icn-gear { --icn: url("/icons/gear.svg"); }
+
+/* ============================================================
+   judge view — telemetry-only client in presentation layout
+   nothing interactive lives here on purpose: it is read across a table,
+   so everything is one size bigger and one thing per row.
+   ============================================================ */
+.judge {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  gap: var(--gap); padding: var(--gap);
+}
+.judge-head {
+  display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--panel); padding: 14px 18px;
+}
+.judge-verdict {
+  font: 700 clamp(20px, 3vw, 34px)/1 var(--grotesk);
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink);
+}
+.judge-verdict.is-go    { color: var(--go); }
+.judge-verdict.is-warn  { color: var(--warn); }
+.judge-verdict.is-abort { color: var(--abort); }
+.judge-verdict.is-idle  { color: var(--ink-3); }
+.judge-cause { flex: 1; font: 500 13px/1.3 var(--mono); color: var(--ink-2); }
+
+.judge-body { flex: 1; min-height: 0; display: flex; gap: var(--gap); }
+.judge-cam {
+  flex: 1.4; min-width: 0; position: relative;
+  background: var(--inset); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden;
+}
+.judge-grid {
+  flex: 1; min-width: 0; display: grid; gap: var(--gap);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);   /* fills the column — a half-empty board reads as broken */
+}
+.judge-cell {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  padding: 14px 16px; display: flex; flex-direction: column; justify-content: center;
+  gap: 6px; min-width: 0;
+}
+.judge-key {
+  font: 700 9px/1 var(--grotesk); letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.judge-val {
+  font: 500 clamp(22px, 3.4vw, 40px)/1 var(--mono); color: var(--ink);
+  font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.judge-val i { font: 500 13px/1 var(--mono); font-style: normal; color: var(--ink-3); margin-left: 4px; }
+.judge-cell.is-dead .judge-val { font-size: 13px; color: var(--warn); letter-spacing: 0.1em; }
+.judge-say {
+  font: 500 14px/1.5 var(--mono); color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--panel); padding: 12px 16px;
+}
+
+/* a sensor sending a bare 0 has nothing wired to it — dim the tile so the number
+   isn't read as a measurement, and colour the pill so it isn't read as "normal". */
+.reading.is-dead .reading-num,
+.reading.is-dead .meter { opacity: 0.28; }
+.reading.is-dead .pill {
+  color: var(--warn); background: var(--warn-bg); border-color: transparent;
+  font-size: 8px; letter-spacing: 0.08em; padding: 4px 6px;  /* the label is long — leave the sensor name its room */
+}
+
+/* cloud reachability pills (topbar) */
+.top-cloud { display: inline-flex; gap: 6px; }
+
+/* per-device mode picker in the roster */
+.device-mode { cursor: pointer; }
+.device-mode.is-on { color: var(--go); border-color: var(--go); }

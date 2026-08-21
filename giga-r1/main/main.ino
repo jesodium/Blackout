@@ -16,8 +16,8 @@
 // swapped from trig=47/echo=49 — the panel was wired the other way round.
 // symptom of getting this backwards: pulseIn always times out, so dist reads the
 // timeout fallback and never tracks an obstacle. swap these two back if so.
-#define TRIG_PIN 49
-#define ECHO_PIN 47
+#define TRIG_PIN 50
+#define ECHO_PIN 52
 // dht11 (temp + humidity). a6 = normal gpio (digital 82), no conflict with the
 // sonar (d47/d49), the oled (d11/d13 + d22/d24) or the motor pins (d2-d7).
 // IMPORTANT NOTE: a8-a11 are pure-analog on the giga — pinMode/digitalWrite on
@@ -141,22 +141,30 @@ char mtxCell[MTX_COLS][MTX_ROWS];
 #define BOARD_NAME "BLACKOUT-V3" // shown on the status screen and the ble local
                                   // name/serial banner below — one literal, three
                                   // spots, so they can't drift out of sync again
-// l298n on d3-d7 plus d2 for enb — was one straight run d3-d8, but d8 is scl2,
-// so enb moved to d2 to leave d8/d9 free as the Wire2 bus. enb is the one
-// crossed wire on the connector now.
+// l298n on d2/d4/d6/d7 (direction) + d3/d10 (enable). the pin numbers follow the
+// loom as it is actually wired, by colour — the connector is not a straight run
+// and renumbering here is one edit against four wire moves. d5 is free.
+// IMPORTANT NOTE: in1..in4 are no longer contiguous, so anything iterating them
+// has to use MOTOR_PINS below, not a `for (p = IN1; p <= IN4)` range.
 // IMPORTANT NOTE: the run has to stay inside d2-d13 — that's the giga's whole
 // pwm band. the analog header (and d41+) can't do pwm at all, and a8-a11 can't
 // even do digital (the core errors out on digitalWrite there).
-#define ENA 3  // motor a speed (pwm)
-#define IN1 4  // motor a
-#define IN2 5
-#define IN3 6  // motor b
-#define IN4 7
+#define ENA 3  // motor a speed (pwm), gris
+#define IN1 2  // motor a, morado
+#define IN2 7  //          azul
+#define IN3 6  // motor b, verde
+#define IN4 4  //          amarillo
 // important note: pull the ena/enb jumpers off the l298n first — left on, they
 // tie enable to 5v and these pins do nothing (motors stay full speed).
-// IMPORTANT NOTE: d3 is bench-proven pwm, d2 is not yet — if motor b runs at
-// one speed while motor a ramps, d2 has no timer channel: put ENB on d10.
-#define ENB 2  // motor b speed (pwm)
+// IMPORTANT NOTE: enb was on d2 and motor b was dead or stuck in most verbs.
+// d2 (PA_3) and d3 (PA_2) are both TIM15 in the core's PinMap_PWM, and the mbed
+// core hands the second PwmOut on a shared timer a channel that never comes up —
+// d3 (ena) claimed it first, so enb silently stayed low. d10 (PK_1) is TIM1, its
+// own timer, so enb lives there — d5 (PA_7) is also TIM1 and works just as well
+// if the wire ever goes back. only ena/enb need timers; d2 is fine for in1, the
+// clash is between two PwmOuts, never a digital output.
+#define ENB 10  // motor b speed (pwm), naranja
+static const uint8_t MOTOR_PINS[] = {IN1, IN2, IN3, IN4};
 #define SONAR_ITER 3            // pings per reading, median drops spikes
 #define SONAR_TIMEOUT_US 25000UL // ~430cm round-trip + margin, no echo = timeout
 #define DIST_ALPHA 0.6 // ema smoothing on distance — ultrasonic is already clean
@@ -653,7 +661,7 @@ void setup() {
   oled.setContrast(255); // ssd1306 boots at ~0x7F; full drive is the cheapest contrast win there is
   updateOled();
 
-  for (int p = IN1; p <= IN4; p++) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
+  for (uint8_t p : MOTOR_PINS) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
   pinMode(ENA, OUTPUT); pinMode(ENB, OUTPUT);
   analogWrite(ENA, 0); analogWrite(ENB, 0); // stopped until told otherwise
 
