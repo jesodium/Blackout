@@ -621,12 +621,6 @@ function statuses(d) {
   return {
     temp: band(d.temp, 35, 45),
     dist: d.dist < 10 ? "NEAR" : "CLEAR",
-    smoke: band(d.smoke, 300, 600),
-    airq: band(d.airq, 450, 800),
-    // important note: no gas sensor wired right now (mq-9/mq-2 retired with the
-    // mega) — smoke/airq/co arrive as 0 from the r4 firmware. thresholds kept
-    // for mock data and for when a sensor lands. d.co_alert stays ignored.
-    co: band(d.co, 300, 350),
   };
 }
 
@@ -638,16 +632,10 @@ const RANK = { CLEAR: 0, NORMAL: 0, UNKNOWN: 0, NEAR: 1, CAUTION: 1, DANGER: 2 }
 const BLURTS = {
   en: {
     dist:  { NEAR: "Wall's right up on us — easing around it." },
-    smoke: { CAUTION: "Smoke's picking up in here.", DANGER: "Heavy smoke now — this is getting bad." },
-    airq:  { CAUTION: "Air's getting thick.", DANGER: "Air's gone foul down here." },
-    co:    { CAUTION: "Gas reading's climbing.", DANGER: "Gas pocket — that's real danger." },
     temp:  { CAUTION: "Heat's coming up.", DANGER: "It's cooking down here." },
   },
   es: {
     dist:  { NEAR: "El muro está justo encima — lo esquivo con cuidado." },
-    smoke: { CAUTION: "El humo está aumentando aquí.", DANGER: "Humo denso ahora — esto se está poniendo feo." },
-    airq:  { CAUTION: "El aire se está volviendo espeso.", DANGER: "El aire está viciado aquí abajo." },
-    co:    { CAUTION: "La lectura de gas está subiendo.", DANGER: "Bolsa de gas — esto es peligro real." },
     temp:  { CAUTION: "El calor está subiendo.", DANGER: "Esto es un horno aquí abajo." },
   },
 };
@@ -661,9 +649,6 @@ function buildTrend(d) {
   const bits = [];
   const push = (k, label, eps) => { const x = dir(d[k], old[k], eps); if (x) bits.push(`${label} ${x}`); };
   push("temp", "temperature", 1);
-  push("airq", "air quality", 30);
-  push("smoke", "smoke", 30);
-  push("co", "gas", 30);
   return bits.length ? `Trend over the last little while: ${bits.join(", ")}.` : "";
 }
 
@@ -792,9 +777,6 @@ function readingLines(data) {
     data.pressure ? `Pressure: ${data.pressure} hPa` : null,
     data.pressure ? `Elevation: ${Math.round(data.alt)} m relative to where you started` : null,
     `Distance to the rock face ahead: ${data.dist} cm [${s.dist}]`,
-    data.smoke ? `Smoke/gas level: ${data.smoke} [${s.smoke}]` : null,
-    data.airq ? `Air quality: ${data.airq} [${s.airq}]` : null,
-    data.co ? `Combustible gas: ${data.co} [${s.co}]` : null,
     (data.roll || data.pitch || data.yaw) ? `Tilt: roll ${data.roll}°, pitch ${data.pitch}°, yaw ${data.yaw}°` : null,
   ].filter(Boolean).join("\n");
 }

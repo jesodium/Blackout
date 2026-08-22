@@ -43,8 +43,6 @@ const SENSORS = [
   { key: "humid", unit: "%",   d: 1, min: 0, max: 100,  st: v => v > 75 ? ["st.humid", "warn"] : v < 20 ? ["st.dry", "warn"] : ["st.good", "go"] },
   // distance is navigation cue, never hazard: caution when close to wall (<10cm), clear otherwise
   { key: "dist",  unit: "cm",  d: 0, min: 0, max: 200,  invert: true, zeroOk: true, st: v => v < 10 ? ["st.tooClose", "warn"] : ["st.clear", "go"] },
-  { key: "smoke", unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 600 ? ["st.hazard", "abort"] : v > 300 ? ["st.warning", "warn"] : ["st.normal", "go"] },
-  { key: "airq",  unit: "ppm", d: 0, min: 0, max: 1000, st: v => v > 800 ? ["st.poor", "abort"] : v > 450 ? ["st.moderate", "warn"] : ["st.good", "go"] },
   // elevation, derived server-side from the bme280's pressure — metres above/below
   // where the rover started (server zeroes on the first reading), so the meter is
   // centred: 50% is level, it fills climbing and drains descending. never a hazard,
@@ -53,6 +51,10 @@ const SENSORS = [
   // cm: tap the tile to read centimetres instead. the server rounds alt to 0.1 m,
   // so cm moves in 10s — it's for close-up steps/ramps, not extra precision.
   { key: "alt",   unit: "m",   d: 0, min: -25, max: 25, cm: true, zeroOk: true, st: () => ["st.normal", "go"] },
+  // raw barometric pressure from the bme280 — the number "alt" above is derived from.
+  // never a hazard (weather, not cave air), so always "go": worstSensor() walks this
+  // list for the verdict. 0 means no bme wired, so no zeroOk.
+  { key: "pressure", unit: "hPa", d: 1, min: 950, max: 1050, st: () => ["st.normal", "go"] },
 ];
 
 // a reading only counts if it's a number and not a bare 0 from an unwired pin.
@@ -112,7 +114,7 @@ function matchCmd(txt) {
 
 const TRENDS = [
   { key: "dist", tkey: "trend.dist", color: "#9a9384" },
-  { key: "airq", tkey: "trend.air",  color: "#44cf86" },
+  { key: "humid", tkey: "trend.humid", color: "#44cf86" },
   { key: "temp", tkey: "trend.temp", color: "#3b82f6" },
 ];
 
@@ -141,9 +143,6 @@ function browserSpeak(text, { onStart, onEnd } = {}) {
 // bands match the server's status thresholds so agent and panel agree.
 const FINDINGS = [
   { k: "temp",  warn: 35,  danger: 45,  msg: { 1: "find.tempUp", 2: "find.tempHigh" } },
-  { k: "smoke", warn: 300, danger: 600, msg: { 1: "find.smoke", 2: "find.smokeHeavy" } },
-  { k: "airq",  warn: 450, danger: 800, msg: { 1: "find.airDeg", 2: "find.airCrit" } },
-  { k: "co",    warn: 300, danger: 350, msg: { 1: "find.gasUp", 2: "find.gasHigh" } },
   { k: "dist",  close: 10,              msg: { 1: "find.obstacle" } },
 ];
 const bandOf = (f, v) => {
@@ -1095,8 +1094,6 @@ const FPV_STATS = [
   { k: "sensor.dist",  u: "cm",  v: p => fmt(p?.dist, 0) },
   { k: "sensor.temp",  u: "°C",  v: p => fmt(p?.temp, 0) },
   { k: "sensor.humid", u: "%",   v: p => fmt(p?.humid, 0) },
-  { k: "sensor.smoke", u: "ppm", v: p => fmt(p?.smoke, 0) },
-  { k: "sensor.airq",  u: "ppm", v: p => fmt(p?.airq, 0) },
   { k: "sensor.alt",   u: "m",   v: p => fmt(p?.alt, 0) },
 ];
 
@@ -2470,18 +2467,7 @@ function App() {
   const lastBands = useRef({}); // per-metric severity, to detect when something newly worsens
   useEffect(() => { lastBands.current = {}; }, [activeId]); // fresh findings per session
 
-  // smoke/air gas readings are noisy mq sensors — sample them every 5s so display doesn't flicker. everything else stays live.
-  const packetRef = useRef(null);
-  useEffect(() => { packetRef.current = packet; }, [packet]);
-  const [slowGas, setSlowGas] = useState({});
-  useEffect(() => {
-    const id = setInterval(() => {
-      const p = packetRef.current;
-      if (p) setSlowGas({ smoke: p.smoke, airq: p.airq });
-    }, 5000);
-    return () => clearInterval(id);
-  }, []);
-  const view = packet ? { ...packet, ...slowGas } : packet;
+  const view = packet;
 
   const addLog = useCallback((text, type = "system") => {
     setLogs(p => [...p, { text, type, time: new Date().toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-80));
