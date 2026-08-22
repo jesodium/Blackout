@@ -672,3 +672,162 @@ async function runList(list, io, st, ctx) {
     }
   }
 }
+
+/* ───────────────────── on-board compiler ─────────────────────
+   compiles a program to a flat instruction list the giga runs by itself. why:
+   `forward until dist < 15` interpreted up here is a ~400ms round trip per burst
+   (write -> drive 250ms -> notify -> decide), so the rover overshoots before the
+   browser has seen the reading. on the board the same check is one loop() pass.
+   the pc stays in the loop only for what it alone can do — sage, tts, the camera,
+   the headlamp — which compile to `evt` instructions: the board halts, notifies,
+   and (kind 1/2) waits for the answer before moving on.
+
+   deliberately narrow: constant arguments and one-term comparisons only. anything
+   else throws Unsupported and the caller runs the program up here as before, so
+   the language never has to be cut down to fit the firmware. keep in step with the
+   blk vm in giga-r1/main/main.ino — the op numbers and the wire line are shared. */
+
+export const BOPS = { end: 0, move: 1, moveu: 2, wait: 3, waitu: 4, speed: 5, set: 6, add: 7, jmp: 8, jmpf: 9, evt: 10, stop: 11 };
+export const BLK_VARS = 8;   // blkVar[] on the board
+export const BLK_MAX = 200;  // blkCode[] on the board
+const VERB_ID = { forward: 0, back: 1, left: 2, right: 3 };
+const LHS_SPEED = 50, LHS_VAR = 100; // lhs below 50 is an index into SENSORS
+const NEG = [3, 2, 1, 0, 5, 4];      // index into CMPS -> its opposite
+// 0 = fire and forget, 1 = board waits for "done", 2 = waits for a value back
+const EVT_KIND = { say: 0, log: 0, led: 0, analyze: 1, ask: 2, find: 2 };
+
+export class Unsupported extends Error {}
+
+// a number the compiler can bake in, or null if it needs live values at run time
+function constNum(e) {
+  if (e == null) return null;
+  if (typeof e === "number") return e;
+  let ok = true;
+  (function walk(x) {
+    if (!x || typeof x !== "object") return;
+    if (x.v != null || x.f === "random") ok = false; // a var/sensor read, or a value that must differ per pass
+    for (const k of ["l", "r", "e"]) walk(x[k]);
+    (x.a || []).forEach(walk);
+  })(e);
+  if (!ok) return null;
+  const v = evalExpr(e, {});
+  return isNaN(v) ? null : v;
+}
+
+// -> { code, nodes, slots }: instructions, the nodes evt refers back to, var->slot.
+// throws Unsupported with a human reason the ui can show.
+export function compile(program) {
+  const code = [], nodes = [], slots = {}, defs = {}, loops = [];
+  collectDefs(program, defs);
+  const bail = (why) => { throw new Unsupported(why); };
+  const slot = (name) => {
+    if (!(name in slots)) {
+      if (Object.keys(slots).length >= BLK_VARS) bail(`more than ${BLK_VARS} variables`);
+      slots[name] = Object.keys(slots).length;
+    }
+    return slots[name];
+  };
+  const emit = (op, f) => (code.push({ op: BOPS[op], a: 0, b: 0, c: 0, lhs: 0, cmp: 0, rhs: 0, ...f }), code.length - 1);
+  const konst = (e, dflt) => {
+    if (e == null) return dflt;
+    const v = constNum(e);
+    if (v == null) bail("an argument depends on a live value");
+    return v;
+  };
+  // the board reads one term: a sensor, its own speed, or a variable slot
+  const term = (e) => {
+    if (!e || !e.v) bail("a condition's left side isn't a sensor or a variable");
+    const i = SENSORS.indexOf(e.v);
+    if (i >= 0) return { lhs: i };
+    if (e.v === "speed") return { lhs: LHS_SPEED };
+    if (BUILTINS.includes(e.v) && !FLAGS.includes(e.v)) bail(`"${e.v}" only exists in the browser`);
+    return { lhs: LHS_VAR + slot(e.v) };
+  };
+  const cond = (c) => {
+    if (!c) bail("missing condition");
+    if (c.k === "truthy") return { ...term(c.e), cmp: CMPS.indexOf("!="), rhs: 0 };
+    if (c.k === "not") { const n = cond(c.e); return { ...n, cmp: NEG[n.cmp] }; } // one term, so negating is just the opposite test
+    if (c.k !== "cmp") bail("and/or in a condition");
+    const r = constNum(c.r);
+    if (r == null) bail("a condition compares two live values");
+    return { ...term(c.l), cmp: CMPS.indexOf(c.c), rhs: r };
+  };
+
+  const walk = (list, depth) => {
+    for (const n of list) {
+      if (n.off || n.op === "comment" || n.op === "def") continue;
+      switch (n.op) {
+        case "speed": emit("speed", { b: clampArg("pwm", konst(n.arg, DEFAULT_PWM)) }); break;
+        case "forward": case "back": case "left": case "right":
+          // pwm isn't baked in — the board applies whatever `speed` last set
+          if (n.until) emit("moveu", { a: VERB_ID[n.op], c: n.timeout || 0, ...cond(n.until) });
+          else emit("move", { a: VERB_ID[n.op], c: clampArg("ms", konst(n.arg, 500)) });
+          break;
+        case "wait": emit("wait", { c: clampArg("ms", konst(n.arg, 500)) }); break;
+        case "wait_until": emit("waitu", { c: n.timeout || 0, ...cond(n.cond) }); break;
+        case "set": emit("set", { a: slot(n.name), rhs: konst(n.expr, 0) }); break;
+        case "change": emit("add", { a: slot(n.name), rhs: konst(n.expr, 0) }); break;
+        case "stop": emit("stop", {}); break;
+        case "say": case "log": case "led": case "analyze": case "ask": case "find": {
+          const kind = EVT_KIND[n.op];
+          nodes.push(n);
+          emit("evt", { a: kind, b: nodes.length - 1, c: kind === 2 ? slot(n.op === "ask" ? "answer" : "found") : 0 });
+          break;
+        }
+        case "call": {
+          // inlined, so the board needs no call stack. recursion is what the depth cap catches.
+          if (!defs[n.name]) bail(`call ${n.name}: not defined`);
+          if (depth >= 8) bail("procedure calls nested too deep");
+          walk(defs[n.name], depth + 1);
+          break;
+        }
+        case "if": {
+          const j = emit("jmpf", cond(n.cond));
+          walk(n.body, depth);
+          if (!n.elseBody) { code[j].c = code.length; break; }
+          const e = emit("jmp", {});
+          code[j].c = code.length;
+          walk(n.elseBody, depth);
+          code[e].c = code.length;
+          break;
+        }
+        case "repeat": case "repeat_until": case "repeat_while": case "forever": {
+          // one shape for all four: [init] top: [guard] body [dec] jmp top
+          let ctr = null, guard = null;
+          if (n.op === "repeat") {
+            ctr = slot("#" + code.length); // hidden counter, can't collide with a user name
+            emit("set", { a: ctr, rhs: clampArg("count", konst(n.arg, 1)) });
+          }
+          const top = code.length;
+          if (n.op === "repeat") guard = emit("jmpf", { lhs: LHS_VAR + ctr, cmp: CMPS.indexOf(">"), rhs: 0 });
+          else if (n.op === "repeat_while") guard = emit("jmpf", cond(n.cond));
+          else if (n.op === "repeat_until") { const c = cond(n.cond); guard = emit("jmpf", { ...c, cmp: NEG[c.cmp] }); }
+          loops.push({ brk: [], cont: [] });
+          walk(n.body, depth);
+          const me = loops.pop();
+          const contAt = code.length;
+          if (ctr != null) emit("add", { a: ctr, rhs: -1 });
+          emit("jmp", { c: top });
+          if (guard != null) code[guard].c = code.length;
+          me.brk.forEach(k => { code[k].c = code.length; });
+          me.cont.forEach(k => { code[k].c = contAt; });
+          break;
+        }
+        case "break": case "continue": {
+          const L = loops[loops.length - 1];
+          if (L) (n.op === "break" ? L.brk : L.cont).push(emit("jmp", {}));
+          break;
+        }
+      }
+    }
+  };
+
+  walk(program, 0);
+  emit("end", {});
+  if (code.length > BLK_MAX) bail(`too long for the board (${code.length}/${BLK_MAX} instructions)`);
+  return { code, nodes, slots };
+}
+
+// one instruction as the board's cmdchar line (stays under the 64-byte characteristic)
+export const insLine = (i, ins) =>
+  `blk,i,${i},${ins.op},${ins.a},${ins.b},${ins.c},${ins.lhs},${ins.cmp},${Math.round(ins.rhs * 100) / 100}`;

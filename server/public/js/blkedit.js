@@ -16,6 +16,7 @@ import {
   clampArg, lint, estimate, fmtMs, run,
 } from "./blk.mjs";
 import { Sim, LAYOUTS, ARENA } from "./blksim.js";
+import { icon, prefixIcon } from "./icons.mjs";
 
 const $ = (id) => document.getElementById(id);
 const bc = new BroadcastChannel("blk"); // nudges the console to refresh its list
@@ -107,9 +108,10 @@ const nodeEls = new Map(); // node -> element, for run highlighting
 const simHits = new Map(); // node -> times the last simulated run entered it
 const DRAFT = "blkDraft";
 
-const setStatus = (msg, cls = "") => {
+const setStatus = (msg, cls = "", ico = "") => {
   const s = $("status");
   s.textContent = msg;
+  if (ico) prefixIcon(s, ico);
   s.className = "blk-status " + cls;
 };
 
@@ -618,13 +620,15 @@ function renderNode(node, list) {
     head.appendChild(textInput(node, meta.optText ? "(optional) what to look at" : "text"));
   }
   if (meta.canUntil) {
-    head.appendChild(inlineBtn("fx", node.until ? "⏱" : "∞",
+    const fx = inlineBtn("fx", node.until ? "" : "∞",
       node.until ? "switch to a timed burst" : "switch to drive-until-condition",
       () => {
         if (node.until) { delete node.until; delete node.timeout; node.arg = 500; }
         else { delete node.arg; node.until = parseCond("dist < 20"); }
         commit();
-      }));
+      });
+    if (node.until) fx.innerHTML = icon("timer");
+    head.appendChild(fx);
   }
   wrap.appendChild(head);
   attachDrag(head, { node, list });
@@ -699,7 +703,7 @@ function updateMeta() {
   $("meta").textContent = `${countNodes(program)} blocks · ~${fmtMs(estimate(program))} per pass`;
   const box = $("lint");
   box.innerHTML = "";
-  for (const w of warns.slice(0, 4)) box.appendChild(el("div", null, "⚠ " + w));
+  for (const w of warns.slice(0, 4)) box.appendChild(prefixIcon(el("div", null, w), "warn"));
   box.hidden = !warns.length;
 }
 
@@ -888,7 +892,7 @@ function onType() {
     if (errors.length) setStatus(errors.slice(0, 4).join("\n"), "is-err");
     else {
       const w = lint(p);
-      setStatus(w.length ? "⚠ " + w[0] : `looks good — ${countNodes(p)} blocks, ~${fmtMs(estimate(p))} per pass`, w.length ? "" : "is-ok");
+      setStatus(w.length ? w[0] : `looks good — ${countNodes(p)} blocks, ~${fmtMs(estimate(p))} per pass`, w.length ? "" : "is-ok", w.length ? "warn" : "");
     }
   }, 250);
 }
@@ -915,9 +919,12 @@ if (window.io) {
 // what the interpreter's conditions read
 const sensorSrc = () => (liveMode && livePacket ? livePacket : sim.sensors());
 
-const simLog = (t, cls) => {
+const PAUSE_LABEL = icon("pause") + " Pause";
+
+const simLog = (t, cls, ico) => {
   const box = $("sim-log");
-  box.appendChild(el("div", "sim-row" + (cls ? " " + cls : ""), t));
+  const row = el("div", "sim-row" + (cls ? " " + cls : ""), t);
+  box.appendChild(ico ? prefixIcon(row, ico) : row);
   while (box.children.length > 200) box.firstChild.remove();
   box.scrollTop = box.scrollHeight;
 };
@@ -956,7 +963,7 @@ function setSimRunning(on) {
   $("sim-run").classList.toggle("is-stop", on);
   $("sim-pause").disabled = !on;
   $("sim-step").disabled = !on;
-  if (!on) { simPaused = false; $("sim-pause").textContent = "⏸ Pause"; }
+  if (!on) { simPaused = false; $("sim-pause").innerHTML = PAUSE_LABEL; }
 }
 
 function highlight(node) {
@@ -1006,7 +1013,7 @@ async function startSim() {
     drive: async (verb, pwm, ms) => { await simAdvance(verb, pwm, ms); },
     halt: () => {},
     led: (v) => { sim.led = v; drawSim(); simLog("headlamp " + v); },
-    say: (t) => simLog("🔊 " + t, "say"),
+    say: (t) => simLog(t, "say", "volume"),
     log: (t) => simLog("• " + t),
     analyze: async (p) => { simLog("analyze" + (p ? ": " + p : "") + " (no camera in sim)", "ai"); await realSleep(300); },
     ask: async (q) => await askSageBool(q, sim.sensors()),
@@ -1408,13 +1415,13 @@ $("act-close").onclick = () => { selected = null; render(); };
 $("sim-run").onclick = toggleSim;
 $("sim-pause").onclick = () => {
   simPaused = !simPaused;
-  $("sim-pause").textContent = simPaused ? "▶ Resume" : "⏸ Pause";
+  $("sim-pause").innerHTML = simPaused ? "▶ Resume" : PAUSE_LABEL;
   if (!simPaused) simResume?.();
 };
 $("sim-step").onclick = () => {
   stepMode = true;
   simPaused = false;
-  $("sim-pause").textContent = "⏸ Pause";
+  $("sim-pause").innerHTML = PAUSE_LABEL;
   simResume?.();
 };
 $("sim-reset").onclick = () => { sim.reset(); $("sim-log").innerHTML = ""; drawSim(); };

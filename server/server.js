@@ -13,6 +13,7 @@ const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
 const { eyeParts, grabFrames, setLed, getLed, pingCam } = require("./vision");
 const { parseSage } = require("./sage");
+const recorder = require("./recorder");
 
 const openai = new OpenAI({
   baseURL: "https://api.cerebras.ai/v1",
@@ -171,6 +172,36 @@ app.post("/api/scan", async (req, res) => {
   }
 });
 
+// elevation from the bme280's pressure — same barometric formula Adafruit's
+// readAltitude() runs, derived here so the reference is a knob, not a reflash.
+// the reference defaults to the FIRST valid reading, so the tile reads elevation
+// *relative to where the rover started*: metres climbed/descended, self-zeroing at
+// any venue. that's the number a rover in a cave needs, and 1013.25 was flat wrong
+// anywhere the day's QNH differed (it read tens of metres off, often negative).
+// set SEA_LEVEL_HPA (venue QNH) to get true height above sea level instead.
+// IMPORTANT NOTE: pressure 0 means no bme wired, not sea level — no reading, not 0m.
+//
+// the zero LEAKS toward ambient (REF_TAU). a fixed zero looks broken over a session
+// and it isn't the code: the weather moves the air 1-2 hPa an hour, which the same
+// formula reads as 8-17 m of climbing while the rover sits still. leaking the
+// reference is a high-pass — anything slower than REF_TAU is absorbed as weather,
+// anything faster than it shows. a ramp takes seconds, so it lands well inside.
+// IMPORTANT NOTE: the cost is that a HELD height decays to 0 over ~REF_TAU, and
+// ~1m of instantaneous noise is the bme's own, not fixable here. sub-metre absolute
+// height needs a different sensor (tof/sonar to the floor), not a better filter.
+const REF_TAU = +process.env.REF_TAU_S || 300; // s. shorter = flatter but forgets a climb sooner.
+const absRef = !!process.env.SEA_LEVEL_HPA; // an explicit QNH is absolute — never leak it
+let refHPa = absRef ? parseFloat(process.env.SEA_LEVEL_HPA) : null;
+let refT = 0;
+const altitudeM = (hPa) => {
+  if (!(hPa > 0)) return 0;
+  const now = Date.now();
+  if (refHPa == null) refHPa = hPa;  // first reading is the zero
+  else if (!absRef) refHPa += (hPa - refHPa) * (1 - Math.exp(-(now - refT) / 1000 / REF_TAU));
+  refT = now;
+  return 44330 * (1 - Math.pow(hPa / refHPa, 1 / 5.255));
+};
+
 // process a raw line: emit to serial monitor, parse "S:" telemetry for dashboard.
 function processLine(raw) {
   const line = raw.trim();
@@ -194,13 +225,19 @@ function processLine(raw) {
     // board says whether a motion routine is running. absent on older firmware —
     // false keeps auto-analysis behaving as before.
     routine: parts.length > 11 ? parts[11].trim() === "1" : false,
+    // bh1750 ambient light. parsed so runs record it; nothing displays it yet.
+    lux: parts.length > 12 ? parseFloat(parts[12]) : 0,
     timestamp: Date.now(),
   };
+  // derived, not a csv field. 2dp = cm resolution, which the dashboard's cm view reads.
+  data.alt = Math.round(altitudeM(data.pressure) * 100) / 100;
   latestData = data;
   dataHistory.push(data);
   if (dataHistory.length > 1000) dataHistory.shift();
+  recorder.push(data); // no-op unless a run is being recorded
   io.emit("sensor-data", data);
   maybeAutoAnalyze(data);
+  pushHud(data);
 }
 
 // pipe a readline parser onto a port.
@@ -220,6 +257,26 @@ app.post("/api/mega/sensor", (req, res) => {
   res.json({ ok: true, lines: lines.length });
 });
 
+// --- mission recordings: telemetry + cam stills, played back in the dashboard ---
+// not gated behind mirror-mode grant: recording touches nothing on the robot.
+app.use("/recordings", express.static(recorder.DIR));
+app.get("/api/rec", (req, res) => res.json({ now: recorder.state(), runs: recorder.list() }));
+// no cam, no recording — a run with no video is a scrubber over a black screen,
+// and the operator finds out after the run instead of before it.
+app.post("/api/rec/start", async (req, res) => {
+  if (!(await pingCam())) return res.status(503).json({ error: "camera offline — nothing to record" });
+  res.json({ now: recorder.start(req.body?.name) });
+});
+app.post("/api/rec/stop", (req, res) => {
+  const run = recorder.stop();
+  res.json({ id: run?.id || null });
+});
+app.get("/api/rec/:id", (req, res) => {
+  const run = recorder.read(req.params.id);
+  run ? res.json(run) : res.status(404).json({ error: "no such run" });
+});
+app.delete("/api/rec/:id", (req, res) => res.json({ ok: recorder.remove(req.params.id) }));
+
 // --- bluetooth "bridge" intent flag ---
 // the actual ble connection lives in the browser (web bluetooth). these just
 // track intent server-side so usb serial and bt stay mutually exclusive.
@@ -229,10 +286,30 @@ app.get("/api/bridge", (req, res) => res.json({ running: bleActive, last: "" }))
 
 // the laptop's lan address, so the judges' tablet can be pointed at this dashboard
 // without anyone opening a terminal. first non-internal ipv4 — on a hotspot that's the only one.
+const lanIp = () => Object.values(os.networkInterfaces()).flat()
+  .find(i => i.family === "IPv4" && !i.internal)?.address;
+
 app.get("/api/lan", (req, res) => {
-  const ip = Object.values(os.networkInterfaces()).flat()
-    .find(i => i.family === "IPv4" && !i.internal)?.address;
-  res.json({ url: ip ? `http://${ip}:${PORT}` : null });
+  const ip = lanIp();
+  res.json({ url: ip ? `http://${ip}:${PORT}` : null, host: `http://blackout.local:${PORT}` });
+});
+
+// cloud reachability for the dashboard's pills. the venue has no internet and both of
+// these fail silently without it. a 401/404 still means the host answered — only a thrown
+// request counts as unreachable. cached, because every dashboard on the lan polls it.
+// the api roots, not real endpoints: the question is only whether the host answers at
+// all. an authenticated path hangs for an unauthenticated probe and reads as "offline".
+const CLOUD_HOSTS = { sage: "https://api.cerebras.ai/", tts: "https://api.deepgram.com/" };
+let cloudSeen = { at: 0, state: null };
+app.get("/api/cloud", async (_req, res) => {
+  if (cloudSeen.state && Date.now() - cloudSeen.at < 25000) return res.json(cloudSeen.state);
+  const ping = async (url) => {
+    try { await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(4000) }); return true; }
+    catch { return false; }
+  };
+  const [sage, tts] = await Promise.all([ping(CLOUD_HOSTS.sage), ping(CLOUD_HOSTS.tts)]);
+  cloudSeen = { at: Date.now(), state: { sage, tts } };
+  res.json(cloudSeen.state);
 });
 
 app.post("/api/bridge/start", (req, res) => {
@@ -358,6 +435,7 @@ app.post("/api/blk-ask", async (req, res) => {
     const extra = d ? buildChatContext(d) : "No live readings right now — running dark.";
     const out = await sageDecide(question, { images, extra: sim ? `Simulated readings:\n${JSON.stringify(d)}` : extra });
     io.emit("blk-decision", { kind: "ask", question, ...out, sim, timestamp: Date.now() });
+    recorder.mark("blk", `${question} → ${out.yes ? "yes" : "no"}`);
     res.json(out);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -376,6 +454,7 @@ app.post("/api/blk-find", async (req, res) => {
     const out = await sageDecide(`Look at your forward camera view. Is there ${thing} in it?`, { images });
     if (out.yes) recordFinding(`found: ${thing}${out.text ? " — " + out.text : ""}`, lastImage([{ content: images }]));
     io.emit("blk-decision", { kind: "find", question: thing, ...out, timestamp: Date.now() });
+    recorder.mark("blk", `find ${thing} → ${out.yes ? "found" : "not found"}`);
     res.json(out);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -509,6 +588,7 @@ function recordFinding(text, dataUrl) {
     } catch (e) { console.error("finding still:", e.message); } // log it text-only
   }
   io.emit("sage-finding", { id: `${at}-${Math.random()}`, text, img, timestamp: at });
+  recorder.mark("finding", text);
 }
 
 // sage now answers in json: { text, status, action, led, finding }. text is the only
@@ -541,12 +621,6 @@ function statuses(d) {
   return {
     temp: band(d.temp, 35, 45),
     dist: d.dist < 10 ? "NEAR" : "CLEAR",
-    smoke: band(d.smoke, 300, 600),
-    airq: band(d.airq, 450, 800),
-    // important note: no gas sensor wired right now (mq-9/mq-2 retired with the
-    // mega) — smoke/airq/co arrive as 0 from the r4 firmware. thresholds kept
-    // for mock data and for when a sensor lands. d.co_alert stays ignored.
-    co: band(d.co, 300, 350),
   };
 }
 
@@ -558,16 +632,10 @@ const RANK = { CLEAR: 0, NORMAL: 0, UNKNOWN: 0, NEAR: 1, CAUTION: 1, DANGER: 2 }
 const BLURTS = {
   en: {
     dist:  { NEAR: "Wall's right up on us — easing around it." },
-    smoke: { CAUTION: "Smoke's picking up in here.", DANGER: "Heavy smoke now — this is getting bad." },
-    airq:  { CAUTION: "Air's getting thick.", DANGER: "Air's gone foul down here." },
-    co:    { CAUTION: "Gas reading's climbing.", DANGER: "Gas pocket — that's real danger." },
     temp:  { CAUTION: "Heat's coming up.", DANGER: "It's cooking down here." },
   },
   es: {
     dist:  { NEAR: "El muro está justo encima — lo esquivo con cuidado." },
-    smoke: { CAUTION: "El humo está aumentando aquí.", DANGER: "Humo denso ahora — esto se está poniendo feo." },
-    airq:  { CAUTION: "El aire se está volviendo espeso.", DANGER: "El aire está viciado aquí abajo." },
-    co:    { CAUTION: "La lectura de gas está subiendo.", DANGER: "Bolsa de gas — esto es peligro real." },
     temp:  { CAUTION: "El calor está subiendo.", DANGER: "Esto es un horno aquí abajo." },
   },
 };
@@ -581,9 +649,6 @@ function buildTrend(d) {
   const bits = [];
   const push = (k, label, eps) => { const x = dir(d[k], old[k], eps); if (x) bits.push(`${label} ${x}`); };
   push("temp", "temperature", 1);
-  push("airq", "air quality", 30);
-  push("smoke", "smoke", 30);
-  push("co", "gas", 30);
   return bits.length ? `Trend over the last little while: ${bits.join(", ")}.` : "";
 }
 
@@ -609,6 +674,33 @@ setInterval(async () => {
   io.emit("cmd", `cam,${up ? "connected" : "not connected"}`);
 }, 5000);
 
+// the giga's oled hud. the board draws it but decides nothing: the safety level is
+// the worst of the same statuses() the agent reasons over, and the metrics line is
+// formatted here, so the screen can never contradict what the agent is saying.
+// rides the same "cmd" channel drive commands do — the tab holding the ble link relays it.
+let lastHud = "";
+let lastHudAt = 0;
+const HUD_REPEAT = 3000; // telemetry is 10hz, the screen isn't. resend anyway on this
+                         // beat so a board that reconnected mid-stream fills in.
+// IMPORTANT NOTE: ble does one write at a time. a hand waving at the sonar changes
+// the metrics line every 100ms, and at 10hz those writes collide and get dropped —
+// the screen ends up lagging the dashboard by seconds. 4hz is faster than an eye
+// reads a 4px font and leaves the link free for drive commands.
+const HUD_MIN_GAP = 250;
+function pushHud(d) {
+  const s = statuses(d);
+  const level = ["ok", "warn", "bad"][Math.max(...Object.values(s).map(v => RANK[v] ?? 0))];
+  // 999 = sonar timeout = nothing within range, not a real 999cm reading.
+  const dist = d.dist >= 999 ? "CLEAR" : `${Math.round(d.dist)}cm`;
+  const msg = `hud,${level},${Math.round(d.temp)}C ${Math.round(d.humid)}%|${dist}`;
+  const now = Date.now();
+  if (now - lastHudAt < HUD_MIN_GAP) return;
+  if (msg === lastHud && now - lastHudAt < HUD_REPEAT) return;
+  lastHud = msg;
+  lastHudAt = now;
+  io.emit("cmd", msg);
+}
+
 function emitBlurt(prev, cur) {
   if (!prev || Date.now() - lastBlurt < BLURT_MIN_GAP) return;
   const lines = BLURTS[currentLanguage] || BLURTS.en;
@@ -618,7 +710,11 @@ function emitBlurt(prev, cur) {
       if (!best || RANK[cur[k]] > RANK[cur[best]]) best = k;
     }
   }
-  if (best) { lastBlurt = Date.now(); io.emit("agent-blurt", { text: lines[best][cur[best]], timestamp: Date.now() }); }
+  if (best) {
+    lastBlurt = Date.now();
+    io.emit("agent-blurt", { text: lines[best][cur[best]], timestamp: Date.now() });
+    recorder.mark("sage", lines[best][cur[best]]);
+  }
 }
 
 function maybeAutoAnalyze(data) {
@@ -647,6 +743,7 @@ async function ackMission(text) {
     : "Copy that. Mission's locked in — heading in.";
   if (!process.env.CEREBRAS_API_KEY) {
     io.emit("mission-ack", { text: fallback, status: null, timestamp: Date.now() });
+    recorder.mark("sage", fallback);
     return;
   }
   try {
@@ -656,9 +753,11 @@ async function ackMission(text) {
       { role: "user", content: `The operator is briefing you on the mission before you head in: "${text}". Acknowledge it back in character in one or two sentences — confirm you've got it and you're ready. Don't ask questions, just lock it in.` },
     ], { maxTokens: 150 });
     io.emit("mission-ack", { text: sage.text || fallback, status: sage.status, timestamp: Date.now() });
+    recorder.mark("sage", sage.text || fallback);
   } catch (err) {
     console.error("Mission ack error:", err.message);
     io.emit("mission-ack", { text: fallback, status: null, timestamp: Date.now() });
+    recorder.mark("sage", fallback);
   }
 }
 
@@ -676,10 +775,8 @@ function readingLines(data) {
     `Temperature: ${data.temp}°C [${s.temp}]`,
     `Humidity: ${data.humid}%`,
     data.pressure ? `Pressure: ${data.pressure} hPa` : null,
+    data.pressure ? `Elevation: ${Math.round(data.alt)} m relative to where you started` : null,
     `Distance to the rock face ahead: ${data.dist} cm [${s.dist}]`,
-    data.smoke ? `Smoke/gas level: ${data.smoke} [${s.smoke}]` : null,
-    data.airq ? `Air quality: ${data.airq} [${s.airq}]` : null,
-    data.co ? `Combustible gas: ${data.co} [${s.co}]` : null,
     (data.roll || data.pitch || data.yaw) ? `Tilt: roll ${data.roll}°, pitch ${data.pitch}°, yaw ${data.yaw}°` : null,
   ].filter(Boolean).join("\n");
 }
@@ -726,9 +823,11 @@ async function runAiAnalysis(mode, focus) {
       { role: "user", content: eyes.length ? [{ type: "text", text: promptText }, ...eyes] : promptText },
     ], { maxTokens: 400 });
     io.emit("ai-analysis", { analysis: sage.text || "No analysis returned.", status: sage.status, timestamp: Date.now() });
+    recorder.mark("analysis", sage.text || "No analysis returned.");
   } catch (err) {
     console.error("AI analysis error:", err.message);
     io.emit("ai-analysis", { error: err.message, timestamp: Date.now() });
+    recorder.mark("analysis", "analysis failed: " + err.message);
   } finally {
     io.emit("cam-resume");
   }
@@ -861,12 +960,14 @@ else console.log("USB serial auto-connect off — select a port in the dashboard
 
 // connected dashboards. the host is whoever loaded this over loopback — the operator's
 // own laptop. everything else is a tablet: telemetry only until the host grants it drive.
-const clients = new Map(); // socket.id -> { ip, kind, host, granted }
+const clients = new Map(); // socket.id -> { ip, kind, host, mode, granted }
 // grants are held by ip, not socket.id: a tablet that drops wifi for two seconds
 // reconnects as a new socket, and re-granting it blind mid-run is worse than
 // remembering. IMPORTANT NOTE: ip is the identity — dhcp handing that lease to
 // another device would inherit the grant. fine for a match-length competition lan.
-const grants = new Set();
+// mode: "mirror" (telemetry) | "judge" (telemetry, presentation layout) | "full" (drive).
+// granted is just mode === "full" — the client and the cmd gate below still read that.
+const grants = new Map(); // ip -> mode
 const isHost = (s) => ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(s.handshake.address);
 const kindOf = (ua = "") => /iPad|Tablet/.test(ua) ? "iPad" : /iPhone/.test(ua) ? "iPhone"
   : /Android/.test(ua) ? "Android" : /Macintosh/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "device";
@@ -876,10 +977,11 @@ io.on("connection", (socket) => {
   console.log("Client connected");
   const host = isHost(socket);
   const ip = String(socket.handshake.address).replace("::ffff:", "");
+  const mode = host ? "full" : (grants.get(ip) || "mirror");
   clients.set(socket.id, {
     ip,
     kind: kindOf(socket.handshake.headers["user-agent"]),
-    host, granted: host || grants.has(ip),
+    host, mode, granted: mode === "full",
   });
   pushClients();
   socket.on("disconnect", () => { clients.delete(socket.id); pushClients(); });
@@ -888,11 +990,11 @@ io.on("connection", (socket) => {
     if (!isHost(socket)) return;
     const c = clients.get(d?.id);
     if (!c || c.host) return;
-    c.granted = !!d?.on;
-    if (c.granted) grants.add(c.ip); else grants.delete(c.ip);
-    // the grant belongs to the device, so a revoke has to catch its other tabs too.
-    for (const o of clients.values()) if (!o.host && o.ip === c.ip) o.granted = c.granted;
-    console.log(`Control ${c.granted ? "granted to" : "revoked from"} ${c.ip} (${c.kind})`);
+    const m = ["mirror", "judge", "full"].includes(d?.mode) ? d.mode : "mirror";
+    if (m === "mirror") grants.delete(c.ip); else grants.set(c.ip, m);
+    // the mode belongs to the device, so it has to catch its other tabs too.
+    for (const o of clients.values()) if (!o.host && o.ip === c.ip) { o.mode = m; o.granted = m === "full"; }
+    console.log(`${c.ip} (${c.kind}) set to ${m}`);
     pushClients();
   });
   if (latestData) socket.emit("sensor-data", latestData);
@@ -923,20 +1025,46 @@ io.on("connection", (socket) => {
   socket.on("mock-data", () => {
     const r = (lo, hi, d = 0) => +(lo + Math.random() * (hi - lo)).toFixed(d);
     latestData = {
-      temp: r(20, 50, 1), humid: r(20, 90, 1), pressure: r(980, 1030, 1), dist: r(10, 200),
+      // pressure jitters over a few hPa, not the full 980-1030 range: elevation is
+      // relative now, and a 50 hPa swing reads as the rover teleporting 400m.
+      temp: r(20, 50, 1), humid: r(20, 90, 1), pressure: r(1011, 1015, 1), dist: r(10, 200),
       smoke: r(0, 800), airq: r(50, 900), co: r(0, 600),
       co_alert: Math.random() > 0.7,
       roll: r(-8, 8, 1), pitch: r(-8, 8, 1), yaw: r(0, 30, 1), // keep rover ~level
 
       timestamp: Date.now(),
     };
+    latestData.alt = Math.round(altitudeM(latestData.pressure) * 100) / 100;
     console.log("Mock data injected");
     io.emit("sensor-data", latestData);
     runAiAnalysis();
   });
 });
 
+// --- mdns: answer to blackout.local ---
+// the judges' tablet needs one address that survives dhcp. macos already
+// advertises the laptop's own hostname, but that name follows the laptop, not
+// the robot — this pins the rover's dashboard to the same naming as
+// blackout-cam.local. ios resolves .local natively, so it's http://blackout.local:PORT
+// in safari and nothing to type twice.
+// IMPORTANT NOTE: unicast responses only for A queries we're asked for. no
+// service (_http._tcp) record — nothing browses for one, add it if a client does.
+const MDNS_HOST = process.env.MDNS_HOST || "blackout.local";
+const mdnsServer = require("multicast-dns")();
+mdnsServer.on("query", (q) => {
+  const want = q.questions.find(
+    (x) => (x.type === "A" || x.type === "ANY") && x.name.toLowerCase() === MDNS_HOST
+  );
+  if (!want) return;
+  const ip = lanIp();
+  if (!ip) return;
+  mdnsServer.respond({
+    answers: [{ name: MDNS_HOST, type: "A", ttl: 120, data: ip }],
+  });
+});
+
 server.listen(PORT, () => {
   console.log(`Server at http://localhost:${PORT}`);
+  console.log(`Tablet:   http://${MDNS_HOST}:${PORT}`);
   pregenOnboarding(); // warm onboarding audio cache (skips already-generated clips)
 });

@@ -601,7 +601,9 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .tier ul{list-style:none;display:flex;flex-wrap:wrap;gap:8px}
 .tier li{font-size:12.5px;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 14px}
 .tier li.open{color:var(--dim);border-style:dashed}
-.tier li img{height:22px;width:auto;filter:grayscale(1) brightness(1.6);opacity:.9}
+/* IMPORTANT NOTE: sponsor logos keep their own white background — cutting it out kills
+   artwork drawn for white paper. Rounded so the white block reads as a chip. */
+.tier li img{height:40px;width:auto;border-radius:6px;filter:grayscale(1);opacity:.9}
 .tier li a:hover img{filter:none;opacity:1}
 .tier li a:hover{color:var(--accent)}
 .more{margin-top:22px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
@@ -794,8 +796,8 @@ footer nav a:hover{color:var(--accent)}
                 <div class="foot-menu-pop">
                   <span class="menu-label" data-i18n="app.askPick">Suggested questions</span>
                   <button type="button" class="menu-item" data-ask="0" data-i18n="app.askS0">What's ahead?</button>
-                  <button type="button" class="menu-item" data-ask="1" data-i18n="app.askS1">Is the air breathable?</button>
-                  <button type="button" class="menu-item" data-ask="2" data-i18n="app.askS2">Any gas danger?</button>
+                  <button type="button" class="menu-item" data-ask="1" data-i18n="app.askS1">Is it too hot in there?</button>
+                  <button type="button" class="menu-item" data-ask="2" data-i18n="app.askS2">How humid is it?</button>
                   <button type="button" class="menu-item" data-ask="3" data-i18n="app.askS3">Are we level?</button>
                   <button type="button" class="menu-item" data-ask="4" data-i18n="app.askS4">Push on or back out?</button>
                 </div>
@@ -1005,21 +1007,21 @@ const DICT = {
       agent: "Agent", session: "← Sessions · Cave survey", sageOnline: "Online", sageHello: "I'll help you with anything.",
       voiceEdge: "🔊 Voice · Edge",
       more: "More actions", askPick: "Suggested questions",
-      askS0: "What's ahead?", askS1: "Is the air breathable?", askS2: "Any gas danger?",
+      askS0: "What's ahead?", askS1: "Is it too hot in there?", askS2: "How humid is it?",
       askS3: "Are we level?", askS4: "Push on or back out?",
       runAnalysis: "Run Analysis", analyzing: "Analyzing…",
       history: "History · {n}", histEmpty: "Nothing asked yet.", thinking: "Thinking…",
       intentIdle: "Standby", intentScanning: "Scanning", intentThinking: "Analyzing",
       intentClear: "All Clear", intentCaution: "Caution",
       entryStatus: "Entry Status", verdictSafe: "Safe", verdictCaution: "Caution",
-      verdictNominal: "All readings nominal", verdictAir: "Air quality · Elevated",
+      verdictNominal: "All readings nominal", verdictAir: "Temperature · Elevated",
       verdictDist: "Distance · Close",
       sageA0: "Gallery runs on about four metres, then bends left. 62 cm to the near wall, floor is dry, nothing moving.",
-      sageA1: "Air quality reads 430 ppm and holding, 24 °C, 58 % humidity. Breathable — I'd still keep the run short.",
-      sageA2: "CO₂ is climbing down the left branch — 780 ppm and rising. Not dangerous yet, but I wouldn't take that fork.",
+      sageA1: "It's 24 °C in here and steady, 58 % humidity. Comfortable — I'd still keep the run short.",
+      sageA2: "It's warming up down the left branch — 38 °C and climbing. Not dangerous yet, but I wouldn't take that fork.",
       sageA3: "Roll 2°, pitch −4°. Slightly nose-down, well inside what the chassis handles.",
       sageA4: "Push on. Readings are steady, the wall on my right is 17 cm off, and there's room to turn around at the bend.",
-      sageARun: "Full sweep done. Wall on my right at 17 cm, air clean, chassis level. Painted surface on the left is worth a second look.",
+      sageARun: "Full sweep done. Wall on my right at 17 cm, chassis level, nothing overheating. Painted surface on the left is worth a second look.",
       blkFwd: "forward", blkBack: "back", blkLeft: "turn left", blkRight: "turn right", blkSay: "say",
       blkRun: "Run", blkClear: "Clear", blkTape: "The real editor",
       blkEmpty: "Tap a block to add it. Tap a step to drop it.", blkDone: "routine finished"
@@ -1072,7 +1074,7 @@ const DICT = {
       shot2: "La vista FPV a pantalla completa: imagen de cámara, cinta de rumbo, retícula de distancia y la barra de voz de Sage.",
       shot2h: "Modo FPV", shot2p: "Un toque y toda la pantalla se vuelve la cámara — cinta de rumbo, retícula de distancia, Sage hablando encima.",
       shot3: "El panel de Sage, con estado de entrada SAFE, una respuesta hablada y un botón para correr el análisis.",
-      shot3h: "Sage, en línea", shot3p: "Ya informado de la misión, Sage anuncia el estado de entrada, narra lo que ve la cámara y responde en el momento en que le preguntas algo.",
+      shot3h: "Sage, a la orden", shot3p: "Ya informado de la misión, Sage anuncia el estado de entrada, narra lo que ve la cámara y responde en el momento en que le preguntas algo.",
       shot4: "Una grabación del editor BLK: un bloque arrastrado desde la paleta, su duración reescrita, y luego la rutina corriendo en el simulador.",
       shot4h: "Rutinas BLK", shot4p: "Junta unos bloques y el róver corre la misión solo — la rutina sigue aunque se pierda el enlace con ella.",
       hint1: "Elige un ángulo · libre para orbitar →", hint2: "Mueve el cursor sobre la imagen →", hint3: "Pregúntale algo →", hint4: "Arma una y córrela · pasa el cursor por el video →",
@@ -1082,21 +1084,21 @@ const DICT = {
       agent: "Agente", session: "← Sesiones · Reconocimiento de cueva", sageOnline: "En Línea", sageHello: "Te ayudo con lo que sea.",
       voiceEdge: "🔊 Voz · Edge",
       more: "Más acciones", askPick: "Preguntas sugeridas",
-      askS0: "¿Qué hay adelante?", askS1: "¿El aire es respirable?", askS2: "¿Hay peligro de gas?",
+      askS0: "¿Qué hay adelante?", askS1: "¿Hace demasiado calor?", askS2: "¿Cuánta humedad hay?",
       askS3: "¿Estamos nivelados?", askS4: "¿Seguir o retroceder?",
       runAnalysis: "Ejecutar Análisis", analyzing: "Analizando…",
       history: "Historial · {n}", histEmpty: "Nada preguntado aún.", thinking: "Pensando…",
       intentIdle: "En Espera", intentScanning: "Escaneando", intentThinking: "Analizando",
       intentClear: "Todo Despejado", intentCaution: "Precaución",
       entryStatus: "Estado de Entrada", verdictSafe: "Seguro", verdictCaution: "Precaución",
-      verdictNominal: "Todas las lecturas nominales", verdictAir: "Calidad del aire · Elevada",
+      verdictNominal: "Todas las lecturas nominales", verdictAir: "Temperatura · Elevada",
       verdictDist: "Distancia · Cerca",
       sageA0: "La galería sigue unos cuatro metros y dobla a la izquierda. 62 cm hasta la pared más cercana, el suelo está seco, nada se mueve.",
-      sageA1: "Calidad del aire en 430 ppm y estable, 24 °C, 58 % de humedad. Respirable — aun así haría la incursión corta.",
-      sageA2: "El CO₂ sube por el ramal izquierdo — 780 ppm y subiendo. Todavía no es peligroso, pero yo no tomaría esa bifurcación.",
+      sageA1: "Estamos a 24 °C y estable, 58 % de humedad. Cómodo — aun así haría la incursión corta.",
+      sageA2: "La temperatura sube por el ramal izquierdo — 38 °C y subiendo. Todavía no es peligroso, pero yo no tomaría esa bifurcación.",
       sageA3: "Alabeo 2°, cabeceo −4°. Un poco de morro abajo, bien dentro de lo que aguanta el chasis.",
       sageA4: "Sigue. Las lecturas están estables, la pared a mi derecha está a 17 cm y hay espacio para dar la vuelta en la curva.",
-      sageARun: "Barrido completo. Pared a mi derecha a 17 cm, aire limpio, chasis nivelado. La superficie pintada de la izquierda merece una segunda mirada.",
+      sageARun: "Barrido completo. Pared a mi derecha a 17 cm, chasis nivelado, nada se sobrecalienta. La superficie pintada de la izquierda merece una segunda mirada.",
       blkFwd: "avanzar", blkBack: "retroceder", blkLeft: "girar izq.", blkRight: "girar der.", blkSay: "decir",
       blkRun: "Correr", blkClear: "Borrar", blkTape: "El editor real",
       blkEmpty: "Toca un bloque para añadirlo. Toca un paso para quitarlo.", blkDone: "rutina terminada"
@@ -1112,14 +1114,14 @@ const DICT = {
     },
     roadmap: {
       eyebrow: "Biblioteca de modelos", h2: "Cada versión reescribe la anterior.",
-      lede: "Abre un modelo para leer su ficha."
+      lede: "Elige un modelo para leer su ficha."
     },
     sponsors: {
       eyebrow: "Patrocinadores", h2: "Nadie financia la oscuridad solo.",
       diamond: "Diamante", platinum: "Platino", standard: "Estándar",
       open: "Plaza libre", cta: "Todos los rangos", contact: "¿Quieres una plaza? Habla con el equipo."
     },
-    finale: { h2: 'Más exploraciones, menos riesgos, <span>más descubrimientos.</span>' },
+    finale: { h2: 'Dando forma a la arqueología con <span>robótica.</span>' },
     footer: { p: "Un proyecto de WRO 2026 Future Innovators.", lang: "Idioma" }
   },
   zh: {
@@ -1159,21 +1161,21 @@ const DICT = {
       agent: "智能体", session: "← 会话 · 洞穴勘察", sageOnline: "在线", sageHello: "有什么需要，我随时帮忙。",
       voiceEdge: "🔊 语音 · Edge",
       more: "更多操作", askPick: "推荐问题",
-      askS0: "前方有什么？", askS1: "空气可以呼吸吗？", askS2: "有气体危险吗？",
+      askS0: "前方有什么？", askS1: "里面太热了吗？", askS2: "湿度是多少？",
       askS3: "我们水平吗？", askS4: "继续前进还是退出？",
       runAnalysis: "运行分析", analyzing: "分析中…",
       history: "历史记录 · {n}", histEmpty: "还没有提问。", thinking: "思考中…",
       intentIdle: "待机", intentScanning: "扫描中", intentThinking: "分析中",
       intentClear: "一切正常", intentCaution: "注意",
       entryStatus: "入口状态", verdictSafe: "安全", verdictCaution: "注意",
-      verdictNominal: "所有读数正常", verdictAir: "空气质量 · 偏高",
+      verdictNominal: "所有读数正常", verdictAir: "温度 · 偏高",
       verdictDist: "距离 · 接近",
       sageA0: "通道向前延伸约四米后向左弯。距近侧墙 62 厘米，地面干燥，没有移动物。",
-      sageA1: "空气质量 430 ppm 且保持稳定，24 °C，湿度 58%。可以呼吸——但我仍建议缩短任务。",
-      sageA2: "左侧分支的 CO₂ 在上升——780 ppm 且继续攀升。目前还不危险，但我不会走那条岔路。",
+      sageA1: "这里 24 °C 且保持稳定，湿度 58%。很舒适——但我仍建议缩短任务。",
+      sageA2: "左侧分支正在升温——38 °C 且继续攀升。目前还不危险，但我不会走那条岔路。",
       sageA3: "横滚 2°，俯仰 −4°。略微前倾，完全在底盘可承受范围内。",
       sageA4: "继续前进。读数稳定，我右侧的墙在 17 厘米外，弯道处有足够空间掉头。",
-      sageARun: "全面扫描完成。右侧墙距 17 厘米，空气洁净，底盘水平。左侧的彩绘表面值得再看一眼。",
+      sageARun: "全面扫描完成。右侧墙距 17 厘米，底盘水平，没有过热。左侧的彩绘表面值得再看一眼。",
       blkFwd: "前进", blkBack: "后退", blkLeft: "左转", blkRight: "右转", blkSay: "说出",
       blkRun: "运行", blkClear: "清空", blkTape: "真实编辑器",
       blkEmpty: "点击方块以添加。点击步骤以移除。", blkDone: "例行程序已完成"
