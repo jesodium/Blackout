@@ -67,3 +67,5 @@ server/workflows/
 # Instagram post frames + exports — local marketing work, not the build
 docs/marketing/
 cmds/marketing.sh
+# Recorded runs — mission output, not source
+server/recordings/

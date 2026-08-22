@@ -1,17 +1,19 @@
 // l298n test. both motors forward at speed for 2s, stop 2s, repeat.
-// ena/enb jumper caps off, wires: ena -> d3, enb -> d10.
+// ena/enb jumper caps off. pins follow the loom's colours, not connector order:
+// ena->d3 gris, in1->d2 morado, in2->d7 azul, in3->d6 verde, in4->d4 amarillo,
+// enb->d10 naranja. keep in step with main.ino.
 // d13 mirrors the drive phase — lit = motors should be turning.
-#define IN1 4
-#define IN2 5
-#define IN3 6
-#define IN4 7
 #define ENA 3
+#define IN1 2  // morado — see main.ino: the loom is wired by colour, not in order
+#define IN2 7  // azul
+#define IN3 6  // verde
+#define IN4 4  // amarillo
 #define ENB 10
 #define SPEED 120 // 0-255. loaded/geared motors may need 150+ to break stiction.
                   // buzzing but not turning = raise this, not a wiring fault.
 
 void setup() {
-  for (int p = IN1; p <= IN4; p++) pinMode(p, OUTPUT);
+  for (uint8_t p : {IN1, IN2, IN3, IN4}) pinMode(p, OUTPUT);
   pinMode(ENA, OUTPUT); pinMode(ENB, OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);  // motor a forward

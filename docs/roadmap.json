@@ -7,8 +7,8 @@
     "image": "assets/v1-rover.jpg",
     "en": {
       "state": "Retired",
-      "desc": "Two boards and a relay. A Mega read the sensors, an Uno drove the motors, an ESP32 carried Bluetooth between them.",
-      "cap": "V1 · the two-board build",
+      "desc": "Three boards and a relay. A Mega read the sensors, an Uno drove the motors, an ESP32 carried Bluetooth between them.",
+      "cap": "V1 · the three-board build",
       "stats": [
         { "label": "Lines of code", "value": "3,658" },
         { "label": "Boards", "value": "3" },
@@ -23,8 +23,8 @@
     },
     "es": {
       "state": "Retirado",
-      "desc": "Dos placas y un relé. Una Mega leía los sensores, una Uno manejaba los motores, y un ESP32 llevaba Bluetooth entre ambas.",
-      "cap": "V1 · la versión de dos placas",
+      "desc": "Tres placas y un relé. Una Mega leía los sensores, una Uno manejaba los motores, y un ESP32 llevaba Bluetooth entre ellas.",
+      "cap": "V1 · la versión de tres placas",
       "stats": [
         { "label": "Líneas de código", "value": "3.658" },
         { "label": "Placas", "value": "3" },
@@ -39,8 +39,8 @@
     },
     "zh": {
       "state": "已退役",
-      "desc": "两块板卡和一个继电器。一块 Mega 读取传感器，一块 Uno 驱动电机，一块 ESP32 负责它们之间的蓝牙通信。",
-      "cap": "V1 · 双板卡版本",
+      "desc": "三块板卡和一个继电器。一块 Mega 读取传感器，一块 Uno 驱动电机，一块 ESP32 负责它们之间的蓝牙通信。",
+      "cap": "V1 · 三板卡版本",
       "stats": [
         { "label": "代码行数", "value": "3,658" },
         { "label": "板卡", "value": "3" },
@@ -61,7 +61,7 @@
     "thumb": "assets/rover.jpg",
     "image": "assets/rover-cave.jpg",
     "en": {
-      "state": "Soon phased out",
+      "state": "Phased out",
       "desc": "Collapsed to a single Uno R4 WiFi, added the ESP32-CAM on its own network, and introduced Sage as the voice of the robot.",
       "stats": [
         { "label": "Lines of code", "value": "6,398" },
@@ -77,7 +77,7 @@
       "cap": "V2 · in the cave"
     },
     "es": {
-      "state": "Pronto retirado",
+      "state": "Retirado",
       "desc": "Se redujo a una sola Uno R4 WiFi, se añadió la ESP32-CAM en su propia red, y se presentó a Sage como la voz del robot.",
       "stats": [
         { "label": "Líneas de código", "value": "6.398" },
@@ -93,7 +93,7 @@
       "cap": "V2 · en la cueva"
     },
     "zh": {
-      "state": "即将退役",
+      "state": "已退役",
       "desc": "精简为单块 Uno R4 WiFi，ESP32-CAM 接入独立网络，并引入 Sage 作为机器人的语音。",
       "stats": [
         { "label": "代码行数", "value": "6,398" },
@@ -111,7 +111,7 @@
   },
   {
     "version": "V3",
-    "codename": "Magnum",
+    "codename": "Vortex",
     "now": true,
     "thumb": null,
     "image": null,
@@ -129,7 +129,10 @@
         { "label": "Speaks its findings", "has": true },
         { "label": "MCP server support", "has": false },
         { "label": "Redesigned, smarter Sage", "has": true },
-        { "label": "Expansion ports", "has": false }
+        { "label": "Expansion ports", "has": false },
+        { "label": "Higher torque drivetrain", "has": true },
+        { "label": "Bigger design", "has": true },
+        { "label": "BLK language support", "has": true }
       ]
     },
     "es": {
@@ -145,8 +148,11 @@
         { "label": "Cámara", "has": true },
         { "label": "Habla sus hallazgos", "has": true },
         { "label": "Soporte de servidor MCP", "has": false },
-        { "label": "Sage rediseñada y más lista", "has": false },
-        { "label": "Puertos de expansión", "has": false }
+        { "label": "Sage rediseñada y más lista", "has": true },
+        { "label": "Puertos de expansión", "has": false },
+        { "label": "Tren motriz de mayor par", "has": true },
+        { "label": "Diseño más grande", "has": true },
+        { "label": "Soporte del lenguaje BLK", "has": true }
       ]
     },
     "zh": {
@@ -162,8 +168,11 @@
         { "label": "摄像头", "has": true },
         { "label": "能说出发现", "has": true },
         { "label": "MCP 服务器支持", "has": false },
-        { "label": "全新设计、更聪明的 Sage", "has": false },
-        { "label": "扩展端口", "has": false }
+        { "label": "全新设计、更聪明的 Sage", "has": true },
+        { "label": "扩展端口", "has": false },
+        { "label": "更大扭矩的传动系统", "has": true },
+        { "label": "更大的设计", "has": true },
+        { "label": "BLK 语言支持", "has": true }
       ]
     }
   },
