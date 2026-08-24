@@ -15,13 +15,28 @@ const { eyeParts, grabFrames, setLed, getLed, pingCam } = require("./vision");
 const { parseSage } = require("./sage");
 const recorder = require("./recorder");
 
-const openai = new OpenAI({
-  baseURL: "https://api.cerebras.ai/v1",
-  // "unset" keeps the client constructable with no key (fresh desktop install,
-  // no .env yet) — the dashboard must boot; Sage calls just fail with an auth
-  // error until a real key lands in settings.
-  apiKey: process.env.CEREBRAS_API_KEY || "unset",
-});
+// Sage's brain: Gemini first, Cerebras only as a fallback (it went paid). Both speak
+// the OpenAI chat api, so one sdk covers both — only baseURL/key/model differ. A key
+// that isn't set drops that provider off the list; an empty list means no AI at all,
+// and the dashboard must still boot (fresh desktop install, no .env yet) — every
+// route checks hasAI and answers 503 instead of throwing.
+const BRAINS = [
+  ["gemini", process.env.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/", process.env.GEMINI_MODEL || "gemini-2.5-flash"],
+  ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "gemma-4-31b"],
+].filter(([, key]) => key).map(([name, key, baseURL, model]) => ({ name, model, client: new OpenAI({ baseURL, apiKey: key }) }));
+const hasAI = BRAINS.length > 0;
+
+// one call, tried down the list. IMPORTANT NOTE: any error falls through to the next
+// provider — a bad prompt costs one wasted retry, which is cheaper than telling a
+// rate-limit apart from an outage from the sdk's error shapes.
+async function chat(params) {
+  let last;
+  for (const b of BRAINS) {
+    try { return await b.client.chat.completions.create({ model: b.model, ...params }); }
+    catch (e) { last = e; console.error(`${b.name} failed:`, e.message); }
+  }
+  throw last || new Error("AI key not set");
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -119,7 +134,7 @@ app.get("/api/tts/providers", (req, res) => {
 // ask-questions mode: operator chats with sage. client sends the running
 // message array (no server-side history); we prepend persona + live telemetry.
 app.post("/api/chat", async (req, res) => {
-  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  if (!hasAI) return res.status(503).json({ error: "AI key not set" });
   const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-12) : [];
   if (!msgs.length) return res.status(400).json({ error: "messages required" });
   const lang = LANG_INSTRUCT[req.body?.lang] ? req.body.lang : "en";
@@ -150,7 +165,7 @@ app.post("/api/chat", async (req, res) => {
 // the camera is fixed forward — it used to ride a pin-9 servo and this grabbed
 // several stills across a slow pan, hence the frame-count arg below.
 app.post("/api/scan", async (req, res) => {
-  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  if (!hasAI) return res.status(503).json({ error: "AI key not set" });
   try {
     // 1 frame: the view no longer moves, so extra stills would be the same picture
     // at more base64 bytes — and 4 svga stills blow past cerebras' request cap (413).
@@ -299,7 +314,7 @@ app.get("/api/lan", (req, res) => {
 // request counts as unreachable. cached, because every dashboard on the lan polls it.
 // the api roots, not real endpoints: the question is only whether the host answers at
 // all. an authenticated path hangs for an unauthenticated probe and reads as "offline".
-const CLOUD_HOSTS = { sage: "https://api.cerebras.ai/", tts: "https://api.deepgram.com/" };
+const CLOUD_HOSTS = { sage: "https://generativelanguage.googleapis.com/", tts: "https://api.deepgram.com/" };
 let cloudSeen = { at: 0, state: null };
 app.get("/api/cloud", async (_req, res) => {
   if (cloudSeen.state && Date.now() - cloudSeen.at < 25000) return res.json(cloudSeen.state);
@@ -372,7 +387,7 @@ const BLK_SAGE_JOB =
   "If they want mistakes found or the program improved, say what's wrong or what you changed in a couple of lines, then give the corrected/improved complete program.";
 
 app.post("/api/blk-sage", async (req, res) => {
-  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  if (!hasAI) return res.status(503).json({ error: "AI key not set" });
   const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-20) : [];
   if (!msgs.length) return res.status(400).json({ error: "messages required" });
   const program = String(req.body?.program || "").slice(0, 8000);
@@ -383,8 +398,7 @@ app.post("/api/blk-sage", async (req, res) => {
     }
     const d = freshData();
     if (d) ctx.push({ role: "system", content: `Live readings right now (useful for picking thresholds):\n${readingLines(d)}` });
-    const resp = await openai.chat.completions.create({
-      model: process.env.CEREBRAS_MODEL || "gemma-4-31b",
+    const resp = await chat({
       messages: [
         { role: "system", content: BLK_SYSTEM },
         ...ctx,
@@ -403,8 +417,7 @@ app.post("/api/blk-sage", async (req, res) => {
 // to a tiny json shape and anything unparseable reads as "no".
 async function sageDecide(question, { images = [], extra = "" } = {}) {
   const text = `${question}\n\n${extra}\nAnswer with JSON only: {"yes": true|false, "why": "<one short sentence>"}`;
-  const resp = await openai.chat.completions.create({
-    model: process.env.CEREBRAS_MODEL || "gemma-4-31b",
+  const resp = await chat({
     messages: [
       { role: "system", content: CHAT_SYSTEM },
       { role: "system", content: "In this turn you are making a yes/no call for a running workflow. Reply with the JSON object and nothing else." },
@@ -424,7 +437,7 @@ async function sageDecide(question, { images = [], extra = "" } = {}) {
 
 // `ask <question>` — judged from telemetry (+ the live view when there is one).
 app.post("/api/blk-ask", async (req, res) => {
-  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  if (!hasAI) return res.status(503).json({ error: "AI key not set" });
   const question = String(req.body?.question || "").trim().slice(0, 400);
   if (!question) return res.status(400).json({ error: "question required" });
   try {
@@ -445,7 +458,7 @@ app.post("/api/blk-ask", async (req, res) => {
 // `find <thing>` — camera-backed: is that thing in view right now? a hit is
 // logged to the analysis panel like any other discovery.
 app.post("/api/blk-find", async (req, res) => {
-  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  if (!hasAI) return res.status(503).json({ error: "AI key not set" });
   const thing = String(req.body?.thing || "").trim().slice(0, 200);
   if (!thing) return res.status(400).json({ error: "thing required" });
   try {
@@ -598,8 +611,7 @@ function recordFinding(text, dataUrl) {
 // caller goes through here, so the lamp and finding hooks live here too — the lamp
 // fire-and-forget, since a cam that won't answer must not stall the reply.
 async function askSage(messages, { maxTokens = 400 } = {}) {
-  const resp = await openai.chat.completions.create({
-    model: process.env.CEREBRAS_MODEL || "gemma-4-31b",
+  const resp = await chat({
     messages,
     max_tokens: maxTokens,
   });
@@ -741,7 +753,7 @@ async function ackMission(text) {
   const fallback = currentLanguage === "es"
     ? "Recibido. Misión confirmada — entrando."
     : "Copy that. Mission's locked in — heading in.";
-  if (!process.env.CEREBRAS_API_KEY) {
+  if (!hasAI) {
     io.emit("mission-ack", { text: fallback, status: null, timestamp: Date.now() });
     recorder.mark("sage", fallback);
     return;
@@ -801,7 +813,7 @@ async function runAiAnalysis(mode, focus) {
   // always emit a result: the dashboard locks into "analyzing" on request and only
   // an ai-analysis event releases it, so a silent return here = infinite spinner.
   const data = freshData();
-  if (!process.env.CEREBRAS_API_KEY || !data) {
+  if (!hasAI || !data) {
     io.emit("ai-analysis", { error: data ? "AI key not set" : "No telemetry yet.", timestamp: Date.now() });
     return;
   }

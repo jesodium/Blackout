@@ -2086,7 +2086,7 @@ function DevicesModal({ open, clients, selfId, onMode, onClose }) {
    through main.js; the server only picks up changes on relaunch since it's
    forked once at launch. */
 function SettingsModal({ open, onClose }) {
-  const [values, setValues] = useState({ CEREBRAS_API_KEY: "", DEEPGRAM_API_KEY: "", CEREBRAS_MODEL: "", TTS_VOICE: "" });
+  const [values, setValues] = useState({ GEMINI_API_KEY: "", GEMINI_MODEL: "", CEREBRAS_API_KEY: "", DEEPGRAM_API_KEY: "", CEREBRAS_MODEL: "", TTS_VOICE: "" });
   const [saved, setSaved] = useState(false);
   useEffect(() => { window.blackout.getSettings().then(setValues); }, []);
   const set = (k) => (e) => { setSaved(false); setValues(v => ({ ...v, [k]: e.target.value })); };
@@ -2105,9 +2105,11 @@ function SettingsModal({ open, onClose }) {
           <button type="button" class="blk-modal-x" onClick=${onClose} aria-label=${t("update.close")}>✕</button>
         </div>
         <div class="settings-body">
-          ${field("CEREBRAS_API_KEY", t("settings.cerebrasKey"), t("settings.unset"), "password")}
-          ${field("DEEPGRAM_API_KEY", t("settings.deepgramKey"), t("settings.optional"), "password")}
+          ${field("GEMINI_API_KEY", t("settings.geminiKey"), t("settings.unset"), "password")}
+          ${field("GEMINI_MODEL", t("settings.geminiModel"), "gemini-2.5-flash")}
+          ${field("CEREBRAS_API_KEY", t("settings.cerebrasKey"), t("settings.optional"), "password")}
           ${field("CEREBRAS_MODEL", t("settings.cerebrasModel"), "gemma-4-31b")}
+          ${field("DEEPGRAM_API_KEY", t("settings.deepgramKey"), t("settings.optional"), "password")}
           ${field("TTS_VOICE", t("settings.ttsVoice"), "en-US-AndrewNeural")}
         </div>
         <div class="settings-actions">
@@ -2467,6 +2469,10 @@ function App() {
   const lastBands = useRef({}); // per-metric severity, to detect when something newly worsens
   useEffect(() => { lastBands.current = {}; }, [activeId]); // fresh findings per session
 
+  // blk + the report read telemetry outside react's render (a ref, not state,
+  // so an interpreter tick sees the latest packet without re-subscribing)
+  const packetRef = useRef(null);
+  useEffect(() => { packetRef.current = packet; }, [packet]);
   const view = packet;
 
   const addLog = useCallback((text, type = "system") => {
