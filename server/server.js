@@ -20,26 +20,44 @@ const recorder = require("./recorder");
 // that isn't set drops that provider off the list; an empty list means no AI at all,
 // and the dashboard must still boot (fresh desktop install, no .env yet) — every
 // route checks hasAI and answers 503 instead of throwing.
+// IMPORTANT NOTE: reasoning_effort "minimal" is not a style knob, it's the whole
+// latency budget — gemini 3.6 is a thinking model and its thinking counts against
+// max_tokens, so a default call spent ~350 hidden tokens and 4-20s before writing a
+// word, then got cut off mid-json (which is why a raw `{"text": "All systems…` leaked
+// to the panel instead of parsing). Sage summarises numbers the server already
+// judged in statuses(); there is nothing to reason about. Only gemini takes it —
+// cerebras 400s on "minimal", hence per-brain tune rather than one global param.
+// Also measured: response_format json_object costs 10x the latency here for output
+// parseSage already handles fenced — don't add it.
 const BRAINS = [
-  ["gemini", process.env.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/", process.env.GEMINI_MODEL || "gemini-3.6-flash"],
-  ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "gemma-4-31b"],
-].filter(([, key]) => key).map(([name, key, baseURL, model]) => ({ name, model, client: new OpenAI({ baseURL, apiKey: key }) }));
+  ["gemini", process.env.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/", process.env.GEMINI_MODEL || "gemini-3.6-flash", { reasoning_effort: "minimal" }],
+  ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "gpt-oss-120b", {}],
+].filter(([, key]) => key).map(([name, key, baseURL, model, tune]) => ({ name, model, tune, client: new OpenAI({ baseURL, apiKey: key }) }));
 const hasAI = BRAINS.length > 0;
 
-// one call, tried down the list, then the whole list once more. IMPORTANT NOTE: any
-// error falls through to the next provider — a bad prompt costs one wasted retry, which
-// is cheaper than telling a rate-limit apart from an outage from the sdk's error shapes.
-// The second pass is for gemini's transient bodyless 402/429s: the same request goes
-// through seconds later, so one retry beats an analyse that just gives up. A request
-// that's actually wrong (404 on a retired model name) fails both passes and says so.
+// one call, tried down the list, then the list once more for anything still alive.
+// IMPORTANT NOTE: these statuses are permanent for the life of the process — an
+// unpaid key (cerebras answers a bodyless 402), a revoked one, or a retired model
+// name never becomes valid by being asked again, and every retry of one is a round
+// trip of latency on the reply the operator is waiting for. So a brain that answers
+// one of them is dropped, loudly, and the rest of the run is the brains that work.
+// Everything else (429, 5xx, a socket dying) is transient and gets the second pass.
+const BRAIN_DEAD = new Set([401, 402, 403, 404]);
+
 async function chat(params) {
   let last;
   for (let pass = 0; pass < 2; pass++) {
     for (const b of BRAINS) {
-      try { return await b.client.chat.completions.create({ model: b.model, ...params }); }
-      catch (e) { last = e; console.error(`${b.name} failed${pass ? " (retry)" : ""}:`, e.status || "", e.message); }
+      if (b.dead) continue;
+      try { return await b.client.chat.completions.create({ model: b.model, ...b.tune, ...params }); }
+      catch (e) {
+        last = e;
+        if (BRAIN_DEAD.has(e.status)) b.dead = e.status;
+        console.error(`${b.name} (${b.model}) failed:`, e.status || "", e.message, b.dead ? "— dropping it for this session" : "");
+      }
     }
-    await new Promise(r => setTimeout(r, 800));
+    if (BRAINS.every((b) => b.dead)) break; // nothing left to retry
+    await new Promise((r) => setTimeout(r, 800));
   }
   throw last || new Error("AI key not set");
 }
