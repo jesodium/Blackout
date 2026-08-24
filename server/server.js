@@ -21,19 +21,25 @@ const recorder = require("./recorder");
 // and the dashboard must still boot (fresh desktop install, no .env yet) — every
 // route checks hasAI and answers 503 instead of throwing.
 const BRAINS = [
-  ["gemini", process.env.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/", process.env.GEMINI_MODEL || "gemini-2.5-flash"],
+  ["gemini", process.env.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/", process.env.GEMINI_MODEL || "gemini-3.6-flash"],
   ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "gemma-4-31b"],
 ].filter(([, key]) => key).map(([name, key, baseURL, model]) => ({ name, model, client: new OpenAI({ baseURL, apiKey: key }) }));
 const hasAI = BRAINS.length > 0;
 
-// one call, tried down the list. IMPORTANT NOTE: any error falls through to the next
-// provider — a bad prompt costs one wasted retry, which is cheaper than telling a
-// rate-limit apart from an outage from the sdk's error shapes.
+// one call, tried down the list, then the whole list once more. IMPORTANT NOTE: any
+// error falls through to the next provider — a bad prompt costs one wasted retry, which
+// is cheaper than telling a rate-limit apart from an outage from the sdk's error shapes.
+// The second pass is for gemini's transient bodyless 402/429s: the same request goes
+// through seconds later, so one retry beats an analyse that just gives up. A request
+// that's actually wrong (404 on a retired model name) fails both passes and says so.
 async function chat(params) {
   let last;
-  for (const b of BRAINS) {
-    try { return await b.client.chat.completions.create({ model: b.model, ...params }); }
-    catch (e) { last = e; console.error(`${b.name} failed:`, e.message); }
+  for (let pass = 0; pass < 2; pass++) {
+    for (const b of BRAINS) {
+      try { return await b.client.chat.completions.create({ model: b.model, ...params }); }
+      catch (e) { last = e; console.error(`${b.name} failed${pass ? " (retry)" : ""}:`, e.status || "", e.message); }
+    }
+    await new Promise(r => setTimeout(r, 800));
   }
   throw last || new Error("AI key not set");
 }

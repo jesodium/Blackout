@@ -2106,7 +2106,7 @@ function SettingsModal({ open, onClose }) {
         </div>
         <div class="settings-body">
           ${field("GEMINI_API_KEY", t("settings.geminiKey"), t("settings.unset"), "password")}
-          ${field("GEMINI_MODEL", t("settings.geminiModel"), "gemini-2.5-flash")}
+          ${field("GEMINI_MODEL", t("settings.geminiModel"), "gemini-3.6-flash")}
           ${field("CEREBRAS_API_KEY", t("settings.cerebrasKey"), t("settings.optional"), "password")}
           ${field("CEREBRAS_MODEL", t("settings.cerebrasModel"), "gemma-4-31b")}
           ${field("DEEPGRAM_API_KEY", t("settings.deepgramKey"), t("settings.optional"), "password")}
