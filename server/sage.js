@@ -2,7 +2,7 @@
 // strips json fences, grabs outer {...}, voices raw string on failure
 // kept standalone so it's testable without booting server
 // important: prompt-instructed json, not response_format:json_object
-// gemma-on-cerebras might not support it. switch to response_format once confirmed.
+// not every provider on the fallback list supports it. switch once both do.
 const SAGE_STATUS = new Set(["clear", "caution", "danger"]);
 
 // lamp level 0-255. non-number or out-of-range -> null ("leave it alone")

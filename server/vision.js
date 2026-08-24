@@ -1,5 +1,6 @@
 // sage's eyes: grab one jpeg from the cam's /capture endpoint
-// gemma-4-31b on cerebras handles image+text in one call. no separate vision provider.
+// gemini handles image+text in one call. no separate vision provider (the cerebras
+// fallback is text-only — a fallback analyse still answers, just blind).
 // cam unreachable => returns [] and sage runs blind.
 // important: /capture, not /stream. the dashboard <img> holds /stream on :81;
 // a second /stream grab starves. /capture on :80 returns one frame immediately.

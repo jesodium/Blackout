@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld("blackout", {
   saveFile: (opts) => ipcRenderer.invoke("dialog:save", opts), // {defaultName, data, filters} -> bool
   openFile: (opts) => ipcRenderer.invoke("dialog:open", opts), // {filters} -> {name, text} | null
   onSettingsOpen: sub("settings:open"), // menu → Settings / API Keys… (Cmd+,)
-  getSettings: () => ipcRenderer.invoke("settings:get"), // -> {CEREBRAS_API_KEY, DEEPGRAM_API_KEY, CEREBRAS_MODEL, TTS_VOICE}
+  getSettings: () => ipcRenderer.invoke("settings:get"), // -> {GEMINI_API_KEY, GEMINI_MODEL, CEREBRAS_API_KEY, CEREBRAS_MODEL, DEEPGRAM_API_KEY, TTS_VOICE}
   saveSettings: (values) => ipcRenderer.invoke("settings:save", values), // -> true
   relaunch: () => ipcRenderer.invoke("app:relaunch"),
 });

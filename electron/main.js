@@ -31,7 +31,7 @@ let quitting = false;
    Cmd+,); it's merged into the forked server's environment. Relaunch applies
    changes. */
 const SETTINGS_FILE = () => path.join(app.getPath("userData"), "blackout.env");
-const SETTINGS_KEYS = ["CEREBRAS_API_KEY", "DEEPGRAM_API_KEY", "CEREBRAS_MODEL", "TTS_VOICE"];
+const SETTINGS_KEYS = ["GEMINI_API_KEY", "GEMINI_MODEL", "CEREBRAS_API_KEY", "CEREBRAS_MODEL", "DEEPGRAM_API_KEY", "TTS_VOICE"];
 
 function loadUserEnv() {
   try {
