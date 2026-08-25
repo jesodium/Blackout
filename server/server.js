@@ -828,6 +828,7 @@ function readingLines(data) {
     data.pressure ? `Pressure: ${data.pressure} hPa` : null,
     data.pressure ? `Elevation: ${Math.round(data.alt)} m relative to where you started` : null,
     `Distance to the rock face ahead: ${data.dist} cm [${s.dist}]`,
+    data.lux != null ? `Ambient light: ${Math.round(data.lux)} lx` : null,
     (data.roll || data.pitch || data.yaw) ? `Tilt: roll ${data.roll}°, pitch ${data.pitch}°, yaw ${data.yaw}°` : null,
   ].filter(Boolean).join("\n");
 }
@@ -1078,7 +1079,7 @@ io.on("connection", (socket) => {
     latestData = {
       // pressure jitters over a few hPa, not the full 980-1030 range: elevation is
       // relative now, and a 50 hPa swing reads as the rover teleporting 400m.
-      temp: r(20, 50, 1), humid: r(20, 90, 1), pressure: r(1011, 1015, 1), dist: r(10, 200),
+      temp: r(20, 50, 1), humid: r(20, 90, 1), pressure: r(1011, 1015, 1), dist: r(10, 200), lux: r(0, 900),
       smoke: r(0, 800), airq: r(50, 900), co: r(0, 600),
       co_alert: Math.random() > 0.7,
       roll: r(-8, 8, 1), pitch: r(-8, 8, 1), yaw: r(0, 30, 1), // keep rover ~level

@@ -69,3 +69,9 @@ docs/marketing/
 cmds/marketing.sh
 # Recorded runs — mission output, not source
 server/recordings/
+
+# per-machine hand-control calibration
+hand_cal.json
+
+# mediapipe model, 7.8MB — hand.py prints the curl line if it is missing
+hand_landmarker.task

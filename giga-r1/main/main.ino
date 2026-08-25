@@ -29,7 +29,7 @@
 // sda = d20, scl = d21, 3v3 + gnd. IMPORTANT NOTE: it can NOT sit on d44/d46 —
 // those are pg_10/ph_15, neither has an i2c alternate function on the h747, so
 // Wire can't be pointed at them (the other two buses are the dedicated sda1/scl1
-// pins and d8/d9 = Wire2, free since enb moved off d8). bit-banging i2c there
+// pins and d8/d9 = Wire2, which the bh1750 has). bit-banging i2c there
 // would need a soft-i2c
 // library for no gain — move the two wires instead.
 // oled debug screen, hardware spi. was bit-banged (sw) spi on d26/d28, which cost
@@ -249,10 +249,13 @@ float pressure = 0;       // hPa — last good bme read, cached
 // without waiting for the telemetry line. refreshed once per send_interval.
 float distCm = 999;       // cm, 999 = nothing in range
 
-// gy-302 (bh1750) ambient light. shares the bme's bus — i2c is a bus, and 0x23
-// doesn't collide with 0x76/0x77, so it needs no pins of its own: sda d20, scl
-// d21, vcc 3v3 (the module has a regulator, but 3v3 keeps sda/scl at the h747's
-// level), addr left floating.
+// gy-302 (bh1750) ambient light, on its OWN bus: Wire2 — sda2 = d9, scl2 = d8
+// (free since enb moved to d10), vcc 3v3 (the module has a regulator, but 3v3
+// keeps sda/scl at the h747's level), addr left floating = 0x23.
+// IMPORTANT NOTE: it would fit on Wire next to the bme (0x23 vs 0x76 don't
+// collide) — separate bus is deliberate, so a shorted light sensor can't take
+// the barometer down with it. d8/d9 need external pull-ups (4k7 to 3v3) if the
+// module has none; the gy-302 board carries its own.
 // IMPORTANT NOTE: no library. continuous h-res mode is one command byte out and
 // two bytes back — the driver below is shorter than the #include would be.
 #define BH1750_ADDR 0x23
@@ -263,8 +266,8 @@ float lux = 0;            // lx — last good read, cached
 // -1 on a short read, so a yanked wire freezes the last value instead of
 // reporting pitch dark. 1.2 is the datasheet's counts-per-lx at default mtreg.
 float readLux() {
-  if (Wire.requestFrom(BH1750_ADDR, 2) < 2) return -1;
-  uint16_t raw = (Wire.read() << 8) | Wire.read();
+  if (Wire2.requestFrom(BH1750_ADDR, 2) < 2) return -1;
+  uint16_t raw = (Wire2.read() << 8) | Wire2.read();
   return raw / 1.2f;
 }
 
@@ -650,9 +653,10 @@ void setup() {
 
   // same one-shot probe as the bme: putting it into continuous mode is also the
   // presence check, since a missing chip won't ack the command byte.
-  Wire.beginTransmission(BH1750_ADDR);
-  Wire.write(BH1750_CONT_HRES);
-  luxOk = (Wire.endTransmission() == 0);
+  Wire2.begin();
+  Wire2.beginTransmission(BH1750_ADDR);
+  Wire2.write(BH1750_CONT_HRES);
+  luxOk = (Wire2.endTransmission() == 0);
   Serial.println(luxOk ? "BH1750 ok" : "BH1750 not found");
 
   oled.getU8x8()->byte_cb = oledSpi1; // before begin(): SPI1, not the d89-d91 "SPI" bus
@@ -758,6 +762,7 @@ float blkRead(uint8_t lhs) {
     case 1: return temp;
     case 2: return humid;
     case 6: return pressure;
+    case 10: return lux;
   }
   return 0;
 }
@@ -1131,7 +1136,8 @@ void loop() {
   // every line rather than as a start/end event — a dropped event
   // would strand the server thinking a routine runs forever, a flag self-heals.
   line += (routine || blkPc >= 0) ? ",1" : ",0";
-  // field 12: lux. appended last and nothing reads it yet — recorded only.
+  // field 12: lux (gy-302/bh1750). appended last — the dashboard tile, sage and
+  // blk's `lux` sensor all read it.
   line += ",";
   line += lux;
 
