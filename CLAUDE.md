@@ -30,14 +30,25 @@ Node.js PC server/dashboard.
     **Its two power rails are not the same thing:** `VCC` is chip logic (5V from
     the board, ~10mA), `V+` is the servo rail and is **6V max** — the 12V pack
     goes through a buck to 5-6V before it ever reaches V+, or the servos and the
-    board's protection diode are gone. The duplicated `V+`/`GND` pins on the
+    board's protection diode are gone. **VCC on 3V3 is not "close enough"** —
+    the chip half-powers, clamps SDA low, and the sketch blocks forever inside
+    the first `Wire` transaction: the board goes silent from boot with USB still
+    enumerated, which reads exactly like a bricked Arduino (2026-08-25, cost an
+    afternoon). No serial banner at all, arm connected = check VCC first.
+    The duplicated `V+`/`GND` pins on the
     opposite header are the *same nets*, there for daisy-chaining: feed V+ once,
     but do tie a GND to the board (common ground is what makes I2C work at all).
     `OE` is pulled low already; wire it only for a hardware all-channels-off kill.
-    - **It drives a 5-DOF arm**: ch0 base, ch4 shoulder, ch6 elbow (all 360,
-      continuous rotation), ch8 wrist (SG90, positional 0-180); the gripper
-      is not plugged in yet. Joint-to-channel mapping is unconfirmed — `t<ch>`
-      in the test sketch nudges one joint so you can watch which moves.
+    - **It drives a 5-DOF arm**: ch0 base, ch4 shoulder, ch6 elbow, ch8 wrist
+      (all 360, continuous rotation) and ch15 gripper (SG90, positional 0-180).
+      **A joint typed positional that is really a 360 never stops** — an angle
+      maps to 500-2500us, which a 360 reads as full speed, and only continuous
+      channels get the deadman. ch8 was mislabelled SG90 and ran away on the
+      bench 2026-08-25; `t<ch>` first, and if it keeps turning it's a 360. The bench rig is `OUTDATED/pca_test/` (Uno R4) plus its
+      `servo.py`, a flask page that is nothing but a serial pipe to
+      it. Joint-to-channel mapping is unconfirmed for the 360s — `t<ch>` nudges
+      one joint so you can watch which moves; the gripper landed 2026-08-25 and
+      is on **ch15**, not ch11.
       **A 360 in an arm joint has no position feedback and no end stop**, so
       there is no "go to 45deg", only "move while the button is held": the
       continuous channels run on a 0.8s deadman (`JOG_MS`) that the browser
@@ -56,6 +67,11 @@ Node.js PC server/dashboard.
       values live in the `sv[]` table so a reflash keeps them. A too-small
       swing around a wrong neutral is why a joint moves one way and not the
       other: the deadband is 100us+, so jog runs full-scale (1000-2000us).
+      **Pulse width is speed and torque at once**, so a slow command is a weak
+      one — at 35% the shoulder could not lift its own arm while gravity took
+      it down fine (2026-08-25). Fine control on a loaded joint is a *shorter
+      burst at full power*, never a gentler one; the bench page's two arrow
+      sizes differ in duration only.
       **Stopping a 360 means killing the pulse, not sending 1500us** — the
       PCA9685's full-off bit (`LEDn_OFF_H` bit 4), because a neutral pulse is
       still a command and an untrimmed 360 creeps on it forever. And the
