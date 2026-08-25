@@ -30,9 +30,18 @@ const recorder = require("./recorder");
 // Also measured: response_format json_object costs 10x the latency here for output
 // parseSage already handles fenced — don't add it.
 const BRAINS = [
+  // qwen3.6 thinks by default and its thinking is inside the reply, not a separate
+  // field: measured, a 400-token budget went entirely to <think> and the json never
+  // arrived. "none" is the same latency budget gemini's "minimal" is, for the same
+  // reason — 400 tokens of reasoning, 0 of answer, is the failure it prevents.
+  ["groq", process.env.GROQ_API_KEY, "https://api.groq.com/openai/v1", process.env.GROQ_MODEL || "qwen/qwen3.6-27b", { reasoning_effort: "none" }],
   ["gemini", process.env.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/", process.env.GEMINI_MODEL || "gemini-3.6-flash", { reasoning_effort: "minimal" }],
   ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "gemma-4-31b", {}],
-].filter(([, key]) => key).map(([name, key, baseURL, model, tune]) => ({ name, model, tune, client: new OpenAI({ baseURL, apiKey: key }) }));
+// IMPORTANT NOTE: maxRetries 0 is deliberate — chat() below owns the retry policy.
+// The sdk's default (2, with backoff) sits *underneath* it, so one rate-limited call
+// became three round trips before chat() even saw a failure: measured 464ms raw vs
+// 2.4s through the sdk, all of it added to the wait for a reply that was never coming.
+].filter(([, key]) => key).map(([name, key, baseURL, model, tune]) => ({ name, model, tune, baseURL, client: new OpenAI({ baseURL, apiKey: key, maxRetries: 0 }) }));
 const hasAI = BRAINS.length > 0;
 
 // one call, tried down the list, then the list once more for anything still alive.
@@ -52,6 +61,10 @@ async function chat(params) {
       try { return await b.client.chat.completions.create({ model: b.model, ...b.tune, ...params }); }
       catch (e) {
         last = e;
+        // a 429 names its own cooldown ("please retry in 31.6s") — the 800ms second
+        // pass below can only ever spend another round trip to be told the same thing.
+        // Not permanent like BRAIN_DEAD, though: the quota window does roll over.
+        if (e.status === 429) { console.error(`${b.name} rate-limited — skipping the retry pass`); continue; }
         if (BRAIN_DEAD.has(e.status)) b.dead = e.status;
         console.error(`${b.name} (${b.model}) failed:`, e.status || "", e.message, b.dead ? "— dropping it for this session" : "");
       }
@@ -338,7 +351,9 @@ app.get("/api/lan", (req, res) => {
 // request counts as unreachable. cached, because every dashboard on the lan polls it.
 // the api roots, not real endpoints: the question is only whether the host answers at
 // all. an authenticated path hangs for an unauthenticated probe and reads as "offline".
-const CLOUD_HOSTS = { sage: "https://generativelanguage.googleapis.com/", tts: "https://api.deepgram.com/" };
+// sage probes whichever brain is actually first in the list — hardcoding one
+// provider here is how the pill goes green on a host Sage no longer calls.
+const CLOUD_HOSTS = { sage: BRAINS[0] ? new URL(BRAINS[0].baseURL).origin + "/" : "https://api.groq.com/", tts: "https://api.deepgram.com/" };
 let cloudSeen = { at: 0, state: null };
 app.get("/api/cloud", async (_req, res) => {
   if (cloudSeen.state && Date.now() - cloudSeen.at < 25000) return res.json(cloudSeen.state);
