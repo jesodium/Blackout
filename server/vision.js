@@ -155,7 +155,13 @@ const getLed = () => ledLevel;
 // on failure, keep last good frame and throttle retries.
 let frameCache = { data: "", at: 0 };
 const FRESH_TTL = parseInt(process.env.VISION_FRESH_MS || "1500", 10);
-const FAIL_THROTTLE = parseInt(process.env.VISION_TTL || "6", 10) * 1000;
+// IMPORTANT NOTE: this has to be longer than a failed grab *costs*, not just longer
+// than feels polite. A dark cam is 3 CAM_URLS x the 8s grabFrame timeout (+ the mDNS
+// wait on the .local one) = ~19s of measured dead air, and at the old 6s throttle
+// every chat turn more than 6s after the last one paid that again — the operator saw
+// a 19s Sage, blamed the llm, and the llm had answered in 440ms. 30s means a dark cam
+// costs the wait once per half minute; a cam that comes back is noticed that late too.
+const FAIL_THROTTLE = parseInt(process.env.VISION_TTL || "30", 10) * 1000;
 // max age a cached frame may be served as "live". past this, sage goes blind.
 const MAX_FRAME_AGE = parseInt(process.env.VISION_MAX_AGE_MS || "30000", 10);
 let lastFail = 0;
