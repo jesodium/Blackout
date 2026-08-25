@@ -31,7 +31,7 @@ const recorder = require("./recorder");
 // parseSage already handles fenced — don't add it.
 const BRAINS = [
   ["gemini", process.env.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/", process.env.GEMINI_MODEL || "gemini-3.6-flash", { reasoning_effort: "minimal" }],
-  ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "gpt-oss-120b", {}],
+  ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "gemma-4-31b", {}],
 ].filter(([, key]) => key).map(([name, key, baseURL, model, tune]) => ({ name, model, tune, client: new OpenAI({ baseURL, apiKey: key }) }));
 const hasAI = BRAINS.length > 0;
 
