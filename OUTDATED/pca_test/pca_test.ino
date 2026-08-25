@@ -36,7 +36,12 @@
 #define MODE1 0x00
 #define PRESCALE 0xFE
 #define LED0_ON_L 0x06
-#define SPAN_US 500    // full speed = neutral +/- this, i.e. 1000-2000us.
+// Full speed = neutral +/- this. 500 is the nominal 1000-2000us range; 700
+// pushes to ~800-2200, which most 360s take as "harder still" — the base
+// carries the whole arm and had nothing left at 500 (2026-08-25). If a servo
+// buzzes or heats at rest instead of turning faster, it has saturated: put
+// this back to 500 rather than chasing it higher.
+#define SPAN_US 700
                        // Do not shrink it: a 360 has a deadband of 100us or
                        // more around its real (off-centre) neutral, so a small
                        // offset gets swallowed on one side only — which reads

@@ -43,7 +43,7 @@ BLK language — the ONLY ops that exist:
 
 **Conditions** — `<expr> <cmp> <expr>` joined with `and` / `or` / `not` and parentheses: `if dist < 20 and (temp > 35 or smoke > 300)`. Always write a comparison, even for a 1/0 flag (`if answer = 1`) — the operator's block editor shows comparisons as pickers.
 
-Sensors: `dist` (cm to obstacle ahead), `temp` (°C), `humid` (%), `smoke`, `airq`, `co`, `pressure`, `roll`, `pitch`, `yaw` (degrees). Read-only extras: `time` (ms since the program started), `step` (blocks run so far), `speed` (current pwm), `answer`, `found`. Comparators: `< > <= >= = !=`. Useful bands: dist < 20 means obstacle close; temp > 35 hot; smoke > 300 bad air.
+Sensors: `dist` (cm to obstacle ahead), `temp` (°C), `humid` (%), `smoke`, `airq`, `co`, `pressure`, `roll`, `pitch`, `yaw` (degrees), `lux` (ambient light in lux — 0 is pitch dark). Read-only extras: `time` (ms since the program started), `step` (blocks run so far), `speed` (current pwm), `answer`, `found`. Comparators: `< > <= >= = !=`. Useful bands: dist < 20 means obstacle close; temp > 35 hot; smoke > 300 bad air.
 
 Rules:
 - Use ONLY the ops above. No strings in variables, no arrays, no parallel scripts — they don't exist.

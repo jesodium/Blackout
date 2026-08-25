@@ -24,7 +24,8 @@
 // program = nested node tree. containers carry body[] (if also elseBody[]|null).
 
 export const DEFAULT_PWM = 140;
-export const SENSORS = ["dist", "temp", "humid", "smoke", "airq", "co", "pressure", "roll", "pitch", "yaw"];
+// index is the wire value the firmware VM switches on (blkRead() in main.ino) — append only.
+export const SENSORS = ["dist", "temp", "humid", "smoke", "airq", "co", "pressure", "roll", "pitch", "yaw", "lux"];
 // read-only values the interpreter injects alongside sensors + user vars
 export const BUILTINS = ["time", "step", "speed", "answer", "found"];
 export const CMPS = ["<", ">", "<=", ">=", "=", "!="];

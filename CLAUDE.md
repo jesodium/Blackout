@@ -9,8 +9,21 @@ Node.js PC server/dashboard.
   command endpoint, one board. Reads sensors, broadcasts CSV over BLE notify;
   DHT11 (temp/humidity, A6), BME280 (pressure, I2C on D20/D21 — its own
   temp/humidity registers go unread) and RCWL-1601 (ultrasonic, TRIG D50 /
-  ECHO D52) wired so far, rest of the CSV
+  ECHO D52), plus GY-302/BH1750 (ambient light, 0x23 on
+  its own I2C bus, Wire2 — SDA2 D9 / SCL2 D8; CSV field 12, and `lux` in BLK) wired so far, rest of the CSV
   field set sends 0 until a sensor lands.
+  **Reversed VCC/GND on an I2C module pins both its lines high, it does not just
+  go dead** (2026-08-25, cost a day on the gy-302): the chip's ESD clamps conduct
+  from its "GND" pin out through SDA and SCL, holding them at 3V3 harder than the
+  H747 can sink. Symptoms read as everything *but* power — both lines pass a
+  pull-up check (they're *on* the rail, not pulled to it), every address NACKs on
+  hardware I2C and bit-bang alike, and the board browns out off USB whenever
+  something tries to pull a line down. The one test that finds it: `pinMode(pin,
+  OUTPUT); digitalWrite(pin, LOW);` then read the pin back. A working line reads
+  0; a line that reads 1 is tied to a rail, because nothing legal on an I2C bus
+  beats a 25mA push-pull driver. `giga-r1/i2c_scan/` is that check, and it runs
+  every probe on D20/D21 first as a positive control — "nothing" on the bus under
+  test means nothing until the same code has found the bme at 0x76.
   **Every sensor runs off the 3V3 rail, not 5V** — the Giga's pins are 3.3V and
   not 5V tolerant, so the ultrasonic is an RCWL-1601 (3.3V-capable, HC-SR04
   drop-in) rather than an HC-SR04, and the dht11 is powered at 3V too. A 5V
@@ -72,6 +85,17 @@ Node.js PC server/dashboard.
       it down fine (2026-08-25). Fine control on a loaded joint is a *shorter
       burst at full power*, never a gentler one; the bench page's two arrow
       sizes differ in duration only.
+      **Hand control** (`OUTDATED/pca_test/hand.py`, opencv + mediapipe) drives
+      the arm off a webcam: `python3 hand.py` next to a running `servo.py`,
+      which it talks to over http so the two never fight over the serial port.
+      Three held poses calibrate it (rest, open, pinch) into `hand_cal.json`.
+      **Hand position is a velocity, not a pose** — four joints are 360s with no
+      encoder, so "match my elbow" is unanswerable; the hand is a joystick, and
+      only the gripper (sg90) maps absolutely, off pinch distance. No hand in
+      frame = stop, because a frozen camera looks exactly like a hand held
+      still. Needs **mediapipe 0.10.x**: 1.0.1's macOS arm64 build dies in
+      DrishtiMetalHelper before the first frame, CPU delegate included.
+      `python3 hand.py --selftest` checks the mapping without a camera.
       **Stopping a 360 means killing the pulse, not sending 1500us** — the
       PCA9685's full-off bit (`LEDn_OFF_H` bit 4), because a neutral pulse is
       still a command and an untrimmed 360 creeps on it forever. And the

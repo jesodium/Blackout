@@ -55,6 +55,13 @@ const SENSORS = [
   // never a hazard (weather, not cave air), so always "go": worstSensor() walks this
   // list for the verdict. 0 means no bme wired, so no zeroOk.
   { key: "pressure", unit: "hPa", d: 1, min: 950, max: 1050, st: () => ["st.normal", "go"] },
+  // gy-302/bh1750 ambient light. never a hazard (a cave is meant to be dark) so it
+  // always reads "go" — worstSensor() walks this list for the verdict.
+  // IMPORTANT NOTE: zeroOk because 0 lx is a real reading in the dark, which means
+  // the tile can't tell "dark" from "not wired" — the board's boot banner
+  // ("BH1750 not found") is the wiring check, not this.
+  { key: "lux", unit: "lx", d: 0, min: 0, max: 1000, zeroOk: true,
+    st: v => v < 1 ? ["st.dark", "go"] : v > 500 ? ["st.bright", "go"] : ["st.normal", "go"] },
 ];
 
 // a reading only counts if it's a number and not a bare 0 from an unwired pin.
