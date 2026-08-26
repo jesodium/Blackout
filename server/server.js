@@ -11,8 +11,8 @@ const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
-const { eyeParts, grabFrames, setLed, getLed, pingCam } = require("./vision");
-const { parseSage } = require("./sage");
+const { eyeParts, grabFrames, setLed, getLed, pingCam, autoLamp } = require("./vision");
+const { parseSage, snapSummary, wantsTool } = require("./sage");
 const recorder = require("./recorder");
 
 // Sage's brain: Gemini first, Cerebras only as a fallback (it went paid). Both speak
@@ -30,13 +30,34 @@ const recorder = require("./recorder");
 // Also measured: response_format json_object costs 10x the latency here for output
 // parseSage already handles fenced — don't add it.
 const BRAINS = [
+  // openrouter first, on the same gemma-4-31b, because its free tier is the only one
+  // whose limits fit an agent turn: 20 RPM / 50 req-day (1000 once $10 of credit has
+  // *ever* been bought). Cerebras' free trial is 5 RPM — one agentLoop is 3 calls in
+  // ~10s, so it 429s on the turn, not on the quota. Drop the ":free" suffix to pay for
+  // the same model at openrouter's rate if the free variant gets retired (they churn).
+  ["openrouter", process.env.OPENROUTER_API_KEY, "https://openrouter.ai/api/v1", process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free", {}],
   // qwen3.6 thinks by default and its thinking is inside the reply, not a separate
   // field: measured, a 400-token budget went entirely to <think> and the json never
   // arrived. "none" is the same latency budget gemini's "minimal" is, for the same
   // reason — 400 tokens of reasoning, 0 of answer, is the failure it prevents.
   ["groq", process.env.GROQ_API_KEY, "https://api.groq.com/openai/v1", process.env.GROQ_MODEL || "qwen/qwen3.6-27b", { reasoning_effort: "none" }],
-  ["gemini", process.env.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/", process.env.GEMINI_MODEL || "gemini-3.6-flash", { reasoning_effort: "minimal" }],
+  // then cerebras. It is the *fastest* brain here (0.14-0.60s measured) and the only
+  // one whose vision model we pay for — but it is not first, because on 2026-08-25 it
+  // answered 3 of 6 calls spaced a full 5s apart, the other 3 a bodyless 429 with no
+  // rate-limit headers to explain it. Credits were live; this is not the trial cap.
+  // A brain that misses half the time in front of the list turns its own 0.2s win
+  // into the whole chain's walk — which is the "0.5s, 0.8s, then 10s" the operator
+  // sees. Behind groq it costs nothing and still catches a groq TPM miss.
   ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "gemma-4-31b", {}],
+  ["gemini", process.env.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/", process.env.GEMINI_MODEL || "gemini-3.6-flash", { reasoning_effort: "minimal" }],
+  // last: lm studio, which is an openai-compatible server on localhost — so "local
+  // model" is a row in this table, not a code path. Gated on LMSTUDIO_URL because the
+  // key is a dummy string; unset = the filter below drops it and nothing changes.
+  // It is last because when the cloud answers it is faster, and a 16GB Air shares its
+  // ram with electron + chrome + the mjpeg feed. IMPORTANT NOTE: at the venue there is
+  // no internet, so the four cloud rows above each burn a failed round trip before
+  // this one answers — move it to the top for an offline run.
+  ["lmstudio", process.env.LMSTUDIO_URL && "lm-studio", process.env.LMSTUDIO_URL || "http://localhost:1234/v1", process.env.LMSTUDIO_MODEL || "google/gemma-4-12b", {}],
 // IMPORTANT NOTE: maxRetries 0 is deliberate — chat() below owns the retry policy.
 // The sdk's default (2, with backoff) sits *underneath* it, so one rate-limited call
 // became three round trips before chat() even saw a failure: measured 464ms raw vs
@@ -57,14 +78,14 @@ async function chat(params) {
   let last;
   for (let pass = 0; pass < 2; pass++) {
     for (const b of BRAINS) {
-      if (b.dead) continue;
+      if (b.dead || (pass && b.cooled)) continue;
       try { return await b.client.chat.completions.create({ model: b.model, ...b.tune, ...params }); }
       catch (e) {
         last = e;
         // a 429 names its own cooldown ("please retry in 31.6s") — the 800ms second
         // pass below can only ever spend another round trip to be told the same thing.
         // Not permanent like BRAIN_DEAD, though: the quota window does roll over.
-        if (e.status === 429) { console.error(`${b.name} rate-limited — skipping the retry pass`); continue; }
+        if (e.status === 429) { b.cooled = true; console.error(`${b.name} rate-limited — skipping the retry pass`); continue; }
         if (BRAIN_DEAD.has(e.status)) b.dead = e.status;
         console.error(`${b.name} (${b.model}) failed:`, e.status || "", e.message, b.dead ? "— dropping it for this session" : "");
       }
@@ -164,6 +185,26 @@ async function ttsHandler(req, res) {
 app.get("/api/tts", ttsHandler);
 app.post("/api/tts", ttsHandler);
 
+// stt. the browser records, deepgram transcribes (same key as tts).
+// IMPORTANT NOTE: *not* window.SpeechRecognition — that's a google cloud call
+// chromium ships no api key for, so it dies `network` instantly in electron
+// and in any build without one. no deepgram key = no mic, and it says so.
+app.post("/api/stt", express.raw({ type: "audio/*", limit: "10mb" }), async (req, res) => {
+  if (!process.env.DEEPGRAM_API_KEY) return res.status(503).json({ error: "no DEEPGRAM_API_KEY" });
+  const lang = String(req.query.lang || "en").slice(0, 2); // "es-ES" -> "es"
+  const model = process.env.DEEPGRAM_STT_MODEL || "nova-2"; // nova-2: en + es both
+  try {
+    const r = await fetch(`https://api.deepgram.com/v1/listen?model=${model}&smart_format=true&language=${lang}`, {
+      method: "POST",
+      headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`, "Content-Type": req.get("content-type") || "audio/webm" },
+      body: req.body,
+    });
+    if (!r.ok) throw new Error(`Deepgram ${r.status}: ${await r.text().catch(() => "")}`);
+    const j = await r.json();
+    res.json({ text: j.results?.channels?.[0]?.alternatives?.[0]?.transcript || "" });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 app.get("/api/tts/providers", (req, res) => {
   res.json({ edge: true, deepgram: !!process.env.DEEPGRAM_API_KEY });
 });
@@ -179,19 +220,18 @@ app.post("/api/chat", async (req, res) => {
     const d = freshData();
     const ctx = d ? buildChatContext(d) : "No live readings right now — running dark.";
     const mapped = msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }));
-    // attach the live cam frame to the operator's latest turn so gemma sees it.
-    const eyes = await eyeParts();
-    if (eyes.length && mapped.length) {
-      const last = mapped[mapped.length - 1];
-      last.content = [{ type: "text", text: last.content + "\n(Attached is your live forward-camera view.)" }, ...eyes];
-    }
-    const sage = await askSage([
+    // IMPORTANT NOTE: the live frame is NOT attached up front any more — she asks
+    // for it with the "camera" tool when the question actually needs eyes. Sending
+    // one every turn cost a base64 svga upload on "is it hot in here?", and worse,
+    // she reached for the camera anyway (a picture in the prompt reads as history,
+    // not as "now"), so the same turn paid for two frames.
+    const { reply, steps } = await agentLoop([
       { role: "system", content: CHAT_SYSTEM },
       ...langMsg(lang),
       { role: "system", content: ctx },
       ...mapped,
     ], { maxTokens: 400 });
-    res.json({ reply: sage });
+    res.json({ reply, steps });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -278,7 +318,9 @@ function processLine(raw) {
     // false keeps auto-analysis behaving as before.
     routine: parts.length > 11 ? parts[11].trim() === "1" : false,
     // bh1750 ambient light. parsed so runs record it; nothing displays it yet.
-    lux: parts.length > 12 ? parseFloat(parts[12]) : 0,
+    // absent field = no bh1750 on this firmware. 0 is a real reading (pitch dark),
+    // so it can't double as "not wired" — darkCheck() would drive the lamp to 255.
+    lux: parts.length > 12 ? parseFloat(parts[12]) : null,
     timestamp: Date.now(),
   };
   // derived, not a csv field. 2dp = cm resolution, which the dashboard's cm view reads.
@@ -289,6 +331,7 @@ function processLine(raw) {
   recorder.push(data); // no-op unless a run is being recorded
   io.emit("sensor-data", data);
   maybeAutoAnalyze(data);
+  if (data.lux != null && data.lux < LUX_DARK) darkCheck();
   pushHud(data);
 }
 
@@ -643,7 +686,45 @@ function recordFinding(text, dataUrl) {
   recorder.mark("finding", text);
 }
 
-// sage now answers in json: { text, status, action, led, finding }. text is the only
+// dark = sage is going blind, so check the eye and walk the headlamp until the
+// frame reads back in band. lux is only the trigger; autoLamp() judges from the
+// picture. one grab in flight at a time — /capture and /stream share the
+// ai-thinker's ram, and a queue of them starves the dashboard feed.
+const LUX_DARK = parseFloat(process.env.LUX_DARK || "45");
+let lampBusy = false;
+function darkCheck() {
+  if (lampBusy) return;
+  lampBusy = true;
+  autoLamp()
+    .then((r) => {
+      if (!r || !r.changed) return;
+      io.emit("lamp-auto", { ...r, timestamp: Date.now() });
+      recorder.mark("analysis", `headlamp ${r.from} → ${r.led} (frame ${r.mean}/255)`);
+    })
+    .catch((e) => console.error("auto lamp:", e.message))
+    .finally(() => { lampBusy = false; });
+}
+
+// sage asking for a snapshot when she isn't sure about something: the last 10s of
+// telemetry, dumped to disk. backwards, not forwards — dataHistory already holds
+// ~100s, so the moment that made her unsure is already in hand and there is
+// nothing to sit and wait for.
+const SNAP_DIR = path.join(__dirname, "public", "snapshots");
+fs.mkdirSync(SNAP_DIR, { recursive: true });
+const SNAP_MS = parseInt(process.env.SNAP_MS || "10000", 10);
+
+function takeSnapshot(reason) {
+  const at = Date.now();
+  const packets = dataHistory.filter((d) => at - d.timestamp <= SNAP_MS);
+  if (!packets.length) return;
+  try { fs.writeFileSync(path.join(SNAP_DIR, `${at}.json`), JSON.stringify({ at, reason, packets })); }
+  catch (e) { console.error("snapshot:", e.message); } // the summary still goes out
+  const text = `SNAPSHOT: ${reason} — ${snapSummary(packets)}`;
+  io.emit("sage-finding", { id: `${at}-snap`, text, img: null, timestamp: at });
+  recorder.mark("finding", text);
+}
+
+// sage now answers in json: { text, status, action, led, finding, snapshot }. text is the only
 // thing voiced/shown; status tints the ui; action:"analyze" lets sage ask for a fresh
 // look; led (0-255) drives the cam lamp; finding logs a discovery to the analysis
 // panel. parsesage lives in ./sage so it's testable without booting the server. every
@@ -656,10 +737,96 @@ async function askSage(messages, { maxTokens = 400 } = {}) {
   });
   const sage = parseSage(resp.choices[0]?.message?.content);
   if (sage.led != null && sage.led !== getLed()) {
-    setLed(sage.led).catch((e) => console.error("cam led:", e.message));
+    const from = getLed();
+    // the step goes out *after* the write, not before: a cam that never answered
+    // used to leave a transcript line saying the lamp moved when it hadn't.
+    setLed(sage.led)
+      .then(() => emitStep({ kind: "tool", name: "lamp", detail: `${from} → ${sage.led}` }))
+      .catch((e) => {
+        console.error("cam led:", e.message);
+        emitStep({ kind: "tool", name: "lamp", detail: `${from} → ${sage.led} · failed: ${e.message}` });
+      });
   }
   if (sage.finding) recordFinding(sage.finding, lastImage(messages));
+  if (sage.snapshot) takeSnapshot(sage.snapshot);
   return sage;
+}
+
+/* ---- agent loop ----
+   sage answers, and when she asks for a tool the server runs it, hands her the
+   result and asks again. one turn can therefore be several visible moves ("let me
+   take a look" -> camera -> the actual answer) instead of one blind reply.
+   IMPORTANT NOTE: not the providers' function-calling api — the three brains on
+   BRAINS spell it three different ways and one of them has no vision+tools combo
+   at all. The tool name rides in the json sage already returns, which every brain
+   can write and parseSage already reads.
+   Steps go out over the socket as they happen, not with the reply: the operator
+   watches her work instead of staring at a spinner. */
+const MAX_TOOL_STEPS = parseInt(process.env.SAGE_MAX_STEPS || "3", 10);
+
+// a look is worth showing: the frame a camera/analysis step actually used gets
+// written next to the findings and its url rides along on the step, so the
+// transcript shows what she saw and not just that she looked. capped by hand —
+// these are one per look and nobody prunes public/ for us.
+const SHOT_DIR = path.join(__dirname, "public", "shots");
+fs.mkdirSync(SHOT_DIR, { recursive: true });
+const SHOT_KEEP = 20;
+function saveShot(parts) {
+  const url = parts?.[0]?.image_url?.url || "";
+  const b64 = url.startsWith("data:image/jpeg;base64,") ? url.slice("data:image/jpeg;base64,".length) : null;
+  if (!b64) return null;
+  const file = `${Date.now()}.jpg`;
+  try {
+    fs.writeFileSync(path.join(SHOT_DIR, file), Buffer.from(b64, "base64"));
+    const old = fs.readdirSync(SHOT_DIR).sort().slice(0, -SHOT_KEEP);
+    for (const f of old) fs.unlinkSync(path.join(SHOT_DIR, f));
+    return `/shots/${file}`;
+  } catch (e) { console.error("shot:", e.message); return null; } // the step still goes out
+}
+const emitStep = (step) => io.emit("sage-step", { id: `${Date.now()}-${Math.random()}`, timestamp: Date.now(), ...step });
+
+// each tool returns what sage gets back (text + optional images) and one short
+// line for the operator's transcript. null = tool we don't have; the loop stops.
+async function runTool(name, arg) {
+  if (name === "sensors") {
+    const d = freshData();
+    if (!d) return { arg, detail: "nothing coming in", text: "No readings are coming up the line right now." };
+    // she gets the whole set either way — it is already in hand and one reading
+    // without its neighbours is how a wrong call gets made. `arg` only names the
+    // one she went looking for, for the transcript.
+    return { arg, detail: `${d.dist} cm ahead · ${d.temp}°C`, text: `Readings as of right now:\n${readingLines(d)}${trendLine(d)}` };
+  }
+  if (name === "camera") {
+    io.emit("cam-yield"); // the dashboard's live feed and /capture fight for the same ram
+    try {
+      await new Promise((r) => setTimeout(r, 400));
+      const eyes = await eyeParts();
+      if (!eyes.length) return { detail: "eye came back dark", text: "Your eye came back dark — no view. Answer from the readings alone and don't mention the camera." };
+      return { detail: "fresh view", img: saveShot(eyes), images: eyes, text: "This is what your eye sees right now. Answer the operator from it, in your own voice." };
+    } finally {
+      io.emit("cam-resume");
+    }
+  }
+  return null;
+}
+
+async function agentLoop(messages, { maxTokens = 400 } = {}) {
+  const msgs = messages.slice();
+  const steps = [];
+  let sage;
+  for (let i = 0; i < MAX_TOOL_STEPS; i++) {
+    sage = await askSage(msgs, { maxTokens });
+    if (!wantsTool(sage, i, MAX_TOOL_STEPS)) break;
+    const out = await runTool(sage.tool, sage.toolArg);
+    if (!out) break;
+    const step = { kind: "tool", name: sage.tool, arg: out.arg || null, detail: out.detail, img: out.img || null, say: sage.text || null };
+    steps.push(step);
+    emitStep(step);
+    recorder.mark("analysis", `tool ${sage.tool}: ${out.detail}`);
+    msgs.push({ role: "assistant", content: sage.text || `(reaching for ${sage.tool})` });
+    msgs.push({ role: "user", content: out.images?.length ? [{ type: "text", text: out.text }, ...out.images] : out.text });
+  }
+  return { reply: sage, steps };
 }
 
 // ponytail: status thresholds live here (server), single source of truth. the
@@ -833,15 +1000,17 @@ function readingLines(data) {
   ].filter(Boolean).join("\n");
 }
 
-const lampLine = () => `\nYour headlamp is currently at ${getLed()} of 255.`;
+// the auto loop already trims the lamp in the dark — say so, or sage fights it
+// every turn and the two of them hunt.
+const lampLine = () => `\nYour headlamp is currently at ${getLed()} of 255 (it trims itself when the passage goes pitch dark, so leave it alone unless you want a level it is not finding on its own).`;
 
 function buildChatContext(data) {
-  return `${missionLine()}Current readings from the rover right now (each line is already judged — trust the [STATUS] tag, do NOT re-judge from the number, and do NOT recite the raw number):
+  return `${missionLine()}Current readings from the rover right now (each line is already judged — trust the [STATUS] tag for the verdict, do NOT re-judge from the number, but DO say the number aloud with its unit when the operator asks about it):
 ${readingLines(data)}${trendLine(data)}${lampLine()}`;
 }
 
 function buildAiPrompt(data) {
-  return `${missionLine()}Latest telemetry from your sensors — read the room and report to the operator. Each line is already judged: trust the [STATUS] tag, do NOT re-judge from the raw number, and do NOT recite the raw number aloud.
+  return `${missionLine()}Latest telemetry from your sensors — read the room and report to the operator. Each line is already judged: trust the [STATUS] tag for the verdict and do NOT re-judge from the raw number — but DO say the numbers aloud, value plus unit, when they are what the operator asked about or what you are reacting to.
 
 ${readingLines(data)}${trendLine(data)}${lampLine()}`;
 }
@@ -865,11 +1034,15 @@ async function runAiAnalysis(mode, focus) {
   io.emit("cam-yield");
   try {
     const eyes = await eyeParts();
+    emitStep({ kind: "tool", name: "analysis", arg: focus || null, img: saveShot(eyes),
+      detail: eyes.length ? "full read of the passage" : "no view — readings only" });
     const focusLine = focus ? `\nThe operator's workflow asked you to look at this specifically: ${focus}` : "";
     const promptText = buildAiPrompt(data) + focusLine + (eyes.length
       ? "\n(Attached is your live forward-camera view — read it for what's ahead.)"
       : "\n(Your eye is dark right now. Don't mention this or say anything about not being able to see — just report normally from the readings you do have, as if vision were never part of it.)");
-    const sage = await askSage([
+    // same loop as chat: an analysis that wants a second look or a fresh set of
+    // readings can take one before it commits to a verdict.
+    const { reply: sage } = await agentLoop([
       { role: "system", content: present ? PRESENT_SYSTEM : AI_SYSTEM },
       ...langMsg(currentLanguage),
       { role: "user", content: eyes.length ? [{ type: "text", text: promptText }, ...eyes] : promptText },

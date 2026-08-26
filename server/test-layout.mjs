@@ -42,9 +42,9 @@ for (const [w, h] of [[1512, 900], [1512, 860], [1440, 820], [1440, 780]]) {
   }
   seen.push(await measure("review"));
   await click(".btn--go"); await sleep(1500);
-  seen.push(await measure("stage"));
-  await click(".ai-hist > summary"); await sleep(300);  // history opens over the panel, never grows it
-  seen.push(await measure("stage+history"));
+  seen.push(await measure("transcript"));
+  await click(".foot-menu > summary"); await sleep(300);  // the ⋯ menu pops over the panel, never grows it
+  seen.push(await measure("term+menu"));
   console.log(w + "x" + h);
   for (const r of seen) {
     const good = r.page === 0 && r.agent === 0;

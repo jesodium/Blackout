@@ -1,73 +1,42 @@
-// giga r1 wifi — sensor hub + motion routines. reads sensors, broadcasts csv over
-// ble notify. same "s:" format the server already parses (temp,humid,dist,
-// smoke,airq,roll,pitch,yaw,co,co_alert,pressure,routine,lux). everything from co
-// onward is optional, so older lines without them still parse.
-// also emits "e:analyze" lines: routine events for the dashboard, not
-// telemetry. the server ignores anything that isn't "s:".
+// giga r1 wifi — sensor hub + motion routines. broadcasts csv over ble notify as
+// "S:temp,humid,dist,smoke,airq,roll,pitch,yaw,co,co_alert,pressure,routine,lux"
+// (trailing fields optional). "E:" lines are events for the dashboard, not telemetry.
 #include <ArduinoBLE.h>
 #include <Wire.h>
-#include <SPI.h> // oled runs on SPI1 (d11/d13) — see the u8g2 setup below
-#include <Adafruit_BME280.h> // pressure — install "Adafruit BME280 Library"
-#include <DHT11.h> // temp/humidity — install "DHT11" (dhrubasaha08)
-#include <U8g2lib.h> // oled debug screen — spi, install "U8g2" (oliver) via library manager
-#include "routines.h" // op/step + the presentation and run tables
-#include "blkvm.h"    // instruction set for uploaded blk workflows
+#include <SPI.h>
+#include <Adafruit_BME280.h> // lib: "Adafruit BME280 Library"
+#include <DHT11.h>           // lib: "DHT11" (dhrubasaha08)
+#include <U8g2lib.h>         // lib: "U8g2" (oliver)
+#include "routines.h"
+#include "blkvm.h"
 
-// swapped from trig=47/echo=49 — the panel was wired the other way round.
-// symptom of getting this backwards: pulseIn always times out, so dist reads the
-// timeout fallback and never tracks an obstacle. swap these two back if so.
-#define TRIG_PIN 50
-#define ECHO_PIN 52
-// dht11 (temp + humidity). a6 = normal gpio (digital 82), no conflict with the
-// sonar (d47/d49), the oled (d11/d13 + d22/d24) or the motor pins (d2-d7).
-// IMPORTANT NOTE: a8-a11 are pure-analog on the giga — pinMode/digitalWrite on
-// them is a hard compile error from the core, so the dht can't go there.
+// sonar. backwards = pulseIn always times out and dist never tracks an obstacle.
+#define TRIG_PIN 52
+#define ECHO_PIN 50
+// IMPORTANT NOTE: a8-a11 are pure-analog — pinMode/digitalWrite there is a compile error.
 #define DHT_PIN A6
-// bme280 (pressure; the dht covers temp/humidity, so its temp/humidity
-// registers go unread — altitude is a TODO, see CLAUDE.md).
-// it's i2c, so it has no pins to pick: it goes on the giga's hardware bus,
-// sda = d20, scl = d21, 3v3 + gnd. IMPORTANT NOTE: it can NOT sit on d44/d46 —
-// those are pg_10/ph_15, neither has an i2c alternate function on the h747, so
-// Wire can't be pointed at them (the other two buses are the dedicated sda1/scl1
-// pins and d8/d9 = Wire2, which the bh1750 has). bit-banging i2c there
-// would need a soft-i2c
-// library for no gain — move the two wires instead.
-// oled debug screen, hardware spi. was bit-banged (sw) spi on d26/d28, which cost
-// ~20ms a frame in digitalWrite calls — invisible for static debug text, the ceiling
-// on anything animated, so clock + data moved onto a real spi peripheral.
-// IMPORTANT NOTE: giga has two spi buses and u8g2's *_4W_HW_SPI constructors are
-// hardwired to the arduino "SPI" object, which on this board is d89-d91 — high-density
-// connector pins, not header pins. the header d11/d13 are "SPI1", a separate object
-// u8g2 has no constructor for, so oledSpi1() below is u8g2's own hw-spi byte callback
-// with SPI1 swapped in, installed over byte_cb in setup(). ~25 lines to keep the panel
-// on pins a jumper wire can actually reach.
-// cs tied straight to gnd on the panel (only spi device on the bus), so u8g2
-// gets u8x8_pin_none instead of a pin to wiggle.
-// assumes an ssd1306-compatible 128x64 panel — most cheap 1.54" white spi oleds
-// are. if the screen shows noise/garbage (not just blank), it's probably really
-// an sh1106 or ssd1309 — swap the constructor below for
-// U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI or U8G2_SSD1309_128X64_NONAME0_F_4W_HW_SPI.
-// clock and data are fixed by SPI1 (d13 = sck, d11 = copi); dc + reset stay on the
-// double-row header where they already were.
+// bme280 is i2c on Wire (d20/d21). IMPORTANT NOTE: it can't move to d44/d46 —
+// pg_10/ph_15 have no i2c alternate function on the h747.
+// oled: ssd1306 128x64 on SPI1 (d13 sck, d11 copi), cs tied to gnd on the panel.
+// noise instead of blank = it's really an sh1106/ssd1309, swap the constructor.
 #define OLED_RST 24
 #define OLED_DC 22
-#define OLED_SPI_HZ 8000000 // ssd1306 is spec'd to ~10MHz; drop this if the panel glitches
-// panel's mounted landscape — the ssd1306's native 128x64, so no rotation.
-// swap to U8G2_R2 if a remount ever flips which edge is "up" (R1/R3 are the
-// portrait mounts; every layout below is written against OLED_W/OLED_H, so a
-// portrait remount means changing these two defines, not the drawing code).
+#define OLED_SPI_HZ 8000000 // ssd1306 spec'd to ~10MHz; drop if the panel glitches
+// landscape mount. every layout is written against these two, so a remount is
+// these defines plus the rotation arg, not the drawing code.
 #define OLED_W 128
 #define OLED_H 64
 U8G2_SSD1306_128X64_NONAME_F_4W_HW_SPI oled(U8G2_R0, /* cs=*/ U8X8_PIN_NONE, /* dc=*/ OLED_DC, /* reset=*/ OLED_RST);
 
-// u8g2 byte callback, identical to its arduino hw-spi one except it talks to SPI1.
-// installed in setup() — see the note above for why there's no constructor for this.
+// u8g2's own hw-spi byte callback with SPI1 swapped in — its *_HW_SPI constructors
+// only know the "SPI" object, which on the giga is d89-d91, not header pins.
+// installed over byte_cb in setup().
 extern "C" uint8_t oledSpi1(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr) {
   static uint8_t tx[256]; // arg_int is a byte, so one send never exceeds this
   switch (msg) {
     case U8X8_MSG_BYTE_SEND:
-      // copied first: SPI1.transfer(buf, n) reads back into the buffer it's given, and
-      // the buffer u8g2 hands over here is the live frame.
+      // copy first: SPI1.transfer(buf, n) reads back into the buffer it's given,
+      // and u8g2 hands over the live frame.
       memcpy(tx, arg_ptr, arg_int);
       SPI1.transfer(tx, arg_int);
       break;
@@ -92,41 +61,25 @@ extern "C" uint8_t oledSpi1(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *ar
   return 1;
 }
 bool bleConnected = false;
-String camState = "not connected"; // only the server/dashboard knows camera state — pushed via "cam,<state>" cmd
-// operator override from the dashboard's oled panel: "oled,<text>" shows it in
-// place of the auto link/cam status, "oled,clear" (the literal word) goes back
-// to auto. empty = auto.
-String customMsg = "";
-// hud state, pushed by the server as "hud,<ok|warn|bad>,<metrics>". IMPORTANT NOTE:
-// the board never derives either from its own sensors — it reads raw values and the
-// server owns what "safe" means (same statuses() the agent uses), so the screen and
-// the agent can't disagree. empty level = connected but nothing pushed yet.
+String camState = "not connected"; // pushed by the dashboard as "cam,<state>"
+String customMsg = "";             // "oled,<text>" override; "oled,clear" = back to auto
+// hud state, pushed as "hud,<ok|warn|bad>,<metrics>". IMPORTANT NOTE: the board never
+// derives either — the server owns what "safe" means, so screen and agent can't disagree.
 String hudLevel = "";
 String hudMetrics = "";
-unsigned long connectAt = 0; // ble connect instant — the hud fades in after a blink
-#define HUD_BLINK_MS 1500    // how long "CONNECTED" blinks on the splash before the hud
-// two independent cadences: the *redraw* runs fast (smooth sliding highlight,
-// responsive input) but the *breathing-pulse phase* (spinner/dot animations,
-// oledFrame % 8) stays slow — those are meant to read as a calm pulse, not
-// vibrate at whatever fps the spi bus happens to allow.
+unsigned long connectAt = 0;
+#define HUD_BLINK_MS 1500    // "CONNECTED" blinks this long on the splash before the hud
+// two cadences: redraw runs fast, the breathing-pulse phase stays slow so pulses
+// read as calm instead of vibrating at whatever fps the bus allows.
 uint8_t oledFrame = 0; // wraps freely — every pulse/spinner draw is frame % something
 unsigned long lastOledDraw = 0;
 unsigned long lastOledPhase = 0;
-// measured back when the panel was on sw-spi: ~17.5ms/frame regardless of screen —
-// shoving the 1024-byte buffer over dominated, draw calls were noise by comparison.
-// hardware spi1 (see the byte callback up top) cut that; 20ms is kept because ~50fps
-// is plenty and every redraw still blocks ble.poll/drive/routine ticks behind it.
-// re-measure with micros() around clearBuffer+draw+sendBuffer before trusting a number.
+// every redraw blocks ble.poll/drive/routine ticks behind it, so ~50fps, not more.
 #define OLED_DRAW_INTERVAL 20
-#define OLED_PHASE_INTERVAL 120 // ~1s per breathing cycle (8 phase steps) — unrelated to draw fps
+#define OLED_PHASE_INTERVAL 120 // ~1s per breathing cycle (8 steps)
 
-/* matrix rain — operator toy, one of the screensavers picked from the console ("scr,1").
-   ten 6px columns of 8px cells, each dropping at its own rate. contrast on a 1-bit panel
-   has to be faked with density, so the tail fades in four tiers: the head is knocked out
-   of a filled cell (the only way to read *brighter* than white), the two behind it are
-   solid, the middle is dimmed by erasing every other scanline through the glyph and the
-   end by erasing three in four. glyphs also re-roll in place so a column shimmers instead
-   of just scrolling. costs nothing but the normal 20ms draw tick — no buffers, no link. */
+/* matrix rain ("scr,1"). columns of cells, each dropping at its own rate. contrast on
+   a 1-bit panel is density, so the tail fades in four tiers — see drawMatrix(). */
 #define MTX_CW 6                 // cell width: the 5x8 font plus a pixel of air
 #define MTX_CH 8
 #define MTX_COLS (OLED_W / MTX_CW)  // 21
@@ -138,64 +91,48 @@ uint8_t mtxTail[MTX_COLS];
 char mtxCell[MTX_COLS][MTX_ROWS];
 
 
-#define BOARD_NAME "BLACKOUT-V3" // shown on the status screen and the ble local
-                                  // name/serial banner below — one literal, three
-                                  // spots, so they can't drift out of sync again
-// l298n on d2/d4/d6/d7 (direction) + d3/d10 (enable). the pin numbers follow the
-// loom as it is actually wired, by colour — the connector is not a straight run
-// and renumbering here is one edit against four wire moves. d5 is free.
-// IMPORTANT NOTE: in1..in4 are no longer contiguous, so anything iterating them
-// has to use MOTOR_PINS below, not a `for (p = IN1; p <= IN4)` range.
-// IMPORTANT NOTE: the run has to stay inside d2-d13 — that's the giga's whole
-// pwm band. the analog header (and d41+) can't do pwm at all, and a8-a11 can't
-// even do digital (the core errors out on digitalWrite there).
+#define BOARD_NAME "BLACKOUT-V3" // status screen + ble local name + serial banner
+// l298n. pins follow the loom's wire colours, not connector order — d5 is free.
+// IMPORTANT NOTE: in1..in4 aren't contiguous — iterate MOTOR_PINS, never a range.
+// IMPORTANT NOTE: keep the run inside d2-d13, the giga's whole pwm band.
 #define ENA 3  // motor a speed (pwm), gris
 #define IN1 2  // motor a, morado
 #define IN2 7  //          azul
 #define IN3 6  // motor b, verde
 #define IN4 4  //          amarillo
-// important note: pull the ena/enb jumpers off the l298n first — left on, they
-// tie enable to 5v and these pins do nothing (motors stay full speed).
-// IMPORTANT NOTE: enb was on d2 and motor b was dead or stuck in most verbs.
-// d2 (PA_3) and d3 (PA_2) are both TIM15 in the core's PinMap_PWM, and the mbed
-// core hands the second PwmOut on a shared timer a channel that never comes up —
-// d3 (ena) claimed it first, so enb silently stayed low. d10 (PK_1) is TIM1, its
-// own timer, so enb lives there — d5 (PA_7) is also TIM1 and works just as well
-// if the wire ever goes back. only ena/enb need timers; d2 is fine for in1, the
-// clash is between two PwmOuts, never a digital output.
+// IMPORTANT NOTE: pull the ena/enb jumpers off the l298n — left on they tie enable
+// to 5v and these pins do nothing.
+// IMPORTANT NOTE: enb can't share a timer with ena. d2 and d3 are both TIM15, and the
+// mbed core gives the second PwmOut on a shared timer a channel that never comes up
+// (enb stayed silently low). d10 is TIM1, its own; d5 also works. digital pins don't care.
 #define ENB 10  // motor b speed (pwm), naranja
 static const uint8_t MOTOR_PINS[] = {IN1, IN2, IN3, IN4};
 #define SONAR_ITER 3            // pings per reading, median drops spikes
 #define SONAR_TIMEOUT_US 25000UL // ~430cm round-trip + margin, no echo = timeout
-#define DIST_ALPHA 0.6 // ema smoothing on distance — ultrasonic is already clean
-                        // (median-of-3 kills spikes), so light smoothing is enough.
+#define DIST_ALPHA 0.6          // ema on distance; median-of-3 already killed the spikes
 
-/* the other screensavers. same deal as the rain: the board animates them off the 20ms
-   draw tick, the link only carries which one (`scr,<n>`, 0 = off). keep the order in
-   step with SAVERS in app.js — the wire value is the index, nothing else. */
+/* the other screensavers. keep the order in step with SAVERS in app.js — the wire
+   value (`scr,<n>`, 0 = off) is the index, nothing else. */
 enum { SCR_OFF, SCR_MATRIX, SCR_BOUNCE, SCR_STARS, SCR_TETRIS, SCR_N };
 uint8_t saver = SCR_OFF;
-// bounce: the dvd-logo one. 1px per draw tick ≈ 50px/s, so a full crossing is ~1.3s.
-static const char BN_TEXT[] = "BLACKOUT"; // 8 chars = 40px, leaves 88px of travel
-                                           // on a 128px panel
+// bounce: the dvd-logo one. 1px per draw tick ≈ 50px/s.
+static const char BN_TEXT[] = "BLACKOUT";
 int16_t bnX, bnY;   // int16 for headroom on the sums, not just the range
 int8_t bnDX, bnDY;
 uint8_t bnW;
 // stars: sparse dots falling at three depths. on 1 bit, size is the only depth cue.
 #define ST_N 24
 uint8_t stX[ST_N], stY[ST_N], stZ[ST_N]; // z = 1..3 = px/tick and dot size
-// tetris: it plays itself, badly on purpose — pieces drop into the deepest column with
-// no lookahead, so the well tops out every minute or so and wipes. the well stays
-// portrait (a 16-wide, 8-deep one isn't tetris) and is centred on the landscape panel,
-// which also keeps a row one byte: one bit per cell, bit c = column c, full = 0xFF.
+// tetris: plays itself, badly on purpose. the well stays portrait and centred on the
+// landscape panel, which also keeps a row one byte — bit c = column c, full = 0xFF.
 #define TET_COLS 8
 #define TET_ROWS 10
 #define TET_CELL 6
 #define TET_X0 ((OLED_W - TET_COLS * TET_CELL) / 2) // 40
 #define TET_Y0 ((OLED_H - TET_ROWS * TET_CELL) / 2) // 2
 #define TET_SPD 4 // draw ticks per row of fall
-// 7 tetrominoes x 4 rotations as 4x4 bitmaps: nibble r = row r, bit c = column c.
-// rotating a bitmap at runtime is more code than just listing them.
+// 7 tetrominoes x 4 rotations, 4x4 bitmaps: nibble r = row r, bit c = column c.
+// listing them is less code than rotating at runtime.
 static const uint16_t TET_PIECES[7][4] = {
   { 0x000F, 0x1111, 0x000F, 0x1111 }, // I
   { 0x0033, 0x0033, 0x0033, 0x0033 }, // O
@@ -210,8 +147,8 @@ uint16_t tetM;              // the falling piece's bitmap
 int8_t tetX, tetY;          // its top-left cell; y starts above the well
 uint8_t tetTick;
 
-// dht11 tops out around 1hz and its read blocks in the same loop as ble.poll;
-// pressure doesn't move fast either — both on one 2s cadence, cached between.
+// dht11 tops out near 1hz and blocks in the same loop as ble.poll; pressure doesn't
+// move fast either. both on one cadence, cached between.
 #define ENV_INTERVAL 2000
 #define SEND_INTERVAL 100
 // the idle-under-a-screensaver cadences — see the note in loop()
@@ -220,51 +157,38 @@ uint8_t tetTick;
 
 BLEService sensorService("19b10000-e8f2-537e-4f6c-d104768a1214");
 BLEStringCharacteristic sensorChar("19b10001-e8f2-537e-4f6c-d104768a1214", BLERead | BLENotify, 100);
-// command channel: server (via the browser's web bluetooth) writes here to
-// trigger actions. "go,<routine>" starts a motion routine, "stop" cuts motors.
-// bumped 20->64 for "oled,<text>" operator messages — every other verb here
-// still fits well under 20. IMPORTANT NOTE: assumes the ble link negotiates an
-// att mtu >=67 bytes; if oled text arrives truncated on a given os/browser,
-// that's the ceiling to check first, not a firmware bug.
+// command channel — the browser writes verbs here (see handleCmd). 64 bytes is for
+// "oled,<text>"; everything else fits under 20. IMPORTANT NOTE: needs an att mtu >=67,
+// so truncated oled text is the link's ceiling, not a firmware bug.
 BLEStringCharacteristic cmdChar("19b10002-e8f2-537e-4f6c-d104768a1214", BLEWrite | BLEWriteWithoutResponse, 64);
 
-// the routine tables live in routines.h — edit that file to change what
-// the robot does. everything here is the machinery that runs them: the board plays
-// a routine standalone (the browser just writes "go,presentation"), so a ble
-// dropout mid-run doesn't strand it. steps advance on a millis() stepper, never
-// delay() — a blocking routine would freeze loop(), killing ble.poll() and the
-// telemetry send for the whole run.
+// tables live in routines.h; this is the machinery. the board runs a routine
+// standalone so a ble drop mid-run can't strand it, and steps advance on millis(),
+// never delay() — blocking here would kill ble.poll() for the whole run.
 const Step* routine = nullptr; // null = idle
 uint8_t stepIdx = 0;
 unsigned long stepStart = 0;
 
-// env sensors: dht11 for temp/humidity, bme280 for pressure. either one missing
-// (or a dead i2c bus) just leaves its own fields at 0; nothing blocks on them.
+// either sensor missing (or a dead bus) just leaves its own fields at 0.
 Adafruit_BME280 bme;
 bool bmeOk = false;
 DHT11 dht(DHT_PIN);
 int temp = 0, humid = 0;  // °C, % — last good dht read, cached
 float pressure = 0;       // hPa — last good bme read, cached
-// the filtered ultrasonic reading, published so the blk vm can compare against it
-// without waiting for the telemetry line. refreshed once per send_interval.
-float distCm = 999;       // cm, 999 = nothing in range
+float distCm = 999;       // filtered, 999 = nothing in range. the blk vm reads it
+                          // directly rather than waiting on a telemetry line.
 
-// gy-302 (bh1750) ambient light, on its OWN bus: Wire2 — sda2 = d9, scl2 = d8
-// (free since enb moved to d10), vcc 3v3 (the module has a regulator, but 3v3
-// keeps sda/scl at the h747's level), addr left floating = 0x23.
-// IMPORTANT NOTE: it would fit on Wire next to the bme (0x23 vs 0x76 don't
-// collide) — separate bus is deliberate, so a shorted light sensor can't take
-// the barometer down with it. d8/d9 need external pull-ups (4k7 to 3v3) if the
-// module has none; the gy-302 board carries its own.
-// IMPORTANT NOTE: no library. continuous h-res mode is one command byte out and
-// two bytes back — the driver below is shorter than the #include would be.
+// gy-302 (bh1750) on its OWN bus, Wire2 (sda2 d9, scl2 d8), 3v3, addr 0x23.
+// IMPORTANT NOTE: it would fit on Wire beside the bme — the separate bus is
+// deliberate, so a shorted light sensor can't take the barometer with it.
+// no library: continuous h-res is one byte out, two back.
 #define BH1750_ADDR 0x23
 #define BH1750_CONT_HRES 0x10 // 1 lx steps, ~120ms a conversion — well inside ENV_INTERVAL
 bool luxOk = false;
 float lux = 0;            // lx — last good read, cached
 
-// -1 on a short read, so a yanked wire freezes the last value instead of
-// reporting pitch dark. 1.2 is the datasheet's counts-per-lx at default mtreg.
+// -1 on a short read: a yanked wire freezes the last value instead of reporting
+// pitch dark. 1.2 = datasheet counts-per-lx at default mtreg.
 float readLux() {
   if (Wire2.requestFrom(BH1750_ADDR, 2) < 2) return -1;
   uint16_t raw = (Wire2.read() << 8) | Wire2.read();
@@ -279,16 +203,12 @@ void oledCenter(const char* s, int y) {
   oled.drawStr((OLED_W - oled.getStrWidth(s)) / 2, y, s);
 }
 
-// centred inside a column, not the whole panel — landscape puts the hud glyph and its
-// text side by side, so "centre" means "centre of my half".
+// centred inside a column — the hud sits glyph and text side by side.
 void oledCenterIn(const char* s, int x0, int w, int y) {
   oled.drawStr(x0 + (w - oled.getStrWidth(s)) / 2, y, s);
 }
 
-// status screen: wordmark + pairing state, nothing else. 128px of width means the
-// name fits on one line, so the 20px face is spent on it instead of on "V3".
-// IMPORTANT NOTE: cam state is no longer drawn — the dashboard still sends
-// "cam,<state>" and camState still tracks it, ready if it ever earns a line back.
+// status screen: wordmark + pairing state. camState is tracked but not drawn.
 void drawStatus() {
   oled.setFont(u8g2_font_logisoso20_tr);
   oledCenter("BLACKOUT", 26);
@@ -296,36 +216,30 @@ void drawStatus() {
   oledCenter("V3", 42);
   oled.drawHLine(24, 47, OLED_W - 48);
 
-  // animated ellipsis while pairing — a stalled pair shouldn't look like a
-  // frozen screen. oledFrame ticks every OLED_PHASE_INTERVAL (~120ms).
+  // animated ellipsis while pairing — a stalled pair shouldn't look frozen
   oled.setFont(u8g2_font_6x10_tf);
   if (bleConnected) {
-    // blink on the way in — the splash only stays up for HUD_BLINK_MS after a
-    // connect, so this is the handoff animation, not a steady state.
-    if ((millis() / 180) % 2) oledCenter("CONNECTED", 61);
+    if ((millis() / 180) % 2) oledCenter("CONNECTED", 61); // handoff blink, not a steady state
   } else {
     static const char* dots[4] = {"PAIRING", "PAIRING.", "PAIRING..", "PAIRING..."};
     oledCenter(dots[(oledFrame / 4) % 4], 61);
   }
 }
 
-// the three status glyphs, drawn with primitives instead of an icon font — a
-// hand-rolled xbm is more bytes to get wrong than a few circles and lines.
-// each is a ~36x38 glyph hung off (x, y) = top-left, and
-// every one is captioned in drawHud() so meaning never rests on the drawing.
+// status glyphs, primitives instead of an icon font. each is ~36x38 hung off
+// (x, y) = top-left, and drawHud() captions every one so meaning never rests on the art.
 void drawSmile(int x, int y) {
   int cx = x + 18, cy = y + 18;
   oled.drawCircle(cx, cy, 17);              // face
   oled.drawDisc(cx - 7, cy - 5, 2);         // eyes
   oled.drawDisc(cx + 7, cy - 5, 2);
-  // mouth = lower half of two circles, one inside the other, so the arc reads as
-  // a stroke instead of a hairline on a 128x64 panel.
+  // mouth: two nested arcs, so it reads as a stroke and not a hairline
   oled.drawCircle(cx, cy, 9, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
   oled.drawCircle(cx, cy, 8, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
 }
 
-// warning triangle. filled = danger (also blinks, see drawHud), hollow = caution:
-// same sign, louder. the "!" is drawn in whichever colour the triangle isn't.
+// filled = danger (blinks, see drawHud), hollow = caution. the "!" is drawn in
+// whichever colour the triangle isn't.
 void drawWarn(int x, int y, bool filled) {
   int x0 = x, x1 = x + 44, apex = x + 22, base = y + 36;
   if (filled) oled.drawTriangle(apex, y, x0, base, x1, base);
@@ -340,10 +254,9 @@ void drawWarn(int x, int y, bool filled) {
   oled.setDrawColor(1);
 }
 
-// the connected screen: a one-line banner across the top, then the server's safety
-// glyph on the left and its verdict + metrics stacked in the column beside it —
-// landscape has no room to stack all four, but plenty to sit them side by side.
-#define HUD_COL_X 54                  // right column: starts clear of the 44px warn glyph
+// connected screen: banner, then the server's safety glyph on the left with its
+// verdict + metrics in the column beside it.
+#define HUD_COL_X 54                  // clear of the 44px warn glyph
 #define HUD_COL_W (OLED_W - HUD_COL_X)
 void drawHud() {
   oled.setFont(u8g2_font_5x7_tr);
@@ -354,16 +267,14 @@ void drawHud() {
   if (hudLevel == "ok") { drawSmile(10, 16); label = "SAFE"; }
   else if (hudLevel == "warn") { drawWarn(4, 16, false); label = "CAUTION"; }
   else if (hudLevel == "bad") {
-    // ~480ms blink (oledFrame ticks every OLED_PHASE_INTERVAL) — an alarm the
-    // operator catches out of the corner of an eye.
-    if ((oledFrame / 2) % 2) drawWarn(4, 16, true);
+    if ((oledFrame / 2) % 2) drawWarn(4, 16, true); // ~480ms blink — catchable out of the corner of an eye
     label = "DANGER";
   }
   oled.setFont(u8g2_font_7x13B_tr);
   oledCenterIn(label, HUD_COL_X, HUD_COL_W, 26);
 
-  // metrics arrive pre-formatted from the server, "|" splits lines. straight to
-  // the glass — the board doesn't decide what's worth showing.
+  // pre-formatted by the server, "|" splits lines — the board doesn't decide
+  // what's worth showing.
   oled.setFont(u8g2_font_4x6_tr);
   int y = 38;
   int from = 0;
@@ -376,10 +287,9 @@ void drawHud() {
   }
 }
 
-// operator message from the dashboard's oled panel, word-wrapped to the panel
-// width with a breathing frame + corner pulse so a static string still reads as
-// "live", not frozen. IMPORTANT NOTE: 4 lines max — 4 x 12px is all 64px of height
-// holds, and the ble message cap is 64 chars, which wraps to ~4 lines at this width.
+// operator message, word-wrapped, with a corner pulse so a static string still
+// reads as live. IMPORTANT NOTE: 4 lines is all 64px holds — and the 64-char ble
+// cap wraps to about that anyway.
 #define CUST_LINES 4
 void drawCustom() {
   oled.setFont(u8g2_font_6x10_tf);
@@ -415,13 +325,13 @@ void drawCustom() {
   oled.drawDisc(OLED_W - 8, top + 6, 1 + (phase < 4 ? phase : 7 - phase) / 2); // "live message" pulse
 }
 
-// glyph pool. ascii only: the katakana in a u8g2 japanese font costs tens of KB of
-// flash for characters nobody can resolve at 5px anyway.
+// ascii only — a u8g2 japanese font is tens of KB of flash for shapes nobody can
+// resolve at 5px.
 static const char MTX_GLYPHS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<>*+=-#$%&@?/\\|";
 #define MTX_NGLYPHS (sizeof(MTX_GLYPHS) - 1)
 static inline char mtxGlyph() { return MTX_GLYPHS[random(MTX_NGLYPHS)]; }
 
-// a drop re-enters from above with a fresh speed/length, so columns never sync up.
+// fresh speed/length on re-entry, so columns never sync up.
 void mtxRespawn(uint8_t c) {
   mtxY[c] = -(int8_t)random(MTX_ROWS);
   mtxSpd[c] = random(1, 5);
@@ -436,8 +346,7 @@ void startMatrix() {
   }
 }
 
-// one step per draw tick (called from loop(), not from the draw — a hud push mid-frame
-// must not make the rain run faster).
+// stepped from loop(), not from the draw — a hud push mid-frame must not speed it up.
 void stepMatrix() {
   for (uint8_t c = 0; c < MTX_COLS; c++) {
     if (++mtxTick[c] < mtxSpd[c]) continue;
@@ -456,7 +365,7 @@ void drawMatrix() {
       int r = mtxY[c] - i;
       if (r < 0 || r >= MTX_ROWS) continue;
       int top = r * MTX_CH;
-      if (i == 0) { // head: glyph knocked out of a solid cell — the panel's only "brighter"
+      if (i == 0) { // head: knocked out of a solid cell — the panel's only "brighter"
         oled.drawBox(x - 1, top, MTX_CW, MTX_CH);
         oled.setDrawColor(0);
         oled.drawGlyph(x, top + MTX_CH - 1, mtxCell[c][r]);
@@ -464,8 +373,8 @@ void drawMatrix() {
         continue;
       }
       oled.drawGlyph(x, top + MTX_CH - 1, mtxCell[c][r]);
-      // fake grey by erasing scanlines through the glyph: keep 1 row in `keep`.
-      // 0 = solid (the two behind the head), 2 = half, 4 = quarter for the last third.
+      // fake grey by erasing scanlines: keep 1 row in `keep`. 0 = solid, 2 = half,
+      // 4 = quarter for the last third.
       uint8_t keep = i <= 2 ? 0 : (i * 3 <= mtxTail[c] * 2 ? 2 : 4);
       if (!keep) continue;
       oled.setDrawColor(0);
@@ -532,15 +441,13 @@ bool tetHit(uint16_t m, int8_t px, int8_t py) {
   return false;
 }
 
-// random piece, but not a random column: drop it wherever it lands deepest, ties
-// broken by coin flip. one loop's worth of "ai" — with a purely random column the well
-// tops out every ~10 pieces, which is a wipe every 15 seconds and no lines ever cleared.
+// random piece, deepest-landing column. a random column instead tops the well out
+// every ~10 pieces and never clears a line.
 void tetSpawn() {
   tetM = TET_PIECES[random(7)][random(4)];
   tetY = -3; // enters from off the top
   tetTick = 0;
-  // width, not a flat 0..4: a 1-wide piece has to be able to reach column 7, or the
-  // right of the well never fills and lines stop completing.
+  // real width, not a flat 0..4 — a 1-wide piece must be able to reach column 7.
   uint8_t w = 0;
   for (uint8_t b = 0; b < 16; b++)
     if ((tetM >> b) & 1 && (b % 4) + 1 > w) w = (b % 4) + 1;
@@ -598,9 +505,9 @@ void drawTetris() {
   }
 }
 
-// the whole screensaver layer is these three calls — adding one is a case in each.
+// the whole screensaver layer is these three — adding one is a case in each.
 void startSaver(uint8_t which) {
-  randomSeed(micros()); // otherwise every boot plays the identical pattern
+  randomSeed(micros()); // else every boot plays the identical pattern
   saver = which < SCR_N ? which : SCR_OFF;
   if (saver == SCR_MATRIX) startMatrix();
   else if (saver == SCR_BOUNCE) startBounce();
@@ -622,9 +529,8 @@ void drawSaver() {
   else if (saver == SCR_TETRIS) drawTetris();
 }
 
-// redrawn on every draw tick (see OLED_DRAW_INTERVAL in loop()), not just
-// on state change — a static screen doesn't read as "alive" on a panel this size.
-// an operator message beats the auto status screen, the rain beats everything.
+// redrawn every tick, not on state change — a static screen doesn't read as alive.
+// operator message beats the status screen, a screensaver beats everything.
 void updateOled() {
   oled.clearBuffer();
   if (saver) drawSaver();
@@ -636,23 +542,19 @@ void updateOled() {
 
 void setup() {
   Serial.begin(9600);
-  Serial.setTimeout(50); // readstringuntil on a partial line must not block the
-                         // default 1s — that stalls ble.poll + the routine stepper
+  Serial.setTimeout(50); // the default 1s on a partial line stalls ble.poll + the stepper
   pinMode(TRIG_PIN, OUTPUT);
-  // IMPORTANT NOTE: pulldown, not bare INPUT. on the giga a floating echo pin sits
-  // HIGH, so pulsein() never sees a rising edge, times out, and every reading comes
-  // back -1 (999 on the dashboard) even with the sensor wired correctly.
+  // IMPORTANT NOTE: pulldown, not bare INPUT — a floating echo pin on the giga sits
+  // HIGH, so pulseIn never sees an edge and every reading comes back -1.
   pinMode(ECHO_PIN, INPUT_PULLDOWN);
 
-  // both addresses: 0x76 on most breakouts, 0x77 on adafruit's. one try each at
-  // boot only — a hotplugged bme won't be picked up until a reset, which beats
-  // probing a dead bus in every loop.
+  // 0x76 on most breakouts, 0x77 on adafruit's. boot only — a hotplugged bme waits
+  // for a reset, which beats probing a dead bus every loop.
   Wire.begin();
   bmeOk = bme.begin(0x76) || bme.begin(0x77);
   Serial.println(bmeOk ? "BME280 ok" : "BME280 not found");
 
-  // same one-shot probe as the bme: putting it into continuous mode is also the
-  // presence check, since a missing chip won't ack the command byte.
+  // continuous mode doubles as the presence check — a missing chip won't ack.
   Wire2.begin();
   Wire2.beginTransmission(BH1750_ADDR);
   Wire2.write(BH1750_CONT_HRES);
@@ -662,7 +564,7 @@ void setup() {
   oled.getU8x8()->byte_cb = oledSpi1; // before begin(): SPI1, not the d89-d91 "SPI" bus
   oled.setBusClock(OLED_SPI_HZ);
   oled.begin();
-  oled.setContrast(255); // ssd1306 boots at ~0x7F; full drive is the cheapest contrast win there is
+  oled.setContrast(255); // it boots at ~0x7F
   updateOled();
 
   for (uint8_t p : MOTOR_PINS) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
@@ -672,30 +574,23 @@ void setup() {
   if (!BLE.begin()) {
     while (1) { Serial.println("BLE init failed"); delay(1000); }
   }
-  // known arduinoble/r4 wifi bug: the advertised name always shows as
-  // "arduino" regardless of setlocalname() (the esp32-s3 co-processor doesn't
-  // honor it in the ad packet, only in the post-connect gatt device-name
-  // characteristic). so the browser filters by this service uuid instead.
+  // known arduinoble bug: the ad packet says "arduino" whatever this is set to (the
+  // co-processor only honours it post-connect), so the browser filters by service uuid.
   BLE.setLocalName(BOARD_NAME);
-  // 7.5-15ms connection interval (units of 1.25ms). the default negotiates out to
-  // 30ms+, and every drive burst waits a whole interval before the radio sends it.
-  // faster interval = more radio wakeups = more battery, worth it for manual drive.
+  // 7.5-15ms (units of 1.25ms). the default negotiates out past 30ms and every drive
+  // burst waits a whole interval. more radio wakeups, worth it for manual drive.
   BLE.setConnectionInterval(6, 12);
   BLE.setAdvertisedService(sensorService);
   sensorService.addCharacteristic(sensorChar);
   sensorService.addCharacteristic(cmdChar);
   BLE.addService(sensorService);
   BLE.advertise();
-  Serial.println("BLE advertising as " BOARD_NAME); // adjacent string literals fold at compile time
+  Serial.println("BLE advertising as " BOARD_NAME);
 }
 
-// the one motion primitive: signed per-side pwm, -255 (full reverse) to 255
-// (full forward). motor a is `l`, motor b is `r`. everything below is a corner
-// of it, and the pad's left-stick arcade mix lands on the in-between values —
-// arcing while driving, which the four named verbs can't express.
-// if a motor spins backward, swap that motor's two output wires at the l298n
-// screw terminals — don't flip the pin logic here or forward/back stop meaning
-// the same thing.
+// the one motion primitive: signed per-side pwm, -255..255, motor a = l, b = r.
+// the named verbs are its corners; the pad's arcade mix lands in between.
+// a motor spinning backwards is a wire swap at the l298n terminals, not a flip here.
 void tank(int l, int r) {
   l = constrain(l, -255, 255); r = constrain(r, -255, 255);
   digitalWrite(IN1, l < 0); digitalWrite(IN2, l > 0);
@@ -706,9 +601,8 @@ void tank(int l, int r) {
 void forward(uint8_t speed) { tank(speed, speed); }
 void back(uint8_t speed)    { tank(-speed, -speed); }
 
-// pivot turns: motors oppose, robot spins about its own centre rather
-// than arcing. turn *angle* is whatever `ms` buys you at this speed — open loop,
-// no encoders, so it drifts with battery charge. tune on the field, not the bench.
+// pivot turns: motors oppose, spins about its own centre. angle is whatever `ms`
+// buys at this speed — open loop, drifts with battery charge, tune on the field.
 void left(uint8_t speed)    { tank(speed, -speed); }
 void right(uint8_t speed)   { tank(-speed, speed); }
 
@@ -721,9 +615,8 @@ void applyStep(const Step& s) {
     case LEFT:  left(s.pwm);    break;
     case RIGHT: right(s.pwm);   break;
     case ANALYZE:
-      halt(); // stand still — camera needs a clean frame, not a blurry one
-      // fire-and-forget on the notify channel the browser already listens to. if
-      // notify drops we miss one analysis, routine keeps going.
+      halt(); // the camera wants a clean frame
+      // fire-and-forget: a dropped notify costs one analysis, the routine carries on
       sensorChar.writeValue("E:analyze");
       Serial.println("E:analyze");
       break;
@@ -731,29 +624,26 @@ void applyStep(const Step& s) {
   }
 }
 
-// direct drive for the dashboard's motor-debug panel and the pad:
-//   "drv,<fwd|back|left|right>,<pwm>[,<ms>]"  — one of the four verbs
-//   "drv,tank,<l>,<r>[,<ms>]"                 — signed per-side, -255..255
-// always time-limited (default 800ms, cap 10s) so a dropped link or missed stop
-// never leaves the wheels spinning. overrides any running routine.
+// direct drive for the debug panel and the pad:
+//   "drv,<fwd|back|left|right>,<pwm>[,<ms>]"
+//   "drv,tank,<l>,<r>[,<ms>]"   signed per-side, -255..255
+// always time-limited (800ms default, 10s cap), overrides any running routine.
 unsigned long drvEnd = 0;
 
 Ins blkCode[BLK_MAX];
-uint8_t blkLen = 0, blkWant = 0; // received / declared by the upload — a short upload never runs
+uint8_t blkLen = 0, blkWant = 0; // received / declared — a short upload never runs
 float blkVar[BLK_VARS];
 int blkPc = -1;                  // -1 = idle
 uint8_t blkPwm = 140;            // what `speed` last set; every move uses it
 unsigned long blkUntil = 0;      // deadline for the instruction in flight (0 = none)
 bool blkWaitEvt = false;         // parked on an evt the browser has to answer
-// an upload is in flight. only used to keep loop() quick while it lands: the idle
-// median ping blocks ~200ms, and every one of those is 200ms the browser's next
-// write sits waiting on ble.poll() — 40 instructions would take 8s to upload.
-bool blkLoading = false;
-bool blkResume = false;          // guard tripped mid-run: resume *at* blkpc, don't advance past it
-uint8_t blkResSlot = 0xFF;       // slot an evt answer lands in (0xff = the evt wants no value)
+bool blkLoading = false;         // upload in flight — keeps loop() off the ~200ms
+                                 // median ping, else 40 instructions take 8s to land
+bool blkResume = false;          // guard tripped: resume *at* blkpc, don't advance past it
+uint8_t blkResSlot = 0xFF;       // slot an evt answer lands in (0xff = wants no value)
 
 // lhs: 0-49 index into blk.mjs's SENSORS, 50 = our own speed, 100+ = a variable.
-// sensors this board doesn't carry read 0 — same as the fields in the telemetry line.
+// sensors this board doesn't carry read 0, same as the telemetry line.
 float blkRead(uint8_t lhs) {
   if (lhs >= 100) return blkVar[(uint8_t)(lhs - 100) % BLK_VARS];
   if (lhs == 50) return blkPwm;
@@ -791,9 +681,9 @@ void blkDrive(uint8_t verb, uint8_t pwm) {
 void blkHalt() { blkPc = -1; blkWaitEvt = false; blkLoading = false; blkResume = false; blkUntil = 0; halt(); }
 void blkFinish() { blkHalt(); sensorChar.writeValue("E:blkend"); Serial.println("E:blkend"); }
 
-// run instructions from blkpc until one needs time to pass, then return. never
-// blocks: timed ops set blkuntil and tickblk() finishes them. the guard stops a
-// body-less `forever` from spinning loop() to death — it just resumes next tick.
+// run from blkpc until something needs time to pass. never blocks: timed ops set
+// blkUntil and tickBlk() finishes them. the guard stops a body-less `forever` from
+// spinning loop() to death.
 void blkEnter() {
   for (uint8_t guard = 0; guard < 64; guard++) {
     if (blkPc < 0 || blkPc >= blkLen) { blkFinish(); return; }
@@ -819,15 +709,14 @@ void blkEnter() {
       case B_JMP: blkPc = i.c; continue;
       case B_JMPF: if (!blkTest(i)) { blkPc = i.c; continue; } break;
       case B_EVT: {
-        halt(); // the camera wants a still frame, and nothing should roll while sage thinks
+        halt(); // nothing should roll while sage thinks
         String e = "E:blk,"; e += i.b; e += ","; e += i.a;
-        for (uint8_t v = 0; v < BLK_VARS; v++) { e += ","; e += blkVar[v]; } // vars, so the browser can interpolate {name}
+        for (uint8_t v = 0; v < BLK_VARS; v++) { e += ","; e += blkVar[v]; } // so the browser can interpolate {name}
         sensorChar.writeValue(e);
         Serial.println(e);
         if (i.a == 0) break; // fire and forget
         blkWaitEvt = true;
-        blkResSlot = (i.a == 2) ? i.c : 0xFF; // analyze answers "done", not a value — slot 0 isn't its
-
+        blkResSlot = (i.a == 2) ? i.c : 0xFF; // analyze answers "done", not a value
         blkUntil = millis() + BLK_EVT_MS;
         return;
       }
@@ -838,7 +727,6 @@ void blkEnter() {
 }
 
 // finish the instruction in flight if its time is up (or its condition tripped).
-// called every loop() — must stay non-blocking.
 void tickBlk() {
   if (blkPc < 0) return;
   if (blkResume) { blkResume = false; blkEnter(); return; }
@@ -884,8 +772,8 @@ String blkFld(const String& s, uint8_t n) {
   return end < 0 ? s.substring(start) : s.substring(start, end);
 }
 
-// upload + control, one line per instruction so a lost write is just a short
-// upload (caught by blkstart) rather than a corrupt program:
+// one line per instruction, so a lost write is a short upload (caught by blkStart)
+// rather than a corrupt program:
 //   "blk,n,<count>"  begin, clears whatever was here
 //   "blk,i,<idx>,<op>,<a>,<b>,<c>,<lhs>,<cmp>,<rhs>"
 //   "blk,go"         run from 0
@@ -979,14 +867,12 @@ void tickRoutine() {
   applyStep(routine[stepIdx]);
 }
 
-// one parser for both transports: ble cmdchar and usb serial. serial parity means
-// routines are testable at the bench with no ble, no browser, no pairing.
+// one parser for both transports — serial parity means bench testing needs no ble.
 void handleCmd(String c) {
   c.trim();
   if (c == "stop") stopRoutine();
   else if (c.startsWith("go,")) startRoutine(c.substring(3));
   else if (c.startsWith("drv,")) startDrive(c);
-  // uploaded blk workflow: instructions in, then "blk,go". see the blk vm above.
   else if (c.startsWith("blk,")) handleBlk(c);
   else if (c.startsWith("cam,")) { camState = c.substring(4); if (!saver) updateOled(); }
   else if (c.startsWith("hud,")) {
@@ -995,19 +881,18 @@ void handleCmd(String c) {
     hudMetrics = (sep < 0) ? "" : c.substring(sep + 1);
     if (!saver) updateOled(); // under a screensaver the draw tick owns the panel
   }
-  // a screensaver takes the whole panel until it's switched off (or the link drops).
+  // a screensaver owns the panel until it's switched off (or the link drops)
   else if (c.startsWith("scr,")) { startSaver(c.substring(4).toInt()); updateOled(); }
   else if (c.startsWith("oled,")) {
     String msg = c.substring(5);
-    customMsg = (msg == "clear") ? "" : msg; // literal word "clear" reverts to auto status
+    customMsg = (msg == "clear") ? "" : msg; // the literal word reverts to auto
     updateOled();
   }
-  // unknown verb, ignore. the board only moves when explicitly told to.
+  // unknown verb: ignore. the board only moves when told to.
 }
 
-// one hc-sr04 ping in cm via plain pulsein() — portable across cores, unlike
-// newping's avr-cycle-counted timing (wrong on this board's clock speed).
-// returns -1 on timeout (no echo / out of range).
+// one ping in cm, -1 on timeout. plain pulseIn: newping's avr-cycle-counted timing
+// is wrong at this board's clock speed.
 float pingCm() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
@@ -1018,15 +903,13 @@ float pingCm() {
   return us > 0 ? us / 58.0 : -1;
 }
 
-// median of sonar_iter pings drops spikes, same intent as the old newping call.
 float medianPingCm() {
   float s[SONAR_ITER];
   uint8_t n = 0;
   for (uint8_t i = 0; i < SONAR_ITER; i++) {
     float v = pingCm();
     if (v >= 0) s[n++] = v;
-    delay(60); // hc-sr04 needs >=60ms between pings or the transducer ring-down
-               // from the prior burst latches a false ~20cm echo (datasheet spec)
+    delay(60); // <60ms and the prior burst's ring-down latches a false ~20cm echo
   }
   if (n == 0) return -1;
   for (uint8_t i = 1; i < n; i++) { // insertion sort, n is tiny
@@ -1046,9 +929,8 @@ void loop() {
     bleConnected = nowConnected;
     connectAt = millis();
     Serial.println(bleConnected ? "BLE central connected" : "BLE central gone");
-    // a drop invalidates the hud — the server's verdict is only as fresh as the link.
-    // the screensaver goes with it: nothing else can switch it off, so it must never outlive
-    // the console that turned it on.
+    // a drop invalidates the hud, and the screensaver goes with it — nothing else can
+    // switch one off, so it must never outlive the console that turned it on.
     if (!bleConnected) { hudLevel = ""; hudMetrics = ""; saver = SCR_OFF; }
     updateOled();
   }
@@ -1056,8 +938,7 @@ void loop() {
   if (cmdChar.written()) handleCmd(cmdChar.value());
   if (Serial.available()) handleCmd(Serial.readStringUntil('\n'));
 
-  tickRoutine(); // before the send_interval return below — that skips the rest
-                 // of loop() most iterations, which would stall the routine.
+  tickRoutine(); // above the send-interval return below, which skips the rest of loop()
   tickDrive();
   tickBlk();
 
@@ -1071,48 +952,37 @@ void loop() {
 
   unsigned long now = millis();
   bool busy = routine || blkPc >= 0 || blkLoading || drvEnd;
-  // a screensaver on an idle rover: the panel is the only thing anyone is looking at,
-  // and everything below this line blocks it. one ping is ~25ms of dead time inside a
-  // 20ms draw tick, so at 100ms it drops one frame in five — that's the stutter. back
-  // the whole sensor cadence off to 2hz while the rover isn't doing anything, and the
-  // rain runs smooth. anything that moves clears `busy` back to the full 10hz.
+  // everything below this line blocks the panel — one ping is ~25ms of dead time in a
+  // 20ms draw tick, a dropped frame in five. so an idle rover under a screensaver drops
+  // to 2hz telemetry; anything moving clears `busy` and puts 10hz back.
   if (now - lastSend < (saver && !busy ? SAVER_SEND_INTERVAL : SEND_INTERVAL)) return;
   lastSend = now;
 
-  // median-of-3 blocks ~180-250ms (60ms forced between pings). nothing else runs
-  // in that window — no ble.poll(), so an inbound drive/stop command just waits.
-  // so while anything is moving (routine *or* live drive) take a single ~25ms ping:
-  // noisier distance, but steps land on time and remote control stays responsive.
-  // consecutive pings still land send_interval (100ms) apart, clear of the 60ms ring-down.
-  // a screensaver counts as "busy" for the same reason a routine does: the median's ~200ms of
-  // blocking pings is ~200ms of no redraw, which stutters it visibly.
+  // median-of-3 blocks ~200ms with no ble.poll() in it, so an inbound stop just waits.
+  // anything moving (or animating) takes a single ~25ms ping instead: noisier, but
+  // steps land on time. consecutive pings still land 100ms apart, clear of ring-down.
   float raw = (busy || saver) ? pingCm() : medianPingCm();
   if (raw >= 0) {
     distF = (distF < 0) ? raw : distF + DIST_ALPHA * (raw - distF);
   } else {
     distF = -1; // miss = out of range, don't hold a stale value
   }
-  // miss = no echo within ~430cm = clear ahead. send 999, never 0 — 0 reads as
-  // "touching a wall" downstream (dashboard "too close", server "near" blurt).
+  // no echo = clear ahead. 999, never 0 — 0 reads as "touching a wall" downstream.
   float dist = (distF < 0) ? 999 : distF;
   distCm = dist;
 
-  // env sensor on its own slow cadence, hold last good values. the dht11 read blocks
-  // ~30ms (its wire protocol is timed delays), which is a visible hitch under a
-  // screensaver — same deal as the ping, so it slows down too.
+  // own cadence, last good values held. the dht11 read blocks ~30ms (timed delays),
+  // a visible hitch under a screensaver, so it backs off with the ping.
   if (now - lastEnv >= (saver && !busy ? SAVER_ENV_INTERVAL : ENV_INTERVAL)) {
     lastEnv = now;
     int t = 0, h = 0;
-    // 0 = ok; a checksum/timeout error leaves the cached values alone, so a
-    // flaky wire goes stale rather than wrong.
+    // 0 = ok; an error leaves the cache alone, so a flaky wire goes stale, not wrong
     if (dht.readTemperatureHumidity(t, h) == 0) { temp = t; humid = h; }
     if (bmeOk) {
-      // a glitched i2c read hands the compensation the registers' reset value
-      // instead of a sample, which comes out as a real-looking number, not nan,
-      // so nothing downstream catches it. gate on the datasheet's range.
-      // IMPORTANT NOTE: a wedged bus therefore goes quiet, not wrong — the
-      // value freezes. re-begin() after n rejects if that ever needs to recover
-      // without a reset.
+      // a glitched read compensates the registers' reset value into a real-looking
+      // number, not nan, so gate on the datasheet range.
+      // IMPORTANT NOTE: a wedged bus therefore freezes the value rather than lying.
+      // re-begin() after n rejects if it ever needs to recover without a reset.
       float p = bme.readPressure() / 100.0F; // Pa -> hPa
       if (p > 300 && p < 1100) pressure = p;
     }
@@ -1122,8 +992,7 @@ void loop() {
     }
   }
 
-  // important note: only dht11 + bme280 + bh1750 + hc-sr04 exist — no gas sensor,
-  // no imu. smoke/airq/roll/pitch/yaw/co/co_alert stay 0 until a real one lands.
+  // IMPORTANT NOTE: no gas sensor, no imu — those fields stay 0 until one lands.
   String line = "S:";
   line += temp;
   line += ",";
@@ -1132,13 +1001,10 @@ void loop() {
   line += dist;
   line += ",0,0,0,0,0,0,0,"; // smoke,airq,roll,pitch,yaw,co,co_alert
   line += pressure;
-  // field 11: routine running? the server gates auto-analysis on this. sent on
-  // every line rather than as a start/end event — a dropped event
-  // would strand the server thinking a routine runs forever, a flag self-heals.
+  // field 11: routine running — the server gates auto-analysis on it. a flag on every
+  // line, not a start/end event: a dropped event strands the server, a flag self-heals.
   line += (routine || blkPc >= 0) ? ",1" : ",0";
-  // field 12: lux (gy-302/bh1750). appended last — the dashboard tile, sage and
-  // blk's `lux` sensor all read it.
-  line += ",";
+  line += ","; // field 12: lux
   line += lux;
 
   Serial.println(line);

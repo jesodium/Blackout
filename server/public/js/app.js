@@ -8,10 +8,12 @@ import { parse as blkParse, run as blkRun, lint as blkLint, estimate as blkEstim
          compile as blkCompile, insLine as blkInsLine, interp as blkInterp, evalExpr as blkEval, clampArg as blkClamp } from "./blk.mjs";
 import { SageFace } from "./sageface.js";
 import { initPadNav, cursorOn } from "./padnav.mjs";
+import { mjpegSplit } from "./mjpeg.mjs";
 
 const html = htm.bind(React.createElement);
 
 // icons are files masked with currentColor — see icons.mjs / public/icons/
+const NO_FEED = []; // stable identity: a fresh [] every render re-renders the feed
 const Icon = ({ n }) => html`<i class=${"icn icn-" + n} aria-hidden="true" />`;
 
 // mirror mode: the judges' tablet reaches this dashboard over the lan, the operator's
@@ -69,6 +71,14 @@ const SENSORS = [
 // carry zeroOk. everything reading a sensor walks through here: the tile, the trend
 // line, and the go/no-go verdict — otherwise a sensor that doesn't exist votes "safe".
 const reads = (s, v) => v != null && !isNaN(v) && (v !== 0 || s.zeroOk);
+
+// telemetry watchdog. the board streams at 10Hz (2Hz behind a screensaver), so nothing
+// for this long means the link is dead even when the socket and the gatt connection are
+// both still nominally up — a frozen sketch keeps its ble connection. every number on
+// screen is then a lie the operator can't spot, so the tiles blank and the link pill
+// drops instead of holding the last packet forever. no firmware ping needed: the sensor
+// stream is already the heartbeat.
+const PKT_STALE_MS = 3000;
 
 // voice/chat command triggers: saying one of these fires ble directly instead of going to llm
 // routines are fixed on-board scripts and drive is live joystick. accents stripped, dots/commas survive.
@@ -914,6 +924,8 @@ const CAM_PICKS = [
   ["framesize", [[8, "SVGA 800×600"], [6, "VGA 640×480"], [5, "CIF 400×296"], [4, "QVGA 320×240"]]],
 ];
 
+const STALL_MS = 5000; // no frame for this long, while connected = reconnect
+
 /* camera view (esp32-cam mjpeg) — lives inside the stage */
 function CamView() {
   const [state, setState] = useState("loading");
@@ -938,6 +950,74 @@ function CamView() {
   }, []);
 
   const fail = useCallback(() => setState("offline"), []);
+  const lastFrame = useRef(0);
+
+  // MJPEG in an <img src> is decoded by the browser's own multipart parser, and that
+  // parser stalls: bytes keep arriving on the socket, the picture stops, and NOTHING
+  // fires — no load, no error — so the feed sits frozen until someone hits refresh.
+  // So read the stream ourselves. The cam sends Access-Control-Allow-Origin:* on
+  // /stream, so fetch can have the bytes; each part becomes one blob url, which is a
+  // plain single-jpeg decode the parser can't wedge on. It also makes "frozen" a
+  // thing we can SEE (a timestamp), which the <img> never told us.
+  // IMPORTANT NOTE: no canvas anywhere — the cam is a different origin, so a canvas
+  // drawn from it is tainted and can't be read back. Blob per frame is the way.
+  useEffect(() => {
+    if (yielded) return;
+    const img = imgRef.current;
+    if (!img) return;
+    const ctl = new AbortController();
+    // the clock starts at the reconnect, not at the last frame of the dead socket —
+    // otherwise the watchdog is already expired and fires again a second later.
+    lastFrame.current = Date.now();
+    let alive = true, shown = null, first = true;
+    const paint = (bytes) => {
+      const url = URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }));
+      img.src = url;
+      if (shown) URL.revokeObjectURL(shown); // already decoded and on screen
+      shown = url;
+      lastFrame.current = Date.now();
+      if (first) {
+        first = false;
+        setState("live");
+        localStorage.setItem("camHost", host);
+        forceAwbRef.current();
+      }
+    };
+    (async () => {
+      try {
+        const res = await fetch(camUrl(host), { signal: ctl.signal, cache: "no-store" });
+        if (!res.ok || !res.body) throw new Error("HTTP " + res.status);
+        const reader = res.body.getReader();
+        let buf = new Uint8Array(0);
+        while (alive) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const next = new Uint8Array(buf.length + value.length);
+          next.set(buf); next.set(value, buf.length);
+          buf = next;
+          const cut = mjpegSplit(buf);
+          for (const f of cut.frames) paint(f);
+          buf = cut.rest;
+        }
+        if (alive) throw new Error("stream ended");
+      } catch (err) {
+        if (alive && err.name !== "AbortError") setState("offline");
+      }
+    })();
+    return () => { alive = false; ctl.abort(); if (shown) URL.revokeObjectURL(shown); };
+  }, [yielded, nonce, host]);
+
+  // the watchdog: connected, but no frame in STALL_MS. bumping the nonce tears the
+  // socket down and opens a new one — silent, because the last frame stays on screen
+  // (state is left at "live", so no placeholder flashes over it). only ever runs once
+  // the feed HAS been live: a cam that never connected is the offline retry's job.
+  useEffect(() => {
+    if (yielded || state !== "live") return;
+    const id = setInterval(() => {
+      if (Date.now() - lastFrame.current > STALL_MS) setNonce(n => n + 1);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [state, yielded]);
 
   useEffect(() => {
     if (yielded || state !== "loading") return;
@@ -952,8 +1032,7 @@ function CamView() {
     return () => clearTimeout(id);
   }, [state, yielded]);
 
-  const base = camUrl(host);
-  const src = base + "?n=" + nonce;
+  const base = camUrl(host); // shown in the offline card; the reader fetches it itself
 
   const applyHost = (v) => {
     const h = v.trim() || CAM_HOST_DEFAULT;
@@ -964,6 +1043,10 @@ function CamView() {
   const ctrl = (varName, val) => {
     setSliders(p => ({ ...p, [varName]: val }));
     fetch(`http://${host}/control?var=${varName}&val=${val}`).catch(() => {});
+    // the lamp also goes through the server, so sage's remembered level tracks the
+    // slider — she skips a write when she thinks the lamp is already there, and the
+    // browser and the server do not agree on the cam's address by accident.
+    if (varName === "led") fetch("/api/led", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: val }) }).catch(() => {});
   };
   // the pink wash is white balance, and it comes back two ways: a board still on
   // pre-awb firmware boots with frozen gains, and set_framesize re-runs the sensor
@@ -974,6 +1057,11 @@ function CamView() {
     for (const [k, v] of [["whitebal", 1], ["awb_gain", 1], ["wb_mode", picks.wb_mode]])
       fetch(`http://${host}/control?var=${k}&val=${v}`).catch(() => {});
   };
+  // the reader effect is declared above forceAwb and must not re-run when picks
+  // change (that would drop the stream on every white-balance tweak) — so it calls
+  // the latest one through a ref instead of closing over it.
+  const forceAwbRef = useRef(forceAwb);
+  forceAwbRef.current = forceAwb;
   // enum settings — same endpoint, but a slider can't label "cloudy" vs "office".
   // framesize reallocates the frame buffer, so the stream stutters for a frame on
   // change; it can't exceed the init size (SVGA=8) — see the control handler.
@@ -989,9 +1077,10 @@ function CamView() {
       ${yielded
         ? html`<div class="viewport-fallback">${t("cam.scanning")}</div>`
         : state !== "offline"
-        ? html`<img ref=${imgRef} src=${src} alt=${t("zone.camera")} class="cam-feed"
-            onLoad=${() => { setState("live"); localStorage.setItem("camHost", host); forceAwb(); }}
-            onError=${fail} />`
+        // alt="" on purpose: there's no src until the first blob lands, and the
+        // broken-image alt renders rotated -90deg with the frame (vertical text).
+        // the section is already labelled by cam-h.
+        ? html`<img ref=${imgRef} alt="" class="cam-feed" />`
         : html`<div class="viewport-fallback">${t("cam.offline")}<br/>
             <small>${base}</small><br/>
             <input type="text" class="cam-host" defaultValue=${host} aria-label=${t("zone.camera")}
@@ -1036,28 +1125,13 @@ const FPV_ZOOMS = [
 ];
 
 /* ---- fpv hud ----
-   glass drawn over the fullscreen feed: corner brackets, reticle, an attitude
-   line driven by roll/pitch and a heading tape driven by yaw. all of it is
-   pointer-events:none so it never eats a click meant for the feed underneath.
+   glass drawn over the fullscreen feed: corner brackets, reticle and an attitude
+   line driven by roll/pitch. all of it is pointer-events:none so it never eats a click meant for the feed underneath.
    with no packet the numbers read 0 and the horizon sits level — a dead link
    should look obviously dead, not frozen at the last good attitude. */
-const COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
-const wrap360 = (d) => ((d % 360) + 360) % 360;
-const headingLabel = (d) => (d % 45 === 0 ? COMPASS[(d / 45) % 8] : String(d).padStart(3, "0"));
-
-// ±50° of heading either side of centre, one tick per 10°. off is -0.5..0.5 of the tape width.
-function headingTicks(yaw) {
-  const out = [];
-  for (let a = Math.ceil((yaw - 50) / 10) * 10; a <= yaw + 50; a += 10) {
-    out.push({ deg: wrap360(a), off: (a - yaw) / 100 });
-  }
-  return out;
-}
-
 function FpvOverlay({ packet }) {
   const roll = packet?.roll ?? 0;
   const pitch = packet?.pitch ?? 0;
-  const yaw = wrap360(packet?.yaw ?? 0);
   const dist = packet?.dist;
   // close obstacle turns the reticle red — the one number that matters while driving blind
   const near = dist != null && !isNaN(dist) && dist > 0 && dist < 30;
@@ -1065,13 +1139,6 @@ function FpvOverlay({ packet }) {
   return html`
     <div class="fpv-glass" aria-hidden="true">
       <div class="fpv-brackets"><i></i><i></i><i></i><i></i></div>
-
-      <div class="fpv-tape">
-        ${headingTicks(yaw).map(k => html`
-          <span key=${k.deg} class=${"fpv-tick" + (k.deg % 45 === 0 ? " is-major" : "")}
-            style=${{ left: (50 + k.off * 100) + "%" }}>${headingLabel(k.deg)}</span>`)}
-        <span class="fpv-tape-now">${Math.round(yaw).toString().padStart(3, "0")}°</span>
-      </div>
 
       <div class="fpv-attitude" style=${{ transform: `translateY(${Math.max(-28, Math.min(28, pitch)) * 4}px) rotate(${-roll}deg)` }}>
         <span class="fpv-horizon"></span>
@@ -1390,41 +1457,6 @@ function deriveIntent(ai, packet, connected) {
   return connected ? INTENTS.scanning : INTENTS.idle;
 }
 
-/* animated glyph — one svg per intent, parts animated via css (see .ai-glyph) */
-function AgentIcon({ intent }) {
-  const k = intent.key;
-  if (k === "thinking") return html`<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true">
-    <circle class="g-faint" cx="60" cy="60" r="40"/>
-    <circle class="g-track" cx="60" cy="60" r="40"/>
-    <g class="g-spin g-orbit">
-      <circle class="g-fill g-dot g-dot1" cx="60" cy="20" r="6"/>
-      <circle class="g-fill g-dot g-dot2" cx="60" cy="20" r="6" transform="rotate(120 60 60)"/>
-      <circle class="g-fill g-dot g-dot3" cx="60" cy="20" r="6" transform="rotate(240 60 60)"/>
-    </g>
-    <circle class="g-fill g-core" cx="60" cy="60" r="8"/>
-  </svg>`;
-  if (k === "scanning") return html`<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true">
-    <circle class="g-faint" cx="60" cy="60" r="40"/>
-    <circle class="g-faint" cx="60" cy="60" r="24"/>
-    <g class="g-spin g-sweep"><path class="g-fill g-wedge" d="M60 60 L60 22 A38 38 0 0 1 92 41 Z"/></g>
-    <circle class="g-fill g-core" cx="60" cy="60" r="4"/>
-    <circle class="g-fill g-blip" cx="84" cy="42" r="3.6"/>
-  </svg>`;
-  if (k === "clear") return html`<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true">
-    <circle class="g-ring2" cx="60" cy="60" r="34"/>
-    <path class="g-check" d="M44 61 L55 72 L78 47"/>
-  </svg>`;
-  if (k === "caution" || k === "alert") return html`<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true">
-    <path class="g-tri" d="M60 22 L94 84 L26 84 Z"/>
-    <line class="g-bang" x1="60" y1="46" x2="60" y2="66"/>
-    <circle class="g-fill g-dot2" cx="60" cy="75" r="3.2"/>
-  </svg>`;
-  return html`<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true">
-    <circle class="g-ring g-faint" cx="60" cy="60" r="34"/>
-    <circle class="g-fill g-core" cx="60" cy="60" r="7"/>
-  </svg>`;
-}
-
 // live ticking elapsed counter (since a timestamp), ~10fps.
 function Stopwatch({ since }) {
   const [, tick] = useState(0);
@@ -1432,94 +1464,142 @@ function Stopwatch({ since }) {
   return html`${((Date.now() - since) / 1000).toFixed(1)}s`;
 }
 
-function AgentTiming({ ai }) {
-  if (ai.phase === "thinking") return html`<div class="agent-timing is-live">${t("timing.thinking")} <b><${Stopwatch} since=${ai.since} /></b></div>`;
-  if (ai.phase === "speaking") return html`<div class="agent-timing is-live">${t("timing.synth")} <b><${Stopwatch} since=${ai.since} /></b></div>`;
-  if (ai.llm != null) return html`<div class="agent-timing">LLM <b>${(ai.llm / 1000).toFixed(1)}s</b> · TTS <b>${ai.tts != null ? (ai.tts / 1000).toFixed(1) + "s" : "—"}</b></div>`;
-  return null;
+/* ---- transcript ----
+   the agent tab is a terminal, not a chat window: one line per move. the tool
+   lines are the point — sage decides to take a look, or to keep the last ten
+   seconds of readings, and the operator watches her do it instead of guessing
+   why the answer changed. server side that decision is the `tool` field in her
+   json and the loop in server.js that runs it (see agentLoop there). */
+const TOOLS = {
+  camera:   { icon: "camera", label: "tool.camera",  of: "tool.lookAt" },
+  sensors:  { icon: "timer",  label: "tool.sensors",  of: "tool.readingsOf" },
+  snapshot: { icon: "step",   label: "tool.snapshot" },
+  finding:  { icon: "warn",   label: "tool.finding" },
+  lamp:     { icon: "gear",   label: "tool.lamp" },
+  ask:      { icon: "mic",    label: "tool.ask" },
+  analysis: { icon: "camera", label: "tool.analysis" },
+};
+
+function FeedLine({ e }) {
+  if (e.kind === "tool") {
+    const spec = TOOLS[e.name] || { icon: "gear", label: "tool.unknown" };
+    // `arg` is what she actually went looking for, in her words — "temperature
+    // readings" reads like a tool call, "sensors" reads like a field name.
+    const what = e.arg ? t(spec.of || "tool.of", { what: e.arg }) : t(spec.label);
+    return html`<div class="fl fl-tool">
+      <span class="fl-mark">◆</span>
+      <div class="fl-body">
+        <p class="fl-t">${t("tool.used")} <b><${Icon} n=${spec.icon} /> ${what}</b></p>
+        ${e.detail ? html`<p class="fl-detail">└ ${e.detail}</p>` : null}
+        ${e.img ? html`<img class="fl-shot" src=${e.img} alt=${what} loading="lazy" />` : null}
+      </div></div>`;
+  }
+  if (e.kind === "user") return html`<div class="fl fl-user">
+    <span class="fl-mark">›</span>
+    <div class="fl-body"><p class="fl-t">${e.text}</p></div></div>`;
+  if (e.kind === "note") return html`<div class="fl fl-note">
+    <span class="fl-mark">·</span>
+    <div class="fl-body"><p class="fl-t">${e.text}</p></div></div>`;
+  return html`<div class=${"fl fl-sage" + (e.status ? " sage-" + e.status : "")}>
+    <span class="fl-mark">●</span>
+    <div class="fl-body">
+      <p class="fl-t">${e.text}</p>
+      ${e.timing ? html`<p class="fl-detail">${e.timing}</p>` : null}
+    </div></div>`;
 }
 
-function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, chats, activeChat, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onToggleTtsProvider, onPick, onMock, onAsk, onReport }) {
+// the stream itself. sticks to the bottom — a working agent writes while you read,
+// and a transcript that holds its scroll hides the line you are waiting for.
+function Feed({ feed, ai, onAsk }) {
+  const ref = useRef(null);
+  useEffect(() => { const el = ref.current; if (el) el.scrollTop = el.scrollHeight; }, [feed.length, ai.analyzing, ai.text]);
+  return html`
+    <div class="term-feed" ref=${ref} role="log" aria-live="polite">
+      ${feed.length === 0 ? html`
+        <div class="term-hint">
+          <p class="term-hint-t">${t("term.hint")}</p>
+          ${ASK_SUGGESTIONS.slice(0, 3).map(q => html`<button key=${q} type="button" class="term-chip"
+            onClick=${() => onAsk(t(q))}>${t(q)}</button>`)}
+        </div>` : feed.map(e => html`<${FeedLine} key=${e.id} e=${e} />`)}
+      ${ai.analyzing ? html`<div class="fl fl-work">
+        <span class="fl-mark">◐</span>
+        <div class="fl-body"><p class="fl-t">${t(ai.phase === "speaking" ? "timing.synth" : "timing.thinking")}${" "}
+          <b><${Stopwatch} since=${ai.since || Date.now()} /></b></p></div>
+      </div>` : null}
+    </div>`;
+}
+
+function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, chats, activeChat, feed, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onToggleTtsProvider, onMock, onAsk, onReport }) {
   const intent = deriveIntent(ai, packet, connected);
   const v = assess(packet);
   const briefed = activeChat && activeChat.mission;
+  const [draft, setDraft] = useState("");
+  const send = (e) => {
+    e.preventDefault();
+    const txt = draft.trim();
+    if (!txt || ai.analyzing) return;
+    setDraft("");
+    onAsk(txt);
+  };
   return html`
     <section class=${"zone agent reveal is-" + intent.key + (ai.analyzing ? " is-analyzing" : "") + (speaking ? " is-speaking" : "")}
       style=${{ "--agent-c": intent.color }} aria-labelledby="agent-h">
       <${Head} title=${t("zone.agent")} tag=${t(ai.badge)} />
       <div class="agent-body">
-        <div class="agent-topbar">
-          ${briefed
-            ? html`<button type="button" class="brief-back agent-back" onClick=${() => onSelectChat("")}>${t("brief.sessions")} · ${activeChat.title}</button>`
-            : html`<span class="agent-topbar-spacer"></span>`}
+        ${!activeChat
+          ? html`<${ChatSelect} chats=${chats} onNew=${onNewChat} onSelect=${onSelectChat} onDelete=${onDeleteChat} />`
+          : !briefed
+          ? html`<${Briefing} onBrief=${onBrief} onBack=${() => onSelectChat("")} onSpeak=${onSpeak} busy=${ai.analyzing} />`
+          : html`<div class="term">
+        <div class="term-bar">
+          <button type="button" class="term-back" onClick=${() => onSelectChat("")} title=${t("brief.sessions")}>←</button>
+          <b class="term-who">SAGE</b>
+          <span class="term-state">${t(intent.label)}</span>
+          <span class=${"term-verdict is-" + v.kind} title=${v.cause}>${v.label}</span>
           <select class="agent-voice-sel" title=${t("agent.voiceTitle")} aria-label=${t("agent.voiceTitle")}
             value=${!tts ? "off" : (hasDeepgram && ttsProv === "deepgram" ? "deepgram" : "edge")}
             onChange=${e => {
-              const v = e.target.value;
-              if (v === "off") { if (tts) onToggleTts(); return; }
+              const val = e.target.value;
+              if (val === "off") { if (tts) onToggleTts(); return; }
               if (!tts) onToggleTts();
-              if (hasDeepgram && v !== ttsProv) onToggleTtsProvider();
+              if (hasDeepgram && val !== ttsProv) onToggleTtsProvider();
             }}>
             <option value="off">${t("agent.voiceOff")}</option>
             <option value="edge">${t("agent.voiceEdge")}</option>
             ${hasDeepgram ? html`<option value="deepgram">${t("agent.voiceDg")}</option>` : null}
           </select>
         </div>
-        ${!activeChat
-          ? html`<${ChatSelect} chats=${chats} onNew=${onNewChat} onSelect=${onSelectChat} onDelete=${onDeleteChat} />`
-          : !briefed
-          ? html`<${Briefing} onBrief=${onBrief} onBack=${() => onSelectChat("")} onSpeak=${onSpeak} busy=${ai.analyzing} />`
-          : html`<${React.Fragment}>
-        <div class="agent-stage">
-          <span class="agent-grid" aria-hidden="true"></span>
-          ${ai.analyzing
-            ? html`<span class="agent-analyzing-label">${t("intent.thinking")}</span>`
-            : html`<div class="agent-orb"><${AgentIcon} intent=${intent} /></div>
-          ${speaking
-            ? html`<div class="agent-eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>`
-            : html`<span class="agent-state-label"><${SageFace} mood=${intent.key} /> ${t(intent.label)}</span>`}`}
-        </div>
-        <div class="agent-speech">
-          <p class=${"agent-text" + (ai.status ? " sage-" + ai.status : "")} key=${ai.text} role="status" aria-live="polite">${ai.text}</p>
-          <${AgentTiming} ai=${ai} />
-        </div>
-        <div class=${"verdict is-" + v.kind} role="status" aria-live="polite">
-          <span class="verdict-k">${t("verdict.entryStatus")}</span>
-          <strong class="verdict-label">${v.label}</strong>
-          <span class="verdict-cause">${v.cause}</span>
-        </div>
-        <div class="agent-foot">
+        ${/* the big face, back where it was — the bar's 15px one read as an icon */""}
+        <div class=${"term-hero" + (speaking ? " is-speaking" : "")}><${SageFace} mood=${intent.key} /></div>
+        <${Feed} feed=${feed} ai=${ai} onAsk=${onAsk} />
+        <form class="agent-foot term-prompt" onSubmit=${send}>
+          <input class="term-input" type="text" value=${draft} placeholder=${t("term.ph")}
+            aria-label=${t("term.ph")} disabled=${ai.analyzing}
+            onInput=${e => setDraft(e.target.value)} />
           <${Ask} onAsk=${onAsk} busy=${ai.analyzing} />
-          <button class="btn btn--primary" type="button" onClick=${() => onAnalyze()} disabled=${ai.analyzing}>
-            ${ai.analyzing ? t("agent.analyzing") : t("agent.runAnalysis")}
-          </button>
+          ${/* everything that isn't typing or talking lives in one menu — the foot
+               was four buttons wide in a rail that is 300px */""}
           <details class="foot-menu" onBlur=${e => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.open = false; }}>
             <summary class="btn foot-icon" title=${t("agent.more")} aria-label=${t("agent.more")}>⋯</summary>
             <div class="foot-menu-pop" onClick=${e => { e.currentTarget.closest("details").open = false; }}>
-              <span class="menu-label">${t("ask.pick")}</span>
-              ${ASK_SUGGESTIONS.map(q => html`<button key=${q} class="menu-item" type="button"
-                onClick=${() => onAsk(t(q))} disabled=${ai.analyzing}>${t(q)}</button>`)}
-              <hr class="menu-sep" />
+              <span class="menu-label">${t("agent.actions")}</span>
+              <button class="menu-item is-lead" type="button" onClick=${() => onAnalyze()} disabled=${ai.analyzing}>
+                <${Icon} n="camera" /> ${ai.analyzing ? t("agent.analyzing") : t("agent.runAnalysis")}
+              </button>
               <button class="menu-item" type="button" onClick=${onMock} disabled=${ai.analyzing} title=${t("agent.mockTitle")}>
                 ${t("agent.mock")}
               </button>
               <button class="menu-item" type="button" onClick=${onReport} title=${t("agent.reportTitle")}>
                 ${t("agent.report")}
               </button>
+              <hr class="menu-sep" />
+              <span class="menu-label">${t("ask.pick")}</span>
+              ${ASK_SUGGESTIONS.map(q => html`<button key=${q} class="menu-item" type="button"
+                onClick=${() => onAsk(t(q))} disabled=${ai.analyzing}>${t(q)}</button>`)}
             </div>
           </details>
-        </div>
-        <details class="ai-hist agent-hist">
-          <summary>${t("agent.history", { n: ai.history.length })}</summary>
-          <div class="ai-hist-list">
-            ${ai.history.map(h => html`
-              <div key=${h.id} class="ai-hist-item" onClick=${() => onPick(h.text)}>
-                <span class="ai-hist-time">${h.time}</span>
-                <span>${h.text.length > 90 ? h.text.slice(0, 90) + "…" : h.text}</span>
-              </div>`)}
-          </div>
-        </details>
-          </${React.Fragment}>`}
+        </form>
+      </div>`}
       </div>
     </section>`;
 }
@@ -1654,24 +1734,64 @@ function ChatSelect({ chats, onNew, onSelect, onDelete }) {
     </div>`;
 }
 
-const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+const canMic = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+const MIC_MAX_MS = 15000; // hard cap — a mic left open is an open upload
+// auto-send after this much quiet, counted from the moment the mic opens, so
+// pressing it by accident costs 2s and not a 15s wait. bench knobs: RMS is
+// mic-and-room dependent, raise it if a noisy venue never goes "quiet".
+const SIL_MS = 2000, SIL_RMS = 0.02;
 
 // shared speech-to-text. onText gets the recognized transcript.
+// IMPORTANT NOTE: records here, transcribes on the server (/api/stt -> deepgram).
+// window.SpeechRecognition is a google cloud call chromium ships no api key for:
+// it fails `network` the instant you press the button, in electron and anywhere
+// that build lacks the key. push to talk, push again (or 15s) to send.
 function useMic(onText) {
   const [listening, setListening] = useState(false);
   const recRef = useRef(null);
-  const toggle = useCallback(() => {
-    if (!SpeechRec) return;
-    if (listening) { recRef.current?.stop(); return; }
+  const toggle = useCallback(async () => {
+    if (recRef.current) { recRef.current.stop(); return; }
     stopSpeech(); // operator is talking — cut agent off so it doesn't talk over them
-    const rec = new SpeechRec();
-    rec.lang = speechLang(); rec.interimResults = false; rec.maxAlternatives = 1;
-    rec.onresult = (e) => onText(e.results[0][0].transcript);
-    rec.onend = () => setListening(false);
-    rec.onerror = () => setListening(false);
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) { console.warn("[mic]", e.name, e.message); return; }
+    const rec = new MediaRecorder(stream);
+    const parts = [];
+    let stopWatch = () => {};
+    rec.ondataavailable = (e) => { if (e.data.size) parts.push(e.data); };
+    rec.onstop = async () => {
+      stopWatch();
+      stream.getTracks().forEach((tr) => tr.stop());
+      recRef.current = null; setListening(false);
+      const blob = new Blob(parts, { type: rec.mimeType });
+      if (blob.size < 2000) return; // nothing said
+      try {
+        const r = await fetch(`/api/stt?lang=${speechLang()}`, {
+          method: "POST", headers: { "Content-Type": blob.type }, body: blob,
+        });
+        const j = await r.json().catch(() => ({}));
+        if (j.text) onText(j.text); else console.warn("[mic]", j.error || "no speech");
+      } catch (e) { console.warn("[mic]", e.message); }
+    };
+    // silence watchdog: rms off an analyser node, no dep, no decoding.
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const an = ac.createAnalyser(); an.fftSize = 512;
+    ac.createMediaStreamSource(stream).connect(an);
+    const buf = new Uint8Array(an.fftSize);
+    let loudAt = Date.now();
+    const tick = setInterval(() => {
+      an.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (const v of buf) { const d = (v - 128) / 128; sum += d * d; }
+      if (Math.sqrt(sum / buf.length) > SIL_RMS) loudAt = Date.now();
+      if (Date.now() - loudAt > SIL_MS && rec.state === "recording") rec.stop();
+    }, 100);
+    stopWatch = () => { clearInterval(tick); ac.close().catch(() => {}); };
+
     recRef.current = rec; setListening(true); rec.start();
-  }, [listening, onText]);
-  return { listening, toggle, supported: !!SpeechRec };
+    setTimeout(() => { if (rec.state === "recording") rec.stop(); }, MIC_MAX_MS);
+  }, [onText]);
+  return { listening, toggle, supported: canMic };
 }
 
 // briefing step copy resolved through i18n at render. `clip` maps each step to its pre-generated onboarding audio key.
@@ -1822,7 +1942,7 @@ function SerialMonitor({ lines, onClear }) {
 }
 
 /* topbar — slim command strip: identity, link, connection, vitals, lang, console */
-function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, lanIp, lang, onLang, onConsole, consoleOpen, clients, onDevices, granted, cloud, onSettings }) {
+function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lanUrl, lanIp, lang, onLang, onConsole, consoleOpen, clients, onDevices, granted, cloud, onSettings }) {
   return html`
     <header class="topbar">
       <div class="brand">
@@ -1836,10 +1956,13 @@ function Topbar({ connected, bridge, onBridge, ping, packets, uptime, lanUrl, la
         ◉ ${t(granted ? "mast.control" : "mast.mirror")}</span>` : html`
       <div class="top-conn">
         <div class="bridge-ctl">
-          <button type="button" class=${"bridge-btn " + (bridge.running ? "is-on" : "")}
+          ${/* linked but silent is its own state: the gatt link survives a hung sketch,
+               so "LINKED" with no telemetry behind it is the lie this catches */""}
+          <button type="button" class=${"bridge-btn " + (bridge.running ? (stale ? "is-stale" : "is-on") : "")}
             disabled=${bridge.busy} onClick=${() => onBridge("toggle")}>
-            <span class=${"lamp-dot " + (bridge.running ? "is-go" : "is-abort")}></span>
-            ${bridge.busy ? t("mast.bridgeBusy") : bridge.running ? t("mast.linked") : t("mast.connect")}
+            <span class=${"lamp-dot " + (bridge.running && !stale ? "is-go" : "is-abort")}></span>
+            ${bridge.busy ? t("mast.bridgeBusy") : !bridge.running ? t("mast.connect")
+              : stale ? t("mast.stale") : t("mast.linked")}
           </button>
           <button type="button" class="bridge-repair" title=${t("mast.bridgeRepairTitle")}
             disabled=${bridge.busy} onClick=${() => onBridge("reconnect")}>⟳</button>
@@ -2394,6 +2517,8 @@ function Tour({ closing, onDone }) {
 function App() {
   const [connected, setConnected] = useState(false);
   const [packet, setPacket] = useState(null);
+  const [fresh, setFresh] = useState(false); // a packet arrived within PKT_STALE_MS
+  const lastPkt = useRef(0);
   const [ping, setPing] = useState("—");
   const [packets, setPackets] = useState(0);
   const [logs, setLogs] = useState([]);
@@ -2459,6 +2584,17 @@ function App() {
   const activeChat = chats.find(c => c.id === activeId) || null;
   const activeRef = useRef(null);
   useEffect(() => { activeRef.current = activeChat; }, [activeChat]);
+  /* the transcript lives on the chat, so it survives a reload with the rest of the
+     session. one line per move — operator turn, tool sage reached for, sage
+     answering — and it is display only: the model's own context is `messages`
+     above, which stays 12 turns of plain text. capped, because chats go to
+     localstorage whole on every change. */
+  const pushFeed = useCallback((e) => {
+    const chat = activeRef.current;
+    if (!chat) return;
+    const item = { id: Date.now() + Math.random(), time: new Date().toLocaleTimeString(), ...e };
+    setChats(cs => cs.map(c => c.id === chat.id ? { ...c, feed: [...(c.feed || []), item].slice(-80) } : c));
+  }, []);
   useEffect(() => { localStorage.setItem("chats", JSON.stringify(chats)); }, [chats]);
   useEffect(() => { localStorage.setItem("activeChat", activeId); }, [activeId]);
   useEffect(() => { localStorage.setItem("ttsProvider", ttsProv); ttsProviderRef = ttsProv; }, [ttsProv]);
@@ -2479,8 +2615,15 @@ function App() {
   // blk + the report read telemetry outside react's render (a ref, not state,
   // so an interpreter tick sees the latest packet without re-subscribing)
   const packetRef = useRef(null);
-  useEffect(() => { packetRef.current = packet; }, [packet]);
-  const view = packet;
+  // stale telemetry is worse than none: it reads as live. one 1s tick decides freshness
+  // for the whole app — everything downstream sees null, not the last good numbers.
+  useEffect(() => {
+    const id = setInterval(() => setFresh(Date.now() - lastPkt.current < PKT_STALE_MS), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const view = fresh ? packet : null;
+  const live = connected && fresh;
+  useEffect(() => { packetRef.current = view; }, [view]);
 
   const addLog = useCallback((text, type = "system") => {
     setLogs(p => [...p, { text, type, time: new Date().toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-80));
@@ -2530,7 +2673,7 @@ function App() {
       socket.emit("set-language", getLang());                          // sync ai language
       socket.emit("set-mission", activeRef.current?.mission || ""); // sync server to active session
     });
-    socket.on("disconnect", () => { setConnected(false); setPing("—"); addLog(t("log.linkLost"), "danger"); });
+    socket.on("disconnect", () => { setConnected(false); setFresh(false); setPing("—"); addLog(t("log.linkLost"), "danger"); });
     socket.on("clients", list => {
       // the host logs every control change on the roster, not just its own: who was
       // driving when is the first thing asked after a bad run, and log.events is what
@@ -2555,6 +2698,7 @@ function App() {
       if (!d) return;
       const lat = d.timestamp ? Math.max(0, Date.now() - d.timestamp) : NaN;
       setPing(isNaN(lat) ? "—" : lat + " ms");
+      lastPkt.current = Date.now(); setFresh(true);
       setPackets(p => p + 1);
       setPacket(d);
       if (d.dist != null && !isNaN(d.dist) && Math.abs(d.dist - lastDist.current) > 3) {
@@ -2576,12 +2720,32 @@ function App() {
         time: new Date(d.timestamp || Date.now()).toLocaleTimeString() };
       setChats(cs => cs.map(c => c.id === chat.id
         ? { ...c, findings: [...(c.findings || []), entry].slice(-40) } : c));
+      // both arrive as findings, but they are two different moves: one is her
+      // logging what she saw, the other is her keeping the numbers she doubted.
+      const snap = d.text.startsWith("SNAPSHOT:");
+      pushFeed({ kind: "tool", name: snap ? "snapshot" : "finding", detail: d.text.replace(/^SNAPSHOT:\s*/, ""), img: d.img || null });
+    });
+    // sage reached for a tool mid-turn (the loop in server.js ran it). the step
+    // arrives while she is still working — that is the point of it being a socket
+    // event and not part of the reply.
+    socket.on("sage-step", d => {
+      if (!d?.name) return;
+      if (d.say) pushFeed({ kind: "sage", text: d.say });
+      pushFeed({ kind: "tool", name: d.name, arg: d.arg || null, detail: d.detail || "", img: d.img || null });
+      addLog(t("log.tool", { name: d.name, detail: d.detail || "" }), "ai");
+    });
+    // the server walked the headlamp on its own because the passage went dark.
+    // only fires when it actually moved the lamp, so it's not a per-frame spam.
+    socket.on("lamp-auto", d => {
+      addLog(`headlamp ${d.from} → ${d.led} (view ${d.mean}/255)`, "ai");
+      pushFeed({ kind: "tool", name: "lamp", detail: `${d.from} → ${d.led}` });
     });
     // a running blk workflow asked sage a yes/no (ask/find) — log the call so the
     // operator can see why the program branched the way it did.
     socket.on("blk-decision", d => {
       if (!d?.question) return;
       addLog(`${d.kind === "find" ? "find" : "ask"} "${d.question}" → ${d.yes ? "YES" : "no"}${d.text ? " · " + d.text : ""}`, d.yes ? "ai" : "system");
+      pushFeed({ kind: "tool", name: "ask", detail: `"${d.question}" → ${d.yes ? "yes" : "no"}` });
     });
     socket.on("flash-log", d => setFlashLog(l => appendLog(l, d?.chunk || "")));
     socket.on("flash-done", d => { setFlashCode(d?.code ?? -1); setFlashPhase("done"); });
@@ -2601,6 +2765,7 @@ function App() {
         phase: null, since: 0, llm: p.since ? Date.now() - p.since : null, tts: null,
         history: [...p.history, { text, time: new Date(ts || Date.now()).toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-20),
       }));
+      pushFeed({ kind: "sage", text, status });
       if (ttsRef.current) speakTimed(text);
     };
     // auto analysis + instant reactions only fire when a briefed session is open — otherwise dashboard talks to itself on boot with no chat active.
@@ -2623,7 +2788,7 @@ function App() {
     socket.on("cmd", w => { if (bleRef.current.device?.gatt?.connected) sendCmdRef.current?.(w); });
     addLog(t("log.booted"), "system");
     return () => socket.close();
-  }, [addLog, speakTimed]);
+  }, [addLog, speakTimed, pushFeed]);
 
   // keep document language + skip-link (static html outside react) in sync.
   useEffect(() => {
@@ -2842,36 +3007,17 @@ function App() {
       llm: t0 ? Date.now() - t0 : p.llm, tts: null,
       history: [...p.history, { text: textv, time: new Date().toLocaleTimeString(), id: Date.now() + Math.random() }].slice(-20),
     }));
+    pushFeed({ kind: "sage", text: textv, status: (sage && sage.status) || null,
+      timing: t0 ? `LLM ${((Date.now() - t0) / 1000).toFixed(1)}s` : null });
     if (speak && ttsRef.current) speakTimed(textv);
-  }, [speakTimed]);
-
-  // sage asked for a fresh look (action:"analyze"): let server grab a still and hand back sage's description. no ble write — camera is fixed forward, purely a camera read.
-  const runScan = useCallback(async () => {
-    // hand the camera to server: drop our live feed so its single worker is free to grab the frame, then reconnect once done.
-    window.dispatchEvent(new Event("cam:yield"));
-    const t0 = Date.now();
-    setAi(p => ({ ...p, analyzing: true, badge: "badge.thinking", phase: "thinking", since: t0, llm: null, tts: null }));
-    try {
-      await new Promise(r => setTimeout(r, 400)); // let esp32 free its worker first
-      const r = await fetch("/api/scan", { method: "POST" });
-      const data = await r.json();
-      const sage = data.reply, ok = !!(sage && sage.text);
-      addLog(t("log.replied"), "ai");
-      showSage(ok ? sage : { text: data.error || "No response.", status: null }, t0, ok);
-      const chat = activeRef.current;
-      if (ok && chat) setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...(c.messages || []), { role: "assistant", content: sage.text }].slice(-12) } : c));
-    } catch (e) {
-      setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
-    } finally {
-      window.dispatchEvent(new Event("cam:resume")); // give live feed back
-    }
-  }, [showSage, addLog]);
+  }, [speakTimed, pushFeed]);
 
   const ask = useCallback(async (text) => {
     text = (text || "").trim();
     const chat = activeRef.current;
     if (!text || !chat) return;
     addLog(t("log.operator", { text }), "system");
+    pushFeed({ kind: "user", text });
     // routine or drive phrase ("present yourself", "go forward for 2 seconds") — fire straight over ble, no llm round trip.
     const trigger = matchCmd(norm(text));
     if (trigger) {
@@ -2896,11 +3042,10 @@ function App() {
       if (ok) setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...next, { role: "assistant", content: sage.text }].slice(-12) } : c));
       addLog(t("log.replied"), "ai");
       showSage(ok ? sage : { text: data.error || "No response.", status: null }, t0, ok);
-      if (ok && sage.action === "analyze") runScan(); // sage wants a fresh look
     } catch (e) {
       setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
     }
-  }, [addLog, showSage, runScan, sendCmd]);
+  }, [addLog, showSage, pushFeed, sendCmd]);
 
   /* fpv — camera fullscreen, stats + agent become edge huds. △/Y toggles, ○/B talks to sage.
      own poll (not drive's) because drive's loop bails unless remote mode is armed, and fpv
@@ -2998,7 +3143,6 @@ function App() {
     setAi(p => ({ ...p, analyzing: true, badge: "badge.copying", phase: "thinking", since: Date.now() }));
     socketRef.current?.emit("set-mission", text);
   }, [addLog]);
-  const pickHistory = useCallback((text) => setAi(p => ({ ...p, text })), []);
   const clearSerial = useCallback(() => setSerialLines([]), []);
   // play the exit animation, then unmount
   const closeDrawer = useCallback(() => {
@@ -3173,8 +3317,8 @@ function App() {
   // snapshot on open, so the document you read is exactly the json you export —
   // telemetry keeps arriving behind it either way.
   const openReport = useCallback(() => {
-    setReport(buildReport({ chat: activeRef.current, packet: packetRef.current, logs, ai, connected, ping, packets, uptime }));
-  }, [logs, ai, connected, ping, packets, uptime]);
+    setReport(buildReport({ chat: activeRef.current, packet: packetRef.current, logs, ai, connected: live, ping, packets, uptime }));
+  }, [logs, ai, live, ping, packets, uptime]);
 
   const drawerTabRef = useRef(drawerTab);
   drawerTabRef.current = drawerTab;
@@ -3187,8 +3331,8 @@ function App() {
         style=${{ "--fpv-zoom": FPV_ZOOMS[fpvZoom].z || 1 }}>
         ${fpv && html`
           <${React.Fragment}>
-            <${FpvOverlay} packet=${packet} />
-            <${FpvSage} ai=${ai} packet=${packet} speaking=${speaking} connected=${connected} />
+            <${FpvOverlay} packet=${view} />
+            <${FpvSage} ai=${ai} packet=${view} speaking=${speaking} connected=${live} />
             <div class="fpv-hud">
               <button type="button" class=${"hud-btn" + (fpvMic.listening ? " is-active" : "")}
                 disabled=${!fpvMic.supported} onClick=${fpvMic.toggle} aria-pressed=${fpvMic.listening}>
@@ -3211,28 +3355,28 @@ function App() {
             ${recErr && !rec && html`<p class="rec-err" role="alert">✕ ${recErr}</p>`}
           <//>`}
         ${window.blackout?.platform === "darwin" && html`<div class="mac-titlebar"></div>`}
-        <${Topbar} connected=${connected} bridge=${bridge} onBridge=${toggleBridge}
-          ping=${ping} packets=${packets} uptime=${uptime} lanUrl=${lanUrl} lanIp=${lanIp}
+        <${Topbar} connected=${live} stale=${!fresh} bridge=${bridge} onBridge=${toggleBridge}
+          ping=${fresh ? ping : "—"} packets=${packets} uptime=${uptime} lanUrl=${lanUrl} lanIp=${lanIp}
           lang=${lang} onLang=${changeLang} onConsole=${toggleDrawer} consoleOpen=${drawer === "open"}
           clients=${clients} onDevices=${() => setDevicesOpen("open")} granted=${granted}
           cloud=${cloud} onSettings=${() => setSettingsOpen("open")} />
 
         ${!VIEWER && flashBoards.status !== "none" && html`<${UpdateBar} boards=${flashBoards} onUpdate=${openUpdate} />`}
 
-        ${judge ? html`<${JudgeView} packet=${view} connected=${connected} ai=${ai} />` : html`
+        ${judge ? html`<${JudgeView} packet=${view} connected=${live} ai=${ai} />` : html`
         <main class="cockpit" id="sensors">
           <div class="col-main">
             <div class="stage-row">
-              <${ThreeDeeBox} packet=${packet} onLog=${addLog} />
-              <${CamBox} packet=${packet} onFpv=${() => toggleFpv(true)} />
+              <${ThreeDeeBox} packet=${view} onLog=${addLog} />
+              <${CamBox} packet=${view} onFpv=${() => toggleFpv(true)} />
             </div>
             <${SensorStrip} packet=${view} />
           </div>
           <aside class="col-rail">
-            <${Agent} ai=${ai} tts=${tts} ttsProv=${ttsProv} hasDeepgram=${hasDeepgram} packet=${packet} connected=${connected} speaking=${speaking}
-              chats=${chats} activeChat=${activeChat} onNewChat=${newChat} onSelectChat=${selectChat}
+            <${Agent} ai=${ai} tts=${tts} ttsProv=${ttsProv} hasDeepgram=${hasDeepgram} packet=${view} connected=${live} speaking=${speaking}
+              chats=${chats} activeChat=${activeChat} feed=${activeChat?.feed || NO_FEED} onNewChat=${newChat} onSelectChat=${selectChat}
               onDeleteChat=${deleteChat} onBrief=${briefMission} onSpeak=${speakBrief}
-              onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onPick=${pickHistory} onMock=${mockData} onAsk=${ask}
+              onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onMock=${mockData} onAsk=${ask}
               onReport=${openReport} />
             ${/* mirror sees no drive zone at all until the host grants it — .reveal animates the
                  mount, and driveMounted holds it one beat past a revoke so it can animate out */
