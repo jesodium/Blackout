@@ -8,8 +8,8 @@ Node.js PC server/dashboard.
 - `giga-r1/` — Giga R1 WiFi (`main/`): sensor hub + motor driver + BLE
   command endpoint, one board. Reads sensors, broadcasts CSV over BLE notify;
   DHT11 (temp/humidity, A6), BME280 (pressure, I2C on D20/D21 — its own
-  temp/humidity registers go unread) and RCWL-1601 (ultrasonic, TRIG D50 /
-  ECHO D52), plus GY-302/BH1750 (ambient light, 0x23 on
+  temp/humidity registers go unread) and RCWL-1601 (ultrasonic, TRIG D52 /
+  ECHO D50), plus GY-302/BH1750 (ambient light, 0x23 on
   its own I2C bus, Wire2 — SDA2 D9 / SCL2 D8; CSV field 12, and `lux` in BLK) wired so far, rest of the CSV
   field set sends 0 until a sensor lands.
   **Reversed VCC/GND on an I2C module pins both its lines high, it does not just
