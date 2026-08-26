@@ -135,18 +135,79 @@ async function pingCam(timeoutMs = 3000) {
 
 // sage's lamp — same host as frame grabs, reuse sticky camidx.
 // level is remembered so sage knows what she's already running.
-let ledLevel = 15; // matches cam firmware's boot default
+let ledLevel = 0; // matches cam firmware, which writes the lamp off once it's up
+// IMPORTANT NOTE: walks the url list like grabFrame/pingCam do, and for the same
+// reason — camIdx is 0 until *something else* has answered, so on a fresh server
+// a lamp write went to whichever network was listed first and died on its
+// timeout. Sage sets the lamp without taking a picture first, so she was
+// routinely the thing that ran before anything had made the index sticky.
 async function setLed(val) {
   const v = Math.max(0, Math.min(255, Math.round(val)));
-  const u = new URL(await resolveCamUrl(CAM_URLS[camIdx]));
-  u.pathname = "/control";
-  u.search = `var=led&val=${v}`;
-  const resp = await fetch(u, { signal: AbortSignal.timeout(3000) });
-  if (!resp.ok) throw new Error(`cam HTTP ${resp.status}`);
-  ledLevel = v;
-  return v;
+  let lastErr;
+  for (let i = 0; i < CAM_URLS.length; i++) {
+    const idx = (camIdx + i) % CAM_URLS.length;
+    try {
+      const u = new URL(await resolveCamUrl(CAM_URLS[idx]));
+      u.pathname = "/control";
+      u.search = `var=led&val=${v}`;
+      const resp = await fetch(u, { signal: AbortSignal.timeout(3000) });
+      if (!resp.ok) throw new Error(`cam HTTP ${resp.status}`);
+      camIdx = idx;
+      ledLevel = v;
+      return v;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
 }
 const getLed = () => ledLevel;
+
+// --- auto headlamp ---------------------------------------------------------
+// "can it see?" is answered from the frame itself, not by asking sage: the venue
+// has no internet, and an llm round trip per lamp step is seconds spent blind.
+// sharp is already here for upright(), so mean luma is one call.
+// the bh1750 says *when* to look (it's not pointed where the lens is); the frame
+// says whether the lamp is enough.
+const LAMP_LO = parseInt(process.env.LAMP_LO || "55", 10);   // mean below this = too dark
+const LAMP_HI = parseInt(process.env.LAMP_HI || "165", 10);  // above this = blown out
+const LAMP_MIN = parseInt(process.env.LAMP_MIN || "8", 10);  // smaller move than this isn't worth a write
+const LAMP_GAP = parseInt(process.env.LAMP_GAP_MS || "4000", 10); // one /capture per gap
+const LAMP_FORGET = parseInt(process.env.LAMP_FORGET_MS || "60000", 10);
+
+// pure, so the loop is checkable without a camera. the walk's whole state is the
+// lo/hi bracket, passed in and handed back; next === null = leave the lamp alone.
+// IMPORTANT NOTE: a bracket, not a fixed +/-STEP. A stepper with no memory blinks
+// between two levels forever whenever neither reads in band (black at 0, blown at
+// 40) — a headlamp flashing every LAMP_GAP, which is exactly what it did. lo/hi
+// only ever narrow, so the walk always ends. Straight halving; if it ever needs to
+// be gentler, shrink the range, don't add a PID.
+function lampStep(mean, led, lo = 0, hi = 255) {
+  if (mean >= LAMP_LO && mean <= LAMP_HI) return { next: null, lo: 0, hi: 255 }; // in band: forget the walk
+  if (mean < LAMP_LO) lo = Math.max(lo, led);
+  else hi = Math.min(hi, led);
+  const next = Math.round((lo + hi) / 2);
+  // bounds met: this lamp has no level that reads in band (or we're at the rail),
+  // so stop here instead of flapping between the two nearest.
+  return { next: hi - lo <= LAMP_MIN || next === led ? null : next, lo, hi };
+}
+
+let lampAt = 0, lampMoved = 0, lampLo = 0, lampHi = 255, lampQuiet = false;
+async function autoLamp() {
+  // settled? look far less often — /capture and /stream fight over the ai-thinker's
+  // ram, and a lamp with nothing to do shouldn't cost a frame every 4s.
+  if (Date.now() - lampAt < (lampQuiet ? LAMP_GAP * 5 : LAMP_GAP)) return null;
+  lampAt = Date.now();
+  // a collapsed bracket is only true for the scene that made it: forget it after a
+  // while, or a rover that drives somewhere different stays stuck on the old level.
+  if (lampQuiet && lampAt - lampMoved > LAMP_FORGET) { lampLo = 0; lampHi = 255; }
+  const jpeg = await grabFrame(4000);
+  const mean = (await sharp(jpeg).greyscale().stats()).channels[0].mean;
+  const from = ledLevel;
+  const { next, lo, hi } = lampStep(mean, from, lampLo, lampHi);
+  lampLo = lo; lampHi = hi;
+  lampQuiet = next == null;
+  if (next != null) { lampMoved = lampAt; await setLed(next); }
+  return { mean: Math.round(mean), from, led: ledLevel, changed: next != null };
+}
 
 // grab a fresh camera frame as openai image content parts, ready for a user message.
 // fresh each turn so sage sees what's in front of the lens now.
@@ -202,4 +263,4 @@ async function grabFrames(count = 4, gapMs = 1000) {
   return parts;
 }
 
-module.exports = { carveJpeg, upright, grabFrame, eyeParts, grabFrames, setLed, getLed, pingCam };
+module.exports = { carveJpeg, upright, grabFrame, eyeParts, grabFrames, setLed, getLed, pingCam, autoLamp, lampStep };

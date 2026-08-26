@@ -106,7 +106,10 @@ Node.js PC server/dashboard.
   `<img>` pulls `http://blackout-cam.local/stream` directly.
   - **Flash LED (GPIO 4) debug:** boot = slow blink (500ms), error (camera/WiFi
     fail) = rapid blink (100ms), connected = steady dim (PWM 32). Handled by
-    `ledUpdate()` in `main.ino`, called from `loop()` every 50ms.
+    `ledUpdate()` in `main.ino`, and it runs **only during setup()** — once the cam
+    is up the lamp is written to 0 and belongs to `control?var=led`. So a blinking
+    lamp on a booted cam is never the indicator: it's the auto headlamp walking, or
+    the board in the wifi-fail reboot loop.
 - `server/public/js/blk.mjs` — the BLK language (parser, serializer, evaluator,
   linter, interpreter). Text is the file format; `blkedit.js` + `blk.html` are
   the editor, `blksim.js` the offline rover simulator. See "BLK" below.
@@ -174,10 +177,80 @@ Node.js PC server/dashboard.
     with the start) marks the two that really can read zero; everything else shows
     NOT READING. Add the flag when a sensor's zero becomes real, not when a tile
     looks empty.
+  - **Stale telemetry is treated as no telemetry** — `PKT_STALE_MS` (3s) in `app.js`.
+    The board streams at 10Hz (2Hz behind a screensaver), so the sensor stream *is* the
+    heartbeat and no ping command was added. Nothing for 3s and `view` goes null: every
+    tile blanks to "—", the link pill drops, ping stops claiming a number, and the bridge
+    button reads NO DATA in amber instead of LINKED. A hung sketch keeps its gatt
+    connection up, so "linked" alone was never proof anything was talking, and the last
+    packet held on screen reads exactly like a live one.
   - **Panic stop is global** — space fires `stop` from anywhere, bound at the app root
     (Drive's own space key only listens while the drive zone is armed, which left a
     running routine with no key at all). Buttons, links and text inputs keep space for
     themselves. Every client binds it, mirror included: `stop` is never gated.
+  - **The camera feed is read with `fetch`, not `<img src=…/stream>`.** The browser's
+    own multipart decoder stalls: bytes keep arriving on the socket, the picture
+    stops, and **nothing fires** — no `load`, no `error` — so the feed sat frozen
+    until someone reloaded the page. The cam sends `Access-Control-Allow-Origin: *`
+    on `/stream`, so `CamView` reads the body itself, splits it with `mjpegSplit`
+    (`public/js/mjpeg.mjs`) and paints one blob url per frame — a plain single-jpeg
+    decode, which can't wedge. That also makes "frozen" a *timestamp*, which is what
+    the 5s watchdog reconnects on. The reconnect is silent: the last frame stays on
+    screen and state is left at `live`, so no placeholder flashes over it, and the
+    clock resets on connect or the watchdog re-fires every second. **Never a canvas**
+    — the cam is another origin, so anything drawn from it is tainted and unreadable.
+    Frames are taken **by `Content-Length`, never by scanning for the next boundary**
+    (jpeg payload can spell the boundary). `npm run test:mjpeg` feeds the splitter a
+    frame containing its own boundary, one byte at a time.
+    **Only one `/stream` at a time exists** — the cam runs a second httpd on :81 whose
+    handler never returns — so a reconnect must tear down before opening, and two
+    CamViews mounted at once would deadlock.
+  - **Auto headlamp:** `lux < 45` (`LUX_DARK`) means Sage is going blind, so
+    `darkCheck()` grabs one still and walks the cam lamp until the frame's mean
+    luma sits in `LAMP_LO..LAMP_HI` (`lampStep()` in `vision.js`, sharp — already
+    a dep). **The walk is a bracket, not a fixed step** — lo/hi only narrow and the
+    walk ends when they meet, because a memoryless stepper blinks between two levels
+    forever on a scene where neither reads in band (black at 0, blown at 40), which
+    is what a "randomly flashing" cam lamp turned out to be. **The lux sensor only says *when* to look; the frame says whether the
+    lamp is enough** — the bh1750 isn't pointed where the lens is, and asking Sage
+    "can you see?" is an llm round trip the venue's no-internet run doesn't have.
+    That's also why `lux` parses to **null** when field 12 is absent instead of 0:
+    a real pitch-black cave reads 0 lx, so 0 can't double as "not wired" or the
+    loop drives the lamp to 255 on a rover with no bh1750. One grab in flight at a
+    time (`/capture` and `/stream` share the ai-thinker's ram).
+  - **The agent tab is a terminal, not a chat box** (`Agent`/`Feed`/`FeedLine` in
+    `app.js`, `.term-*`/`.fl-*` in `style.css`): a bar with the ascii face, a
+    transcript, a prompt line. One row per move — `›` the operator, `●` Sage,
+    `◆` a tool she reached for, with the still she read under it. The transcript
+    lives on the chat object (`chat.feed`, capped at 80) so it survives a reload,
+    and it is display only: what the model sees is still `chat.messages`.
+  - **Sage calls her own tools** — `agentLoop()` in `server.js`. She answers with
+    a `tool` in her json, the server runs it, hands her the result and asks
+    again, so one turn is several visible moves ("let me take a look" → camera →
+    the answer). `camera` grabs a fresh still, `sensors` re-reads the numbers;
+    `led`, `finding` and `snapshot` stay one-shot side effects of the same reply.
+    **Not the providers' function-calling api** — the three brains in `BRAINS`
+    spell it three ways and one has no vision+tools combo at all, so the name
+    rides in the json `parseSage` already reads. The loop is **bounded**
+    (`wantsTool()` in `sage.js`, `SAGE_MAX_STEPS`, default 3): the last pass has
+    to answer, or a model that keeps asking to look never says anything and every
+    pass is a paid round trip the operator sits through. Steps go out over the
+    socket as `sage-step` while she works, not with the reply.
+    **The chat turn no longer ships a frame up front** — she asks for one. A
+    picture in every prompt cost an svga upload on "is it hot?" *and* she reached
+    for the camera anyway (an attached frame reads as history, not as "now"), so
+    the turn paid for two. Measured after: 1.4s for a question with no tool,
+    ~17s when she looks. `tool` takes a colon note (`sensors: temperature`) that
+    the transcript prints as "Sage used temperature readings" — the operator sees
+    the thing they asked about, not a field name.
+    Anything a step showed her is written to `public/shots/` (last 20) so the
+    transcript can show it too. `npm run test:auto` covers the parse and the bound.
+  - **Sage can ask for a 10s sensor snapshot** when she isn't sure about something:
+    `"snapshot": "<why>"` in her json → `takeSnapshot()` dumps the last 10s of
+    `dataHistory` to `public/snapshots/<ts>.json` and logs a summary row.
+    **Backwards, not forwards** — `dataHistory` already holds ~100s, so the moment
+    that made her unsure is already in hand and there's nothing to wait for.
+    `npm run test:auto` covers both (lamp step + convergence, snapshot summary).
   - **Cloud pills** (SAGE / VOICE in the topbar) are a reachability probe, not a health
     check: `/api/cloud` HEADs the two api roots, cached ~25s, and the dashboard polls it
     every 30s. The venue has no internet and both Gemini and Deepgram fail quietly

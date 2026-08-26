@@ -168,6 +168,8 @@ body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
 .bridge-btn:hover:not(:disabled) { border-color: var(--ink-2); }
 .bridge-btn.is-on { color: var(--go); border-color: rgba(63, 207, 142, 0.5); }
 .bridge-btn.is-on .lamp-dot.is-go { animation: pulse 1.6s ease-in-out infinite; }
+/* connected but silent — amber, not green: the link is up and the board isn't talking */
+.bridge-btn.is-stale { color: var(--warn); border-color: rgba(255, 176, 46, 0.5); }
 .bridge-btn:disabled, .bridge-repair:disabled { opacity: 0.5; cursor: wait; }
 .bridge-repair {
   font: 500 14px/1 var(--mono); min-height: 36px; width: 36px; border-radius: var(--r-s);
@@ -532,91 +534,105 @@ input[type="range"]:focus { box-shadow: none; }
 /* never scrolls — the stage below absorbs/releases the slack instead */
 .agent-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 
-.agent-topbar { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 14px 0; }
-.agent-topbar-spacer { flex: 1; }
-.agent-back { margin: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-voice-sel { flex-shrink: 0; min-height: 30px; font-size: 11px; padding: 0 24px 0 8px; background-color: transparent; }
+/* ------------------------------------------------------------
+   the transcript. the agent tab is a terminal, not a chat window: bar, feed,
+   prompt, one column. only the feed scrolls — test-layout asserts .agent-body
+   itself never does, at every size the rail is allowed to be.
+   ------------------------------------------------------------ */
+.term { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
-.agent-stage {
-  position: relative; flex: 1 1 auto; min-height: 44px; container-type: size; overflow: hidden;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
-  padding: 14px; margin: 10px 14px 0; border-radius: var(--r);
-  background: var(--inset); border: 1px solid var(--line);
-  color: var(--agent-c, var(--ink-2));            /* glyph color follows intent */
-  transition: color 0.45s ease;
+.term-bar {
+  flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px 7px 6px; border-bottom: 1px solid var(--line);
 }
-.agent-grid {
-  position: absolute; inset: 0; z-index: 0; opacity: 0.08; color: currentColor;
-  background-image: radial-gradient(circle, currentColor 0.6px, transparent 0.7px);
-  background-size: 15px 15px;
-  -webkit-mask-image: radial-gradient(circle at center, #000 28%, transparent 72%);
-          mask-image: radial-gradient(circle at center, #000 28%, transparent 72%);
+.term-back {
+  flex: none; width: 24px; height: 24px; display: grid; place-items: center;
+  background: none; border: 0; cursor: pointer; color: var(--ink-3); font: 700 14px/1 var(--mono);
+  transition: color 0.14s ease, transform 0.14s ease;
+}
+.term-back:hover { color: var(--ink); transform: translateX(-2px); }
+.term-who { font: 800 11px/1 var(--grotesk); letter-spacing: 0.18em; color: var(--ink); }
+.term-state {
+  font: 500 9px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.term-verdict {
+  margin-left: auto; flex: none; padding: 3px 7px; border: 1px solid var(--line);
+  border-left: 2px solid var(--ink-3); border-radius: var(--r);
+  font: 700 9px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2);
+}
+.term-verdict.is-go    { border-left-color: var(--go);     background: var(--go-bg);    color: var(--go); }
+.term-verdict.is-warn  { border-left-color: var(--warn);   background: var(--warn-bg);  color: var(--warn); }
+.term-verdict.is-abort { border-left-color: var(--accent); background: var(--abort-bg); color: var(--accent); }
+.term-bar .agent-voice-sel { flex: none; min-height: 26px; max-width: 92px; font-size: 10px; padding: 0 20px 0 6px; background-color: transparent; }
+
+/* the big face. it is the one thing in the tab that is not text, so it gets the
+   room — a 15px face in the bar read as an icon. shrinks on short screens
+   rather than hiding: the feed below it scrolls, so it never costs layout. */
+.term-hero {
+  flex: none; display: grid; place-items: center; padding: 26px 0 24px;
+  border-bottom: 1px solid var(--line);
+  color: var(--agent-c, var(--ink-2)); transition: color 0.45s ease;
+}
+.term-hero .sage-face { font-size: 58px; }
+.term-hero.is-speaking { color: var(--accent); }
+
+.term-feed {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 9px; padding: 10px 12px;
+  background: var(--inset);
 }
 
-/* halo rings pulsing behind glyph */
-.agent-orb { position: relative; z-index: 1; display: grid; place-items: center;
-  width: min(clamp(64px, 10dvh, 118px), 64cqh); height: min(clamp(64px, 10dvh, 118px), 64cqh); }
-.agent-orb::before, .agent-orb::after {
-  content: ""; position: absolute; inset: 14px; border: 1px solid currentColor; border-radius: 50%;
-  opacity: 0; animation: orb-halo 3.2s ease-out infinite;
-}
-.agent-orb::after { animation-delay: 1.6s; }
-@keyframes orb-halo { 0% { transform: scale(0.6); opacity: 0.3; } 100% { transform: scale(1.3); opacity: 0; } }
-.agent.is-alert .agent-orb::before, .agent.is-alert .agent-orb::after { animation-duration: 1.4s; }
+/* one line per move. the mark column is what makes it read as a log: › you,
+   ● her, ◆ a tool she reached for. */
+.fl { display: flex; gap: 8px; animation: agent-text-in 0.3s ease; }
+.fl-mark { flex: none; width: 12px; text-align: center; font: 700 11px/1.55 var(--mono); color: var(--ink-3); }
+.fl-body { flex: 1; min-width: 0; }
+.fl-t { margin: 0; font: 400 12.5px/1.55 var(--prose); color: var(--ink); overflow-wrap: anywhere; }
+.fl-detail { margin: 2px 0 0; font: 500 10px/1.4 var(--mono); color: var(--ink-3); overflow-wrap: anywhere; }
 
-/* the glyph */
-.ai-glyph { position: relative; z-index: 1; display: block; overflow: visible;
-  width: min(clamp(40px, 6dvh, 68px), 40cqh); height: min(clamp(40px, 6dvh, 68px), 40cqh); }
-@container (max-height: 108px) { .agent-state-label, .agent-eq { display: none; } }
-.ai-glyph * {
-  fill: none; stroke: currentColor; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round;
-  transform-box: fill-box; transform-origin: center;
+.fl-user .fl-mark { color: var(--accent); }
+.fl-user .fl-t { font: 500 11.5px/1.5 var(--mono); color: var(--ink-2); }
+.fl-sage .fl-mark { color: var(--agent-c, var(--ink-2)); }
+.fl-sage.sage-clear   .fl-mark { color: var(--go); }
+.fl-sage.sage-caution .fl-mark { color: var(--warn); }
+.fl-sage.sage-danger  .fl-mark { color: var(--abort); }
+.fl-tool .fl-mark { color: var(--accent); }
+.fl-tool .fl-t { font: 500 11.5px/1.5 var(--mono); color: var(--ink-3); }
+.fl-tool b { color: var(--ink); font-weight: 700; }
+.fl-tool .icn { vertical-align: -1px; }
+.fl-note .fl-t { font: 500 10.5px/1.5 var(--mono); color: var(--ink-3); }
+/* the still the step actually read — a look you can check, not a claim */
+.fl-shot {
+  display: block; margin-top: 6px; width: 100%; max-width: 190px; aspect-ratio: 4 / 3;
+  object-fit: cover; border: 1px solid var(--line); border-radius: var(--r);
+  animation: agent-text-in 0.35s ease;
 }
-.ai-glyph .g-fill { fill: currentColor; stroke: none; }
-.ai-glyph .g-faint { opacity: 0.22; }
-.ai-glyph .g-spin { transform-box: view-box; transform-origin: 60px 60px; }
+.fl-work .fl-mark { color: var(--accent); animation: spin 1.1s linear infinite; }
+.fl-work .fl-t { font: 700 10px/1.6 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+.fl-work b { color: var(--accent); font-variant-numeric: tabular-nums; }
 
-@keyframes spin    { to { transform: rotate(360deg); } }
-@keyframes breathe { 0%, 100% { transform: scale(0.86); opacity: 0.6; } 50% { transform: scale(1.1); opacity: 1; } }
-@keyframes blink   { 0%, 100% { opacity: 1; } 50% { opacity: 0.32; } }
-@keyframes bob     { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
-@keyframes draw    { to { stroke-dashoffset: 0; } }
-@keyframes shake   { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
-@keyframes pop     { 0% { transform: scale(0.7); opacity: 0; } 60% { transform: scale(1.08); } 100% { transform: scale(1); opacity: 1; } }
+/* empty session: say what she can do, and give three things to press */
+.term-hint { margin: auto 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.term-hint-t { font: 400 12px/1.55 var(--prose); color: var(--ink-3); }
+.term-chip {
+  padding: 5px 9px; cursor: pointer; color: var(--ink-2); background: transparent;
+  border: 1px solid var(--line); border-radius: var(--r); font: 500 11px var(--mono);
+  transition: color 0.14s, border-color 0.14s, transform 0.14s;
+}
+.term-chip:hover { color: var(--ink); border-color: var(--ink-2); transform: translateX(2px); }
 
-.agent.is-idle .g-core, .agent.is-idle .g-ring { animation: breathe 2.6s ease-in-out infinite; }
-.agent.is-idle .g-ring { animation-duration: 3.4s; }
+.term-prompt { align-items: center; }
+.term-input {
+  flex: 1; min-width: 0; height: 34px; padding: 0 8px;
+  font: 500 12px var(--mono); color: var(--ink);
+  background: var(--inset); border: 1px solid var(--line); border-radius: var(--r);
+}
+.term-input::placeholder { color: var(--ink-3); }
+.term-input:focus { border-color: var(--ink-2); outline: none; }
+.term-prompt .foot-icon { width: 34px; height: 34px; }
 
-.agent-analyzing-label {
-  position: relative; z-index: 1; color: var(--agent-c, var(--ink));
-  font: 700 12px/1 var(--grotesk); letter-spacing: 0.26em; text-transform: uppercase;
-  display: inline-flex; align-items: center; gap: 3px;
-}
-.agent-analyzing-label::after {
-  content: "\2026"; /* … */ display: inline-block;
-  animation: blink 1.1s ease-in-out infinite;
-}
-.agent.is-scanning .g-sweep { animation: spin 2.6s linear infinite; }
-.agent.is-scanning .g-wedge { opacity: 0.5; }
-.agent.is-scanning .g-blip  { animation: blink 1.1s ease-in-out infinite; }
-.agent.is-clear .g-ring2 { stroke-dasharray: 214; stroke-dashoffset: 214; animation: draw 0.6s ease forwards; }
-.agent.is-clear .g-check {
-  stroke-dasharray: 60; stroke-dashoffset: 60;
-  animation: draw 0.45s 0.3s ease forwards, bob 2.6s 0.9s ease-in-out infinite;
-}
-.agent.is-caution .g-tri  { animation: pop 0.4s ease, blink 1.3s 0.4s ease-in-out infinite; }
-.agent.is-caution .g-bang, .agent.is-caution .g-dot2 { animation: blink 1.3s ease-in-out infinite; }
-.agent.is-alert .ai-glyph { animation: shake 0.5s ease-in-out infinite; }
-.agent.is-alert .g-tri    { animation: pop 0.3s ease, blink 0.6s 0.3s steps(2, jump-none) infinite; }
-.agent.is-alert .g-bang, .agent.is-alert .g-dot2 { animation: blink 0.6s steps(2, jump-none) infinite; }
-
-.agent-state-label {
-  position: relative; z-index: 1; color: currentColor;
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
-  font: 700 10px/1 var(--grotesk); letter-spacing: 0.26em; text-transform: uppercase;
-  animation: agent-text-in 0.4s ease;
-}
-.agent-state-label .sage-face { font-size: 26px; }
+@keyframes agent-text-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 /* ------------------------------------------------------------
    sage's face (js/sageface.js) — ascii, animated.
@@ -670,10 +686,10 @@ input[type="range"]:focus { box-shadow: none; }
 /* scanning / work — `o_o` / `O_O`, sweeping the room */
 .sage-face.is-scanning .sf-scan, .sage-face.is-work .sf-scan { animation: sf-sweep 3.2s ease-in-out infinite; }
 .sage-face.is-work .sf-open, .sage-face.is-work .sf-shut { animation-duration: 1.6s; }
-/* thinking — `o_O`, one eye pinched, head tilting */
+/* thinking — `>_<`, screwed up in concentration, head tilting */
 .sage-face.is-thinking { animation: sf-ponder 3.6s ease-in-out infinite; }
-.sage-face.is-thinking .sf-l { scale: 0.8; }
-.sage-face.is-thinking .sf-r { scale: 1.15; }
+.sage-face.is-thinking .sf-open, .sage-face.is-thinking .sf-shut { animation: none; }
+.sage-face.is-thinking .sf-mouth { animation: sf-pulse 2.2s ease-in-out infinite; }
 /* clear — `^_^`, eyes already shut with joy */
 .sage-face.is-clear .sf-open, .sage-face.is-clear .sf-shut { animation: none; }
 .sage-face.is-clear { animation: sf-hop 2.4s ease-in-out infinite; }
@@ -690,37 +706,6 @@ input[type="range"]:focus { box-shadow: none; }
   .sage-face .sf-shut, .sage-face .sf-z { opacity: 0; }
   .sage-face .sf-open { opacity: 1; }
 }
-
-/* voice equalizer (speaking) */
-.agent-eq { position: relative; z-index: 1; display: flex; align-items: flex-end; gap: 3px; height: 15px; color: currentColor; }
-.agent-eq i { width: 3px; height: 100%; border-radius: var(--r-pill); background: currentColor; transform-origin: bottom; animation: eq 0.8s ease-in-out infinite; }
-.agent-eq i:nth-child(2) { animation-delay: 0.16s; }
-.agent-eq i:nth-child(3) { animation-delay: 0.32s; }
-.agent-eq i:nth-child(4) { animation-delay: 0.48s; }
-.agent-eq i:nth-child(5) { animation-delay: 0.22s; }
-@keyframes eq { 0%, 100% { transform: scaleY(0.28); } 50% { transform: scaleY(1); } }
-
-/* what the agent says */
-.agent-speech { padding: 8px 16px 0; }
-.agent-text {
-  margin: 0; padding-left: 13px; border-left: 2px solid var(--agent-c, var(--accent)); color: var(--ink);
-  font: 400 13.5px/1.55 var(--prose);
-  min-height: 1.6em; animation: agent-text-in 0.4s ease;
-  transition: border-color 0.45s ease;
-}
-.agent.is-analyzing .agent-text { color: var(--ink-2); }
-.agent-text.sage-clear   { border-left-color: var(--go); }
-.agent-text.sage-caution { border-left-color: var(--warn); }
-.agent-text.sage-danger  { border-left-color: var(--abort); }
-@keyframes agent-text-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-
-.agent-timing {
-  margin-top: 5px; padding-left: 13px;
-  font: 500 9.5px/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-3);
-}
-.agent-timing b { color: var(--ink-2); font-weight: 700; }
-.agent-timing.is-live { color: var(--agent-c, var(--accent)); }
-.agent-timing.is-live b { color: var(--agent-c, var(--accent)); }
 
 /* go/no-go verdict */
 .verdict {
@@ -763,34 +748,13 @@ input[type="range"]:focus { box-shadow: none; }
   transition: color 0.14s, background 0.14s;
 }
 .menu-item:hover:not(:disabled) { color: var(--ink); background: var(--inset); }
+.menu-item.is-lead { color: var(--ink); font-weight: 700; display: flex; align-items: center; gap: 7px; }
+.menu-item.is-lead .icn { color: var(--accent); }
 .menu-item:disabled { opacity: 0.4; cursor: not-allowed; }
 .menu-label { padding: 5px 10px 3px; font: 700 8.5px/1 var(--grotesk); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
 .menu-sep { height: 0; margin: 4px 6px; border: 0; border-top: 1px solid var(--line); }
-.agent-hist { padding: 0 16px 8px; position: relative; }
 
 .is-analyzing .zone-title { animation: pulse 0.9s ease-in-out infinite; }
-
-.ai-hist > summary {
-  font: 700 9.5px/1 var(--grotesk); letter-spacing: 0.16em; text-transform: uppercase;
-  color: var(--ink-3); cursor: pointer; padding: 6px 0; list-style: none;
-}
-.ai-hist > summary::-webkit-details-marker { display: none; }
-.ai-hist > summary:hover { color: var(--ink); }
-.ai-hist > summary::before { content: "▸ "; color: var(--accent); }
-.ai-hist[open] > summary::before { content: "▾ "; }
-.ai-hist-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: min(168px, 26dvh); overflow-y: auto; }
-/* open history floats over the panel — expanding in flow would grow the box past the viewport */
-.agent-hist[open] .ai-hist-list {
-  position: absolute; z-index: 5; left: 16px; right: 16px; bottom: calc(100% - 4px);
-  padding: 8px; background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r);
-}
-.ai-hist-item {
-  display: flex; gap: 10px; padding: 8px 10px; background: var(--inset); border-radius: var(--r);
-  border: 1px solid transparent; cursor: pointer; font: 400 12px/1.45 var(--grotesk); color: var(--ink-2);
-  transition: color 0.14s, background 0.14s, border-color 0.14s, transform 0.14s ease;
-}
-.ai-hist-item:hover { border-color: var(--line-2); background: var(--panel-2); color: var(--ink); transform: translateX(3px); }
-.ai-hist-time { font: 500 10px/1.45 var(--mono); color: var(--accent); flex-shrink: 0; }
 
 /* ask sage — mic button in the foot row */
 .ask-mic.is-live { color: var(--bg); background: var(--accent); border-color: var(--accent); animation: chat-rec 1s steps(2) infinite; }
@@ -826,12 +790,12 @@ input[type="range"]:focus { box-shadow: none; }
 
 /* briefing wizard */
 .briefing { padding: 8px 16px 12px; display: flex; flex-direction: column; gap: clamp(7px, 1.2dvh, 12px); align-items: stretch; min-height: 0; }
-.brief-back, .agent-back {
+.brief-back {
   align-self: flex-start; cursor: pointer; padding: 6px 10px; background: transparent; border-radius: var(--r-pill);
   border: 1px solid var(--line-2); color: var(--ink-2); font: 600 10px var(--mono); letter-spacing: 0.04em;
   transition: color 0.14s, border-color 0.14s, padding-left 0.16s ease;
 }
-.brief-back:hover, .agent-back:hover { color: var(--ink); border-color: var(--ink-2); padding-left: 14px; }
+.brief-back:hover { color: var(--ink); border-color: var(--ink-2); padding-left: 14px; }
 .brief-orb { align-self: center; color: var(--agent-c, var(--ink)); margin-top: 4px; }
 .brief-orb .sage-face { font-size: 44px; }
 .brief-greeting { margin: 0; text-align: center; font: 400 13.5px/1.5 var(--prose); color: var(--ink); }
@@ -869,12 +833,9 @@ input[type="range"]:focus { box-shadow: none; }
 @keyframes list-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* staggered entrance when a session opens */
-.agent-back  { animation: view-in 0.4s ease both; }
-.agent-stage { animation: view-in 0.5s 0.04s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-.agent-speech { animation: view-in 0.5s 0.1s ease both; }
-.verdict { animation: view-in 0.5s 0.16s ease both; }
-.agent-foot { animation: view-in 0.5s 0.22s ease both; }
-.agent-hist { animation: view-in 0.5s 0.34s ease both; }
+.term-bar   { animation: view-in 0.4s ease both; }
+.term-feed  { animation: view-in 0.5s 0.08s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.agent-foot { animation: view-in 0.5s 0.18s ease both; }
 
 /* ============================================================
    drive
@@ -1427,25 +1388,21 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
    IMPORTANT NOTE: below ~780px tall the rail runs out of room anyway — the console
    drawer / a taller window is the answer there, not more shaving. */
 @media (max-height: 899px) and (min-width: 1025px) {
+  .term-hero .sage-face { font-size: 38px; }
   .verdict-cause { display: none; }
-  .agent-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
   .blk-ctl { gap: 6px; }
   .blk-ctl small { display: none; }
 }
 
 @media (max-height: 840px) and (min-width: 1025px) {
-  .agent-text { -webkit-line-clamp: 2; }
   .brief-greeting { display: none; }        /* spoken aloud anyway */
   .briefing .mission-input { height: clamp(44px, 6dvh, 84px); }
   .routines .label { display: none; }
-  .ai-hist > summary { padding: 4px 0; }
 }
 
 @media (max-height: 800px) and (min-width: 1025px) {
-  .agent-stage { min-height: 32px; }
-  .agent-speech { padding-top: 6px; }
-  .agent-timing { margin-top: 4px; }
   .verdict { padding: 5px 12px; }
+  .term-feed { padding: 8px 10px; gap: 7px; }
   .agent-foot { padding: 6px 16px 4px; }
 }
 
@@ -1461,7 +1418,8 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   .stage-cam .stage-body { height: min(28dvh, 220px); flex: none; }
   .agent { flex: none; }
   .agent-body { overflow: visible; }
-  .agent-stage { flex: none; min-height: 168px; }
+  /* page scrolls here instead of the panel, so give the log a real height */
+  .term-feed { height: min(50dvh, 420px); flex: none; }
   .col-rail .drive { order: -1; }
   .drawer { height: min(60dvh, 480px); }
 }
@@ -1656,30 +1614,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .fpv-brackets i:nth-child(2) { top: 12px; right: 12px; border-left: 0; border-bottom: 0; }
 .fpv-brackets i:nth-child(3) { bottom: 12px; left: 12px; border-right: 0; border-top: 0; }
 .fpv-brackets i:nth-child(4) { bottom: 12px; right: 12px; border-left: 0; border-top: 0; }
-
-/* heading tape */
-.fpv-tape {
-  position: absolute; top: 58px; left: 50%; transform: translateX(-50%);
-  width: min(460px, 40vw); height: 26px;
-  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
-}
-.fpv-tick {
-  position: absolute; top: 8px; transform: translateX(-50%);
-  font: 500 8.5px/1 var(--mono); letter-spacing: 0.06em;
-  color: color-mix(in srgb, var(--ink) 55%, transparent);
-}
-.fpv-tick::before {
-  content: ""; position: absolute; top: -7px; left: 50%; width: 1px; height: 4px;
-  background: currentColor; transform: translateX(-50%);
-}
-.fpv-tick.is-major { color: var(--accent); font-weight: 700; font-size: 9.5px; }
-.fpv-tick.is-major::before { height: 7px; top: -10px; }
-.fpv-tape-now {
-  position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
-  font: 700 10px/1 var(--mono); color: var(--accent);
-  text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent);
-}
 
 /* attitude line — roll rotates it, pitch slides it */
 .fpv-attitude {

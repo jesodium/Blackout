@@ -23,7 +23,9 @@
     "test:padnav": "node test-padnav.mjs",
     "test:icons": "node test-icons.mjs",
     "test:rec": "node test-rec.js",
-    "test:elev": "node test-elev.mjs"
+    "test:elev": "node test-elev.mjs",
+    "test:auto": "node test-auto.js",
+    "test:mjpeg": "node test-mjpeg.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

@@ -29,16 +29,6 @@ const ok = (name, cond, extra = "") => { console.log((cond ? "  ok   " : "  FAIL
 
 ok("dashboard rendered", await ev(`return !!document.querySelector('.shell .stage-cam')`));
 
-// heading tape maths, straight out of app.js — the one bit of the hud with real logic
-const tape = await ev(`
-  const wrap = d => ((d % 360) + 360) % 360;
-  const ticks = (yaw) => { const o = []; for (let a = Math.ceil((yaw-50)/10)*10; a <= yaw+50; a += 10) o.push({ deg: wrap(a), off: (a-yaw)/100 }); return o; };
-  return { at0: ticks(0).map(k => k.deg), at355: ticks(355).map(k => k.deg),
-           spread: ticks(123).map(k => +k.off.toFixed(3)) };`);
-ok("heading tape wraps past 360", tape.at355.includes(350) && tape.at355.includes(0) && tape.at355.every(d => d >= 0 && d < 360), JSON.stringify(tape.at355));
-ok("heading tape centres on yaw", tape.at0.includes(0) && tape.at0.length === 11, JSON.stringify(tape.at0));
-ok("heading tape stays on screen", Math.min(...tape.spread) >= -0.5 && Math.max(...tape.spread) <= 0.5, JSON.stringify(tape.spread));
-
 // enter via the △ FPV button
 ok("view transitions available", await ev(`return !!document.startViewTransition`));
 await ev(`document.querySelector('.fpv-enter').click(); return 1;`);
@@ -64,13 +54,13 @@ const hud = await ev(`
   const rt = document.querySelector('.fpv-reticle').getBoundingClientRect();
   return { glass: !!document.querySelector('.fpv-glass'),
            reticle: { cx: Math.round(rt.left + rt.width/2), cy: Math.round(rt.top + rt.height/2) },
-           ticks: document.querySelectorAll('.fpv-tick').length,
+           tape: document.querySelectorAll('.fpv-tape').length,
            brackets: document.querySelectorAll('.fpv-brackets i').length,
            glassEvents: getComputedStyle(document.querySelector('.fpv-glass')).pointerEvents,
            feedW: Math.round(parseFloat(cs.width)),
            feedBox: (b => ({ w: Math.round(b.width), h: Math.round(b.height) }))(document.querySelector('.cam-feed').getBoundingClientRect()) };`);
 console.log("  hud:", JSON.stringify(hud));
-ok("hud glass drawn", hud.glass && hud.ticks >= 10 && hud.brackets === 4, JSON.stringify(hud));
+ok("hud glass drawn", hud.glass && hud.tape === 0 && hud.brackets === 4, JSON.stringify(hud));
 ok("reticle centred", Math.abs(hud.reticle.cx - 1440 / 2) < 2 && Math.abs(hud.reticle.cy - 761 / 2) < 2, JSON.stringify(hud.reticle));
 ok("hud never eats a click", hud.glassEvents === "none", hud.glassEvents);
 // rotated -90°, so the feed's css width lands on screen as its height. covering the

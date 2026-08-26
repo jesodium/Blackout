@@ -97,8 +97,13 @@ assert(await host.ev(`document.querySelectorAll('.device-row select').length`) =
 await setMode("full");
 await sleep(600);
 assert(!(await tab.state()).control, "the grant confirm was skipped — one click handed over the robot");
-await sleep(3000);
-assert(await confirmGrant(), "grant confirm never armed after 3s");
+// the button arms on a 3s countdown, but this page is headless and in the
+// background — chrome throttles a hidden page's timers, so the countdown runs
+// slower than wall clock and a flat 3s sleep raced it. poll instead: the safety
+// property is that it can't be pressed *early*, asserted just above.
+let armed = false;
+for (let i = 0; i < 20 && !armed; i++) { await sleep(500); armed = await confirmGrant(); }
+assert(armed, `grant confirm never armed — ${await host.ev(`[...document.querySelectorAll('.warn-go')].map(b => b.textContent.trim() + (b.disabled ? " (disabled)" : "")).join(" ;; ")`)}`);
 await sleep(600);
 s = await tab.state();
 assert(s.control && s.drive, `tablet was granted control but never heard about it — ${await roster()}`);

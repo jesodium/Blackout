@@ -19,7 +19,7 @@ export const MOODS = ["idle", "scanning", "thinking", "clear", "caution", "alert
 const FACES = {
   idle:     ["-", "_", "-"],
   scanning: ["o", "_", "o"],
-  thinking: ["o", "_", "O"],
+  thinking: [">", "_", "<"],
   clear:    ["^", "_", "^"],
   caution:  [":", "0", ""],   // right eye blank — reads `:0`, css hides the span
   alert:    ["x", "_", "x"],
