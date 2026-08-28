@@ -52,16 +52,27 @@ Node.js PC server/dashboard.
     opposite header are the *same nets*, there for daisy-chaining: feed V+ once,
     but do tie a GND to the board (common ground is what makes I2C work at all).
     `OE` is pulled low already; wire it only for a hardware all-channels-off kill.
-    - **It drives a 5-DOF arm**: ch0 base, ch4 shoulder, ch6 elbow, ch8 wrist
-      (all 360, continuous rotation) and ch15 gripper (SG90, positional 0-180).
+    - **It drives a 5-DOF arm**: ch15 base, ch12 shoulder, ch10 elbow, ch8 wrist
+      (all 360, continuous rotation) and ch4 gripper (SG90, positional 0-180).
+      Re-plugged and re-confirmed 2026-08-27, one channel at a time; the map
+      lives in three places that must agree or it half-works (`sv[]` in the
+      sketch, `J` in `servo.py`'s page, the constants at the top of `hand.py`).
+      **A channel reading back a healthy pulse proves nothing about the servo** —
+      `d<ch>` dumps MODE1 plus that channel's own registers over I2C, and ch7
+      reported a textbook 2197us all afternoon with nothing plugged into it.
+      That empty channel is what made four working joints look like a failing
+      servo rail. Nudge and watch; the registers only ever clear the board.
       **A joint typed positional that is really a 360 never stops** — an angle
       maps to 500-2500us, which a 360 reads as full speed, and only continuous
       channels get the deadman. ch8 was mislabelled SG90 and ran away on the
       bench 2026-08-25; `t<ch>` first, and if it keeps turning it's a 360. The bench rig is `OUTDATED/pca_test/` (Uno R4) plus its
       `servo.py`, a flask page that is nothing but a serial pipe to
       it. Joint-to-channel mapping is unconfirmed for the 360s — `t<ch>` nudges
-      one joint so you can watch which moves; the gripper landed 2026-08-25 and
-      is on **ch15**, not ch11.
+      one joint so you can watch which moves, and `T` sweeps all 16 — including
+      channels no table knows about, which is where a servo hides after a
+      re-plug. **A nudge has to run at FULL power**: it was 35%, and on this arm
+      a gentle pulse is a weak one, so four plugged-in joints identified as
+      "nothing" until it was raised (2026-08-27).
       **A 360 in an arm joint has no position feedback and no end stop**, so
       there is no "go to 45deg", only "move while the button is held": the
       continuous channels run on a 0.8s deadman (`JOG_MS`) that the browser
@@ -113,7 +124,7 @@ Node.js PC server/dashboard.
 - `server/public/js/blk.mjs` — the BLK language (parser, serializer, evaluator,
   linter, interpreter). Text is the file format; `blkedit.js` + `blk.html` are
   the editor, `blksim.js` the offline rover simulator. See "BLK" below.
-- `server/` — Node.js dashboard + "Sage" AI agent (Gemini, Cerebras as fallback
+- `server/` — Node.js dashboard + "Sage" AI agent (Cerebras first, the rest as fallback
   — `BRAINS`/`chat()` in `server.js`: one openai-sdk client per keyed provider,
   tried in order, so a dead or rate-limited primary costs one retry, not the run).
   BLE is read directly by the browser (Web Bluetooth) and forwarded to
@@ -158,6 +169,29 @@ Node.js PC server/dashboard.
     `.sage-face.is-<mood>` in `style.css` (an intent key *is* the mood name).
     Adding a mood without its css rule renders a blank face silently —
     `npm run test:face` is the check.
+    **The robot's own panel wears the same face** — `FACE_G` + `drawFace()` in
+    `main.ino` draw the identical glyphs where the HUD used to draw a smiley and a
+    warning triangle, so the rover and the dashboard are one character, not two
+    mascots. The link still carries only `hud,<level>` — the board picks the mood
+    off that and animates it itself, self-clocked off `millis()` (`oledFrame` steps
+    at 120ms, and a shake at 8fps reads as a stutter).
+    **What capped the frame rate was never the draw interval** — a frame is ~1.3ms of
+    spi — it was the sonar's ring-down waits, ~180ms of `delay()` every send, ~18
+    dropped frames in a row. `panelDelay()` is that wait with the draw tick and
+    `BLE.poll()` inside it, so the ping keeps its timing and the panel keeps drawing
+    (an inbound `stop` stops waiting on it too, and a screensaver no longer has to
+    take the noisier single ping). The tick is 10ms now, and that is the floor worth
+    having: the ssd1306 refreshes itself at ~100Hz, so anything sent faster is never
+    displayed. Anything new that blocks in `loop()` has to draw through `panelDelay()`
+    or it is a freeze, and the dht11's own 30ms read is one already.
+    **Frame rate is not what makes it look animated** — travel is. A move of one pixel,
+    or one that only ever lands on two positions, reads as two stills cutting between
+    each other no matter how often it is drawn, which is what the first panel face did.
+    Every mood now travels 4-12px through every pixel in between (`tri()` slides,
+    `arc()` hops) and everything carries the idle bob on top, so nothing is ever
+    perfectly still. `npm run test:face` diffs the two glyph tables, re-runs `tri()`
+    off the sketch's constants, checks the panel's timings against the css animations,
+    and fails any mood whose travel drops to a single pixel.
   - **Mirror mode:** the dashboard opened over the LAN (the judges' tablet) is
     telemetry only — no link controls, no firmware updater, no drive — until the
     host grants it from CONNECTED DEVICES in the topbar. The host is whoever
@@ -205,19 +239,26 @@ Node.js PC server/dashboard.
     **Only one `/stream` at a time exists** — the cam runs a second httpd on :81 whose
     handler never returns — so a reconnect must tear down before opening, and two
     CamViews mounted at once would deadlock.
-  - **Auto headlamp:** `lux < 45` (`LUX_DARK`) means Sage is going blind, so
-    `darkCheck()` grabs one still and walks the cam lamp until the frame's mean
-    luma sits in `LAMP_LO..LAMP_HI` (`lampStep()` in `vision.js`, sharp — already
-    a dep). **The walk is a bracket, not a fixed step** — lo/hi only narrow and the
-    walk ends when they meet, because a memoryless stepper blinks between two levels
-    forever on a scene where neither reads in band (black at 0, blown at 40), which
-    is what a "randomly flashing" cam lamp turned out to be. **The lux sensor only says *when* to look; the frame says whether the
-    lamp is enough** — the bh1750 isn't pointed where the lens is, and asking Sage
-    "can you see?" is an llm round trip the venue's no-internet run doesn't have.
-    That's also why `lux` parses to **null** when field 12 is absent instead of 0:
-    a real pitch-black cave reads 0 lx, so 0 can't double as "not wired" or the
-    loop drives the lamp to 255 on a rover with no bh1750. One grab in flight at a
-    time (`/capture` and `/stream` share the ai-thinker's ram).
+  - **Auto headlamp:** `lux < 100` (`LUX_DARK`) means Sage is going blind, so
+    `darkCheck()` in `server.js` fires a canned line of hers on `agent-blurt`
+    ("it's going dark in here — turning the headlamp on") and ramps the cam lamp
+    up to **250** (`LAMP_MAX`), `LAMP_RAMP_STEP` at a time every `LAMP_RAMP_MS`
+    (`rampTo()` in `vision.js` is the level list, pure and tested). The line is
+    canned and not an llm call for the same reason `emitBlurt()` is: the venue's
+    run has no internet and a round trip is seconds spent blind. It ramps **once**
+    per dark spell — `lampAuto` latches until `lux >= LUX_LIGHT` (1.5x, hysteresis
+    so it can't flap on the threshold), which is also what gives the lamp back
+    rather than burning it for the rest of the run.
+    **The frame-judged bracket walk is no longer wired in** — `autoLamp()` /
+    `lampStep()` are still in `vision.js` and still tested, but nothing calls them:
+    a ramp to a fixed 250 and a walk that reads mean luma back off the frame will
+    hunt against each other if both run, so it is one or the other. The walk is
+    what caught a blown-out close-up wall; wire it in *after* the ramp settles if
+    that ever matters.
+    `lux` parses to **null** when field 12 is absent instead of 0: a real
+    pitch-black cave reads 0 lx, so 0 can't double as "not wired" or the lamp
+    ramps to 250 on a rover with no bh1750. The blurt only reaches the operator
+    while a briefed session is open (same gate every `agent-blurt` has).
   - **The agent tab is a terminal, not a chat box** (`Agent`/`Feed`/`FeedLine` in
     `app.js`, `.term-*`/`.fl-*` in `style.css`): a bar with the ascii face, a
     transcript, a prompt line. One row per move — `›` the operator, `●` Sage,
@@ -245,6 +286,37 @@ Node.js PC server/dashboard.
     the thing they asked about, not a field name.
     Anything a step showed her is written to `public/shots/` (last 20) so the
     transcript can show it too. `npm run test:auto` covers the parse and the bound.
+  - **Sage suggests moves, she never drives** — `"move"` in her json is a short BLK
+    program, and it lands in the transcript as a card with RUN / NOT NOW. Nothing
+    turns until the operator presses RUN; NOT NOW sends nothing at all.
+    **It is BLK and not a drive command because the card takes the on-board VM path** —
+    `forward until dist < 5` compiles and uploads, so the stop happens in one `loop()`
+    pass instead of a ~400ms round trip, which is the difference between stopping at
+    5cm and hitting the wall. The card says which one it got (instruction count =
+    board, a reason = browser) *before* it is pressed, so an operator can see a
+    suggestion that would run slow. That is also why `prompts/chat.md` teaches her a
+    cut-down BLK — one comparison per line, constant arguments, no `and`/`or` — and
+    why `node test-blk.mjs` compiles every shape that prompt teaches: a prompt that
+    drifts wider makes every card fall back to the browser silently.
+    **No move she proposes drives forward blind** — `guard()` in `blk.mjs` rewrites a
+    bare `forward 800` into `forward until dist < 10 timeout 800` before the card is
+    built: the same burst, ended the moment the sonar sees something inside 10cm,
+    which is what the board's `moveu` already does (bursts, condition re-checked every
+    `loop()` pass). She is told to write the guard herself in all three prompts that
+    can move the rover (`chat.md`, `blk.md`, and `autonomous.md`, which has no
+    condition to ride along — a raw `drv` burst checks nothing, so there the rule is a
+    distance floor); the rewrite is the belt, and the card shows the guarded text so
+    what the operator reads is what runs. A `dist` guard she wrote is left alone — a
+    wider berth (`until dist < 25`) is the point, not a miss — and `back`/`left`/`right`
+    are never guarded, because the sensor faces forward and the check would fire on the
+    wall being driven away from. **An operator's own workflow is never rewritten**:
+    theirs comes back from `lint()` as a warning the run panel already shows.
+    The runner is shared with `BlkCtl`, not a second copy — `playBlk()` in `app.js`
+    (upload → `blk,go` → service the `evt` steps → browser fallback), so a move and a
+    saved workflow can never diverge, and one `blkToken` means one program at a time.
+    **CONSOLE → SAGE MOVES turns it off** (`sageMoves` in localStorage): the flag
+    rides on `/api/chat`, so off tells her the drive is locked and she stops offering
+    rather than writing cards the dashboard would hide.
   - **Sage can ask for a 10s sensor snapshot** when she isn't sure about something:
     `"snapshot": "<why>"` in her json → `takeSnapshot()` dumps the last 10s of
     `dataHistory` to `public/snapshots/<ts>.json` and logs a summary row.
@@ -350,9 +422,9 @@ in `app.js` (**the index is the wire value** — same order as the enum), and a
 
 - **A screensaver drops the sensor cadence to 2Hz** while the rover is otherwise idle
   (`SAVER_SEND_INTERVAL` / `SAVER_ENV_INTERVAL`). Everything below the send gate in
-  `loop()` blocks the panel: one sonar ping is ~25ms of dead time and a dht11 read ~30ms,
-  inside a 20ms draw tick — at 10Hz that's a dropped frame in five, which is exactly what
-  reads as stutter. Anything moving (routine, blk, live drive) clears `busy` and puts the
+  `loop()` blocks the panel unless it draws through `panelDelay()`: one sonar ping is
+  ~25ms of dead time and a dht11 read ~30ms, inside a 10ms draw tick — at 10Hz that's a
+  visible run of dropped frames, which is exactly what reads as stutter. Anything moving (routine, blk, live drive) clears `busy` and puts the
   full 10Hz back, so this only ever costs telemetry resolution on a parked rover. If the
   animation ever stutters again, look for something new that blocks in `loop()` — not at
   the draw code.

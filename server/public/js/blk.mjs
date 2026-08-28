@@ -500,6 +500,8 @@ export function lint(program) {
       for (const c of [n.cond, n.until]) { collectCondVars(c, reads); checkFlags(c); }
       if ((n.op === "break" || n.op === "continue") && !loopDepth) warns.push(`${n.op} outside a loop does nothing`);
       if (n.op === "forever" && !n.body.length) warns.push("empty forever loop spins forever");
+      // the sonar is the only thing watching the wall — a timed forward isn't reading it
+      if (n.op === "forward" && !n.until) warns.push(`"forward ${typeof n.arg === "number" ? n.arg : "…"}" drives blind — "forward until dist < ${GUARD_CM} timeout ${typeof n.arg === "number" ? n.arg : 1000}" stops at the wall`);
       const deeper = ["repeat", "repeat_until", "repeat_while", "forever"].includes(n.op);
       for (const sub of [n.body, n.elseBody]) if (sub) walk(sub, deeper ? loopDepth + 1 : loopDepth, inDef);
     }
@@ -524,6 +526,44 @@ function collectCondVars(c, out) {
   if (c.s) { out.push(c.s); return; }
   if (c.k === "cmp" || c.k === "truthy") { collectVars(c.l, out); collectVars(c.r, out); collectVars(c.e, out); return; }
   for (const k of ["l", "r", "e"]) collectCondVars(c[k], out);
+}
+
+/* ── forward moves need the sonar ──
+   the ultrasonic is the only thing standing between the rover and a wall, so a bare
+   `forward 800` is 800ms of nothing watching. guard() rewrites one into
+   `forward until dist < 10 timeout 800` — the same burst, ended the moment something
+   is inside 10cm, which is exactly what the board's moveu op already does: short
+   bursts with the condition re-checked every loop() pass, so the stop happens on the
+   board and not a ble round trip away.
+   back/left/right are left alone on purpose — the sensor faces forward, so a dist
+   guard on a reverse fires on the wall the rover is driving *away* from, and the move
+   would never happen at all. A forward already guarded on dist is hers, untouched
+   (that is the "custom amount" case: `until dist < 25` is a wider berth, not a miss);
+   a forward guarded on something else is overwritten, because the board reads one
+   term per condition and there is no way to and them together.
+   IMPORTANT NOTE: this is applied to what SAGE proposes, never to a workflow the
+   operator wrote — rewriting someone's own file behind their back is worse than the
+   bench move they meant to make. Their unguarded forwards come back from lint() as a
+   warning instead, which the run panel already shows before RUN. */
+export const GUARD_CM = 10;
+const GUARD_MS = 2000; // a forward whose length isn't a constant still gets a cap
+const distGuard = (c) => !!c && c.k === "cmp" && c.l?.v === "dist" && (c.c === "<" || c.c === "<=");
+
+export function guard(program, cm = GUARD_CM) {
+  let added = 0;
+  const walk = (list) => list.map((n) => {
+    const o = { ...n };
+    if (n.body) o.body = walk(n.body);
+    if (n.elseBody) o.elseBody = walk(n.elseBody);
+    if (n.op !== "forward") return o;
+    if (distGuard(n.until) && n.timeout) return o;
+    added++;
+    o.timeout = clampArg("ms", n.timeout ?? (typeof n.arg === "number" ? n.arg : GUARD_MS));
+    if (!distGuard(n.until)) o.until = { k: "cmp", l: { v: "dist" }, c: "<", r: cm };
+    delete o.arg;
+    return o;
+  });
+  return { program: walk(program), added };
 }
 
 /* rough runtime estimate in ms (Infinity for unbounded loops) — editor only */

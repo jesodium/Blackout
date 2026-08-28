@@ -5,7 +5,8 @@ import htm from "htm";
 import { createRoverScene } from "./scene.js";
 import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./i18n.js";
 import { parse as blkParse, run as blkRun, lint as blkLint, estimate as blkEstimate, fmtMs,
-         compile as blkCompile, insLine as blkInsLine, interp as blkInterp, evalExpr as blkEval, clampArg as blkClamp } from "./blk.mjs";
+         compile as blkCompile, insLine as blkInsLine, interp as blkInterp, evalExpr as blkEval, clampArg as blkClamp,
+         guard as blkGuard, serialize as blkSerialize, GUARD_CM } from "./blk.mjs";
 import { SageFace } from "./sageface.js";
 import { initPadNav, cursorOn } from "./padnav.mjs";
 import { mjpegSplit } from "./mjpeg.mjs";
@@ -447,6 +448,130 @@ function MotorDebug({ onCmd, enabled }) {
 //     can do (sage, tts, the headlamp) come back here as events and the board waits.
 //   in the browser — the tree interpreter below, unchanged, for everything the
 //     compiler can't express. same language, slower conditions.
+/* ---- blk runner ----
+   board first, browser as fallback. lifted out of BlkCtl because sage's suggested
+   moves take the same path: a move she proposes *is* a short blk program, and the
+   whole reason it is blk and not a drive command is that `forward until dist < 5`
+   compiles onto the board's vm and stops in one loop() pass instead of a ble round
+   trip — the difference between stopping at 5cm and hitting the wall. */
+
+// the board's blk vm answers on the notify channel; onBleNotify re-broadcasts those
+// lines as a window event. one program runs at a time (there is one rover), so one
+// handler slot is all this needs.
+let blkEvt = null;
+window.addEventListener("blk:evt", (e) => blkEvt?.(e.detail));
+// bumping the token ends whichever runner is live — its stopped() goes true next tick.
+let blkToken = 0;
+const blkCancel = () => { blkToken++; };
+
+// park a one-shot handler on the board's event channel; null on timeout.
+const blkWaitFor = (pred, ms, kick) => new Promise((res) => {
+  const to = setTimeout(() => { blkEvt = null; res(null); }, ms);
+  blkEvt = (line) => { if (!pred(line)) return; clearTimeout(to); blkEvt = null; res(line); };
+  kick?.();
+});
+
+// every step a workflow can take that the board cannot: the camera, sage, tts, the
+// http headlamp. shared by both runners — on-board these are the events the program
+// parks on, in the browser the tree interpreter calls them directly.
+function blkIo(deps, stopped, sleep) {
+  const { onCmd, onAnalyze, busyRef, packetRef, onNote, onProgress } = deps;
+  // a yes/no call the program can branch on. the server does the thinking;
+  // a failed request reads as "no" so a dead link can't send the rover on.
+  const decide = async (path, body) => {
+    try {
+      const r = await fetch(path, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      onNote?.(`${d.yes ? "yes" : "no"}${d.text ? " — " + d.text : ""}`);
+      return !!d.yes;
+    } catch { onNote?.("AI didn't answer — treating as no"); return false; }
+  };
+  return {
+    stopped, sleep,
+    drive: async (verb, pwm, ms) => { onCmd(`drv,${verb},${pwm},${ms}`); await sleep(ms + 150); },
+    analyze: async (focus) => { // fire the agent, wait until it's done (30s cap)
+      onAnalyze(null, focus);
+      await sleep(500);
+      const t0 = Date.now();
+      while (!stopped() && busyRef.current && Date.now() - t0 < 30000) await sleep(300);
+    },
+    ask: (q) => decide("/api/blk-ask", { question: q }),
+    find: (thing) => decide("/api/blk-find", { thing }),
+    led: (v) => { fetch("/api/led", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) }).catch(() => {}); },
+    log: (txt) => onNote?.(txt),
+    say: (txt) => speak(txt),
+    sensors: () => packetRef?.current,
+    halt: () => onCmd("stop"),
+    onStep: (node, n, st) => onProgress?.({ n, label: node.op.replace("_", " "), vars: { ...st.vars } }),
+  };
+}
+
+// upload the compiled program and let the board play it, servicing the steps it
+// parks on. false = the board never answered (firmware without the vm, or the ble
+// link is held by another browser and we're relaying over the socket), so the
+// caller falls back to interpreting up here.
+async function blkOnBoard({ code, nodes, slots }, io, deps, stopped) {
+  const { onCmd, onProgress } = deps;
+  if (!await blkWaitFor(l => l.startsWith("E:blkrdy"), 2000, () => onCmd(`blk,n,${code.length}`))) return false;
+  // one write per instruction: a lost write leaves the upload short, which the
+  // board refuses to run, rather than leaving a corrupt program to drive on.
+  for (let i = 0; i < code.length; i++) {
+    if (stopped()) return true;
+    await onCmd(blkInsLine(i, code[i]));
+  }
+  let n = 0;
+  return new Promise((res) => {
+    const finish = (v) => { clearInterval(poll); blkEvt = null; res(v); };
+    const poll = setInterval(() => { if (stopped()) finish(true); }, 200);
+    blkEvt = async (line) => {
+      if (line.startsWith("E:blkend")) return finish(true);
+      if (line.startsWith("E:blkerr")) return finish(false); // short upload — run it here instead
+      if (!line.startsWith("E:blk,")) return;
+      const f = line.slice(6).split(",");
+      const node = nodes[+f[0]];
+      const kind = +f[1];
+      if (!node) return void onCmd("blk,res,0");
+      // the board ships its variables with every event, so {name} still interpolates
+      const vars = {};
+      for (const [name, i] of Object.entries(slots)) vars[name] = +f[2 + i] || 0;
+      onProgress?.({ n: ++n, label: node.op.replace("_", " "), vars, board: true });
+      const ctx = { st: { vars }, sensors: io.sensors };
+      const txt = () => blkInterp(node.text, ctx);
+      let val = 0;
+      switch (node.op) {
+        case "say": io.say(txt()); break;
+        case "log": io.log(txt()); break;
+        case "led": io.led(blkClamp("led", blkEval(node.arg, ctx) || 0)); break;
+        case "analyze": await io.analyze(txt()); break;
+        case "ask": val = (await io.ask(txt())) ? 1 : 0; break;
+        case "find": val = (await io.find(txt())) ? 1 : 0; break;
+      }
+      if (kind) await onCmd(`blk,res,${val}`); // kind 0 is fire-and-forget, board didn't wait
+    };
+    onCmd("blk,go");
+  });
+}
+
+// run a parsed program. board first — anything the compiler refuses (live-value
+// arguments, and/or conditions, too many variables) throws and runs in the browser
+// interpreter, which walks the tree live against the latest telemetry packet.
+async function playBlk(program, deps) {
+  const my = ++blkToken;
+  const stopped = () => blkToken !== my;
+  const sleep = async (ms) => {
+    const t0 = Date.now();
+    while (!stopped() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 50));
+  };
+  const io = blkIo(deps, stopped, sleep);
+  let built = null;
+  try { built = blkCompile(program); } catch (e) { deps.onNote?.(`running in browser — ${e.message}`); }
+  if (built && await blkOnBoard(built, io, deps, stopped)) return { where: "board", cancelled: stopped() };
+  await blkRun(program, io);
+  return { where: "browser", cancelled: stopped() };
+}
+
 function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
   const [files, setFiles] = useState([]);
   const [sel, setSel] = useState(() => localStorage.getItem("blkSel") || "");
@@ -455,17 +580,8 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
   const [note, setNote] = useState(null); // last log/ask/find line from the program
   const [preview, setPreview] = useState(null); // what the picked workflow does, before it runs
   const [editorOpen, setEditorOpen] = useState(false); // false | "open" | "closing"
-  const token = useRef(0);
   const runRef = useRef(false); // mirrors run for unmount cleanup
   runRef.current = !!run;
-  // the board's blk vm answers on the notify channel; onblenotify re-broadcasts those
-  // lines as a window event, so whoever is mid-run just parks a handler here.
-  const evtRef = useRef(null);
-  useEffect(() => {
-    const fn = (e) => evtRef.current?.(e.detail);
-    window.addEventListener("blk:evt", fn);
-    return () => window.removeEventListener("blk:evt", fn);
-  }, []);
 
   // play the exit animation, then unmount
   const closeEditor = useCallback(() => {
@@ -519,7 +635,7 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
   }, [sel]);
 
   // leaving blk mode unmounts this panel — kill a live run and the motors with it
-  useEffect(() => () => { token.current++; if (runRef.current) onCmd("stop"); }, [onCmd]);
+  useEffect(() => () => { blkCancel(); if (runRef.current) onCmd("stop"); }, [onCmd]);
 
   const start = async (name = sel) => {
     if (!name || run) return;
@@ -534,110 +650,12 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     const { program, errors } = blkParse(text);
     if (errors.length) { setErr(errors[0]); return; }
     if (!program.length) { setErr("workflow is empty"); return; }
-    const my = ++token.current;
-    const stopped = () => token.current !== my;
-    const sleep = async (ms) => {
-      const t0 = Date.now();
-      while (!stopped() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 50));
-    };
     setRun({ n: 0, label: "start" });
-    // a yes/no call the program can branch on. the server does the thinking;
-    // a failed request reads as "no" so a dead link can't send the rover on.
-    const decide = async (path, body) => {
-      try {
-        const r = await fetch(path, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-        });
-        const d = await r.json();
-        setNote(`${d.yes ? "yes" : "no"}${d.text ? " — " + d.text : ""}`);
-        return !!d.yes;
-      } catch { setNote("AI didn't answer — treating as no"); return false; }
-    };
-    // every step a workflow can take that the board cannot: the camera, sage, tts,
-    // the http headlamp. shared by both runners — on-board, these are the events the
-    // program parks on; in the browser, the tree interpreter calls them directly.
-    const io = {
-      stopped, sleep,
-      drive: async (verb, pwm, ms) => { onCmd(`drv,${verb},${pwm},${ms}`); await sleep(ms + 150); },
-      analyze: async (focus) => { // fire the agent, wait until it's done (30s cap)
-        onAnalyze(null, focus);
-        await sleep(500);
-        const t0 = Date.now();
-        while (!stopped() && busyRef.current && Date.now() - t0 < 30000) await sleep(300);
-      },
-      ask: (q) => decide("/api/blk-ask", { question: q }),
-      find: (thing) => decide("/api/blk-find", { thing }),
-      led: (v) => { fetch("/api/led", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) }).catch(() => {}); },
-      log: (txt) => setNote(txt),
-      say: (txt) => speak(txt),
-      sensors: () => packetRef?.current,
-      halt: () => onCmd("stop"),
-      onStep: (node, n, st) => setRun({ n, label: node.op.replace("_", " "), vars: { ...st.vars } }),
-    };
-
-    // park a one-shot handler on the board's event channel; null on timeout.
-    const waitFor = (pred, ms, kick) => new Promise((res) => {
-      const to = setTimeout(() => { evtRef.current = null; res(null); }, ms);
-      evtRef.current = (line) => { if (!pred(line)) return; clearTimeout(to); evtRef.current = null; res(line); };
-      kick?.();
+    const { cancelled } = await playBlk(program, {
+      onCmd, onAnalyze, busyRef, packetRef, onNote: setNote,
+      onProgress: (p) => setRun(p),
     });
-
-    // upload the compiled program and let the board play it, servicing the steps it
-    // parks on. false = the board never answered (firmware without the vm, or the ble
-    // link is held by another browser and we're relaying over the socket), so the
-    // caller falls back to interpreting up here.
-    const runOnBoard = async ({ code, nodes, slots }) => {
-      if (!await waitFor(l => l.startsWith("E:blkrdy"), 2000, () => onCmd(`blk,n,${code.length}`))) return false;
-      // one write per instruction: a lost write leaves the upload short, which the
-      // board refuses to run, rather than leaving a corrupt program to drive on.
-      for (let i = 0; i < code.length; i++) {
-        if (stopped()) return true;
-        await onCmd(blkInsLine(i, code[i]));
-      }
-      let n = 0;
-      const ran = await new Promise((res) => {
-        const finish = (v) => { clearInterval(poll); evtRef.current = null; res(v); };
-        const poll = setInterval(() => { if (stopped()) finish(true); }, 200);
-        evtRef.current = async (line) => {
-          if (line.startsWith("E:blkend")) return finish(true);
-          if (line.startsWith("E:blkerr")) return finish(false); // short upload — run it here instead
-          if (!line.startsWith("E:blk,")) return;
-          const f = line.slice(6).split(",");
-          const node = nodes[+f[0]];
-          const kind = +f[1];
-          if (!node) return void onCmd("blk,res,0");
-          // the board ships its variables with every event, so {name} still interpolates
-          const vars = {};
-          for (const [name, i] of Object.entries(slots)) vars[name] = +f[2 + i] || 0;
-          setRun({ n: ++n, label: node.op.replace("_", " "), vars, board: true });
-          const ctx = { st: { vars }, sensors: io.sensors };
-          const txt = () => blkInterp(node.text, ctx);
-          let val = 0;
-          switch (node.op) {
-            case "say": io.say(txt()); break;
-            case "log": io.log(txt()); break;
-            case "led": io.led(blkClamp("led", blkEval(node.arg, ctx) || 0)); break;
-            case "analyze": await io.analyze(txt()); break;
-            case "ask": val = (await io.ask(txt())) ? 1 : 0; break;
-            case "find": val = (await io.find(txt())) ? 1 : 0; break;
-          }
-          if (kind) await onCmd(`blk,res,${val}`); // kind 0 is fire-and-forget, board didn't wait
-        };
-        onCmd("blk,go");
-      });
-      return ran;
-    };
-
-    // board first. anything the compiler refuses (live-value arguments, and/or
-    // conditions, too many variables) throws and runs in the browser as before.
-    let built = null;
-    try { built = blkCompile(program); } catch (e) { setNote(`running in browser — ${e.message}`); }
-    if (built && await runOnBoard(built)) { if (!stopped()) setRun(null); return; }
-
-    // interpreter walks the tree live: conditions read the latest telemetry packet,
-    // forever/until loops run until STOP (or their condition trips)
-    await blkRun(program, io);
-    if (!stopped()) setRun(null);
+    if (!cancelled) setRun(null);
   };
 
   // the editor's "save & run" fires through a ref so the message listener above
@@ -645,7 +663,7 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
   const startRef = useRef(start);
   startRef.current = start;
 
-  const stop = () => { token.current++; setRun(null); onCmd("stop"); };
+  const stop = () => { blkCancel(); setRun(null); onCmd("stop"); };
   const pick = (v) => { setSel(v); localStorage.setItem("blkSel", v); };
 
   return html`
@@ -1480,7 +1498,29 @@ const TOOLS = {
   analysis: { icon: "camera", label: "tool.analysis" },
 };
 
-function FeedLine({ e }) {
+/* a move sage asked for. she never drives on her own — this is the ask, and the
+   rover only turns when the operator presses RUN. `board` is what the compiler said
+   at the time she proposed it: an instruction count means the program uploads and
+   runs on the giga's own vm (so `forward until dist < 5` stops in one loop() pass,
+   not after a ble round trip), a string is the reason it has to run up here. */
+function MoveCard({ e, onMove }) {
+  const st = e.state || "pending";
+  return html`<div class=${"fl fl-move is-" + st}>
+    <span class="fl-mark">◆</span>
+    <div class="fl-body">
+      <p class="fl-t">${t("move.asks")}</p>
+      <pre class="fl-code">${e.text}</pre>
+      <p class="fl-detail">└ ${typeof e.board === "number" ? t("move.onBoard", { n: e.board }) : t("move.inBrowser", { why: e.board || "?" })}</p>
+      ${e.guarded ? html`<p class="fl-detail fl-guard"><${Icon} n="warn" /> ${t("move.guarded", { n: e.guarded, cm: GUARD_CM })}</p>` : null}
+      ${st === "pending" ? html`<div class="fl-btns">
+        <button type="button" class="term-chip is-go" onClick=${() => onMove(e, true)}>▶ ${t("move.yes")}</button>
+        <button type="button" class="term-chip" onClick=${() => onMove(e, false)}>${t("move.no")}</button>
+      </div>` : html`<p class=${"fl-detail fl-st is-" + st}>└ ${t("move.st." + st)}${e.note ? ` · ${e.note}` : ""}</p>`}
+    </div></div>`;
+}
+
+function FeedLine({ e, onMove }) {
+  if (e.kind === "move") return html`<${MoveCard} e=${e} onMove=${onMove} />`;
   if (e.kind === "tool") {
     const spec = TOOLS[e.name] || { icon: "gear", label: "tool.unknown" };
     // `arg` is what she actually went looking for, in her words — "temperature
@@ -1510,7 +1550,7 @@ function FeedLine({ e }) {
 
 // the stream itself. sticks to the bottom — a working agent writes while you read,
 // and a transcript that holds its scroll hides the line you are waiting for.
-function Feed({ feed, ai, onAsk }) {
+function Feed({ feed, ai, onAsk, onMove }) {
   const ref = useRef(null);
   useEffect(() => { const el = ref.current; if (el) el.scrollTop = el.scrollHeight; }, [feed.length, ai.analyzing, ai.text]);
   return html`
@@ -1520,7 +1560,7 @@ function Feed({ feed, ai, onAsk }) {
           <p class="term-hint-t">${t("term.hint")}</p>
           ${ASK_SUGGESTIONS.slice(0, 3).map(q => html`<button key=${q} type="button" class="term-chip"
             onClick=${() => onAsk(t(q))}>${t(q)}</button>`)}
-        </div>` : feed.map(e => html`<${FeedLine} key=${e.id} e=${e} />`)}
+        </div>` : feed.map(e => html`<${FeedLine} key=${e.id} e=${e} onMove=${onMove} />`)}
       ${ai.analyzing ? html`<div class="fl fl-work">
         <span class="fl-mark">◐</span>
         <div class="fl-body"><p class="fl-t">${t(ai.phase === "speaking" ? "timing.synth" : "timing.thinking")}${" "}
@@ -1529,7 +1569,7 @@ function Feed({ feed, ai, onAsk }) {
     </div>`;
 }
 
-function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, chats, activeChat, feed, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onToggleTtsProvider, onMock, onAsk, onReport }) {
+function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, chats, activeChat, feed, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onToggleTtsProvider, onMock, onAsk, onReport, onMove }) {
   const intent = deriveIntent(ai, packet, connected);
   const v = assess(packet);
   const briefed = activeChat && activeChat.mission;
@@ -1571,7 +1611,7 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
         </div>
         ${/* the big face, back where it was — the bar's 15px one read as an icon */""}
         <div class=${"term-hero" + (speaking ? " is-speaking" : "")}><${SageFace} mood=${intent.key} /></div>
-        <${Feed} feed=${feed} ai=${ai} onAsk=${onAsk} />
+        <${Feed} feed=${feed} ai=${ai} onAsk=${onAsk} onMove=${onMove} />
         <form class="agent-foot term-prompt" onSubmit=${send}>
           <input class="term-input" type="text" value=${draft} placeholder=${t("term.ph")}
             aria-label=${t("term.ph")} disabled=${ai.analyzing}
@@ -2005,7 +2045,7 @@ function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lan
 const SAVERS = ["saverOff", "matrix", "saverBounce", "saverStars", "saverTetris"];
 
 /* console drawer — logs, findings, serial, motor bench. slides over the cockpit */
-function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, enabled, onTutorial, saver, onSaver }) {
+function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, enabled, onTutorial, saver, onSaver, moves, onMoves }) {
   if (!open) return null;
   const tabs = [["logs", t("zone.logs")], ["findings", t("zone.analysis")], ["serial", t("zone.serial")], ["motor", t("colo.motor")]];
   return html`
@@ -2016,6 +2056,12 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
             class=${"drawer-tab" + (tab === k ? " is-active" : "")} onClick=${() => onTab(k)}>${lbl}</button>`)}
         </div>
         <button type="button" class="serial-btn drawer-tour" onClick=${onTutorial}>${t("tour.restart")}</button>
+        ${/* sage proposes moves as cards in the transcript; nothing turns until the
+             operator presses RUN on one. off tells her the drive is locked. */""}
+        <button type="button" class=${"serial-btn drawer-moves" + (moves ? " is-on" : "")}
+          aria-pressed=${!!moves} onClick=${onMoves} title=${t("drawer.movesTitle")}>
+          ${t("drawer.moves")}: ${t(moves ? "drawer.on" : "drawer.off")}
+        </button>
         ${/* the screensavers run on the board itself — this is only the picker */""}
         <select class="serial-btn drawer-saver" disabled=${!enabled} value=${saver}
           onChange=${(e) => onSaver(Number(e.target.value))} title=${t("drawer.saverTitle")}
@@ -2595,6 +2641,19 @@ function App() {
     const item = { id: Date.now() + Math.random(), time: new Date().toLocaleTimeString(), ...e };
     setChats(cs => cs.map(c => c.id === chat.id ? { ...c, feed: [...(c.feed || []), item].slice(-80) } : c));
   }, []);
+  // one feed entry changes after it was pushed: a move card goes pending -> running -> done.
+  const patchFeed = useCallback((id, patch) => {
+    const chat = activeRef.current;
+    if (!chat) return;
+    setChats(cs => cs.map(c => c.id === chat.id
+      ? { ...c, feed: (c.feed || []).map(f => f.id === id ? { ...f, ...patch } : f) } : c));
+  }, []);
+  // "sage can suggest moves". off = the server tells her the drive is locked, so she
+  // stops offering rather than writing cards nobody wants.
+  const [moves, setMoves] = useState(() => localStorage.getItem("sageMoves") !== "false");
+  const movesRef = useRef(moves);
+  movesRef.current = moves;
+  const toggleMoves = useCallback(() => setMoves(m => { localStorage.setItem("sageMoves", String(!m)); return !m; }), []);
   useEffect(() => { localStorage.setItem("chats", JSON.stringify(chats)); }, [chats]);
   useEffect(() => { localStorage.setItem("activeChat", activeId); }, [activeId]);
   useEffect(() => { localStorage.setItem("ttsProvider", ttsProv); ttsProviderRef = ttsProv; }, [ttsProv]);
@@ -2737,7 +2796,7 @@ function App() {
     // the server walked the headlamp on its own because the passage went dark.
     // only fires when it actually moved the lamp, so it's not a per-frame spam.
     socket.on("lamp-auto", d => {
-      addLog(`headlamp ${d.from} → ${d.led} (view ${d.mean}/255)`, "ai");
+      addLog(`headlamp ${d.from} → ${d.led}${d.mean != null ? ` (view ${d.mean}/255)` : ""}`, "ai");
       pushFeed({ kind: "tool", name: "lamp", detail: `${d.from} → ${d.led}` });
     });
     // a running blk workflow asked sage a yes/no (ask/find) — log the call so the
@@ -2900,6 +2959,7 @@ function App() {
       if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(el.tagName) ||
         el.getAttribute?.("role") === "button")) return;
       e.preventDefault();
+      blkCancel(); // a running program would otherwise send the next burst right after
       sendCmdRef.current("stop");
     };
     window.addEventListener("keydown", onKey);
@@ -3009,6 +3069,20 @@ function App() {
     }));
     pushFeed({ kind: "sage", text: textv, status: (sage && sage.status) || null,
       timing: t0 ? `LLM ${((Date.now() - t0) / 1000).toFixed(1)}s` : null });
+    // she asked to move: parse it now so a typo never becomes a button, and compile it
+    // now so the card can say up front whether the board or the browser will play it.
+    if (sage && sage.move && movesRef.current) {
+      const { program, errors } = blkParse(sage.move);
+      if (!errors.length && program.length) {
+        // never propose a forward that isn't watching the wall. she is told to write the
+        // guard herself; this is the belt, and the card shows the guarded text so what
+        // the operator reads is exactly what runs.
+        const { program: safe, added } = blkGuard(program);
+        let board;
+        try { board = blkCompile(safe).code.length; } catch (e) { board = e.message; }
+        pushFeed({ kind: "move", text: blkSerialize(safe), board, guarded: added, state: "pending" });
+      }
+    }
     if (speak && ttsRef.current) speakTimed(textv);
   }, [speakTimed, pushFeed]);
 
@@ -3035,7 +3109,7 @@ function App() {
     try {
       const r = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, lang: getLang() }),
+        body: JSON.stringify({ messages: next, lang: getLang(), moves: movesRef.current }),
       });
       const data = await r.json();
       const sage = data.reply, ok = !!(sage && sage.text);
@@ -3046,6 +3120,24 @@ function App() {
       setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
     }
   }, [addLog, showSage, pushFeed, sendCmd]);
+
+  /* the operator answered a move card. YES compiles it and hands it to the board —
+     the same path a saved workflow takes, and the reason sage answers in blk at all:
+     `forward until dist < 5` checked on the giga's own loop() stops at 5cm, while the
+     same check up here is a ~400ms round trip and a dented rover. NO just marks the
+     card; nothing was ever sent. */
+  const onMove = useCallback(async (item, yes) => {
+    if (!yes) return patchFeed(item.id, { state: "declined" });
+    const { program, errors } = blkParse(item.text);
+    if (errors.length || !program.length) return patchFeed(item.id, { state: "failed", note: errors[0] || "empty" });
+    patchFeed(item.id, { state: "running" });
+    addLog(t("log.moveRun"), "ai");
+    const { where, cancelled } = await playBlk(program, {
+      onCmd: sendCmd, onAnalyze: analyze, busyRef: analyzingRef, packetRef,
+      onNote: (n) => addLog(n, "ai"),
+    });
+    patchFeed(item.id, { state: cancelled ? "stopped" : "done", note: where });
+  }, [patchFeed, addLog, sendCmd, analyze]);
 
   /* fpv — camera fullscreen, stats + agent become edge huds. △/Y toggles, ○/B talks to sage.
      own poll (not drive's) because drive's loop bails unless remote mode is armed, and fpv
@@ -3377,7 +3469,7 @@ function App() {
               chats=${chats} activeChat=${activeChat} feed=${activeChat?.feed || NO_FEED} onNewChat=${newChat} onSelectChat=${selectChat}
               onDeleteChat=${deleteChat} onBrief=${briefMission} onSpeak=${speakBrief}
               onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onMock=${mockData} onAsk=${ask}
-              onReport=${openReport} />
+              onReport=${openReport} onMove=${onMove} />
             ${/* mirror sees no drive zone at all until the host grants it — .reveal animates the
                  mount, and driveMounted holds it one beat past a revoke so it can animate out */
               driveMounted && html`
@@ -3389,7 +3481,7 @@ function App() {
         ${!judge && html`<${Drawer} open=${drawer} tab=${drawerTab} onTab=${setDrawerTab} onClose=${closeDrawer}
           logs=${logs} serialLines=${serialLines} onClearSerial=${clearSerial}
           chat=${activeChat} onCmd=${sendCmd} enabled=${canDrive} onTutorial=${restartTour}
-          saver=${saver} onSaver=${pickSaver} />`}
+          saver=${saver} onSaver=${pickSaver} moves=${moves} onMoves=${toggleMoves} />`}
       </div>
 
       <${Toasts} items=${toasts} />

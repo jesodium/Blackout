@@ -5,6 +5,7 @@ BLK language — the ONLY ops that exist:
 **Motion**
 - `forward <ms>` / `back <ms>` / `left <ms>` / `right <ms>` — timed motor bursts. 500-800 ms is a normal move, 400 ms is roughly a pivot turn. The robot is open-loop: no encoders, no odometry, so distances are time guesses.
 - `forward until <cond> [timeout <ms>]` — drive in short bursts until the condition is true (same for back/left/right). Always give a timeout so it can't grind forever.
+- **Every `forward` must watch the rock face.** Write it as `forward until dist < <cm> timeout <ms>`, never as a bare `forward <ms>`: the timeout is how long it would have driven anyway and the `dist` check ends it early when something comes up. `forward until dist < 10 timeout 800` reads "push on for 800 ms, but stop if anything is within 10 cm". Choose the centimetres for the job (10 to close right in, 25 for a berth) — but a forward with no `dist` check is a robot driving blind into a wall. `back`/`left`/`right` stay plain timed bursts: the ultrasonic faces forward, so a distance check on those stops the move it should allow.
 - `speed <pwm>` — drive power for the moves after it. 60-255; 110 = precise/slow, 140 = normal, 200+ = fast.
 
 **Control**

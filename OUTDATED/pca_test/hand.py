@@ -34,11 +34,21 @@ SERVER = "http://127.0.0.1:5005"
 
 # Joints, mirroring sv[] in pca_test.ino. Continuous ones take a signed speed,
 # the gripper takes an angle.
-BASE, SHOULDER, ELBOW, WRIST, GRIP = 0, 4, 6, 8, 15
+BASE, SHOULDER, ELBOW, WRIST, GRIP = 15, 12, 4, 8, 11   # identified 2026-08-27
+# GRIP's servo is dead — the zones send, the claw does not move. Keep
+# ch11 clear of anything else while it is typed positional: an angle into a 360 runs away.
 
 DEAD = 0.14          # half-width of the centre square, as a fraction of frame
 REFRESH = 0.30       # resend a live jog this often — the board's deadman is 0.8s
 SPEED = 100          # always full power: on a loaded 360, slower is also weaker
+
+# Speed is DUTY, never a gentler pulse. Pulse width is speed and torque at once
+# on these 360s, so a slow command is a weak one — 35% could not lift the
+# shoulder against gravity. Slow here means full power switched on and off:
+# short bursts, the same trick the bench page's small arrows use. Starts slow,
+# because an accidental run at full speed is what puts a joint into the frame.
+SPEEDS = (("slow", 0.25), ("half", 0.50), ("full", 1.00))
+DUTY_MS = 0.50       # one on/off cycle, seconds — below full the joint crawls
 GRIP_STEP = 4        # degrees of pinch change worth a command
 TILT_DEAD = 18       # degrees of wrist roll before the wrist joint moves
 
@@ -146,16 +156,17 @@ def hand_metrics(lm):
 
 
 # On-screen buttons, in normalised frame coordinates (x, y, w, h). Hover with
-# your index fingertip, pinch to press — hovering alone never moves anything, so
-# you can line up without committing. One table drives the hit test, the drawing
-# and the page's tutorial, so they cannot drift apart.
-#   kind "jog"  : runs while pinched, stops when you let go
-#   kind "grip" : sets the claw angle (the one joint that knows where it is)
+# your index fingertip, press E to run it — hovering alone never moves anything,
+# so you can line up without committing. One table drives the hit test, the
+# drawing and the page's tutorial, so they cannot drift apart.
+#   kind "jog"  : runs while engaged, stops on E again or on drifting off
+#   kind "grip" : sets the claw angle (unused — nothing on this arm knows where
+#                 it is; kept for the day a positional servo goes back on)
 #   kind "stop" : everything off
 ZONES = [
-    (0.02, 0.04, 0.20, 0.26, "CLAW +",     "grip", GRIP, +1),
+    (0.02, 0.04, 0.20, 0.26, "CLAW +",     "jog", GRIP, +SPEED),
     (0.02, 0.37, 0.20, 0.26, "STOP",       "stop", None, 0),
-    (0.02, 0.70, 0.20, 0.26, "CLAW -",     "grip", GRIP, -1),
+    (0.02, 0.70, 0.20, 0.26, "CLAW -",     "jog", GRIP, -SPEED),
 
     (0.26, 0.04, 0.22, 0.26, "SHOULDER +", "jog", SHOULDER, +SPEED),
     (0.26, 0.70, 0.22, 0.26, "SHOULDER -", "jog", SHOULDER, -SPEED),
@@ -168,27 +179,19 @@ ZONES = [
     (0.52, 0.37, 0.22, 0.26, "BASE >",     "jog", BASE, -SPEED),
 ]
 
-# One pinch, one nudge — the same step the on-screen arrow buttons give, so the
-# two ways of driving the arm agree. A held pinch does NOT repeat: holding a
-# gesture steady is exactly what a hand does while you think, and a joint with
-# no end stop must not read that as "keep going".
-# Bench knobs. PULSE_MS is the coarse arrow's length, not the fine one: a
-# pinch is a deliberate act and wants a step you can see, and 140ms did not
-# shift a loaded shoulder at all — the arm's weight eats a burst that short
-# before it builds any speed.
-PULSE_MS = 420       # 360s: burst length per pinch
-GRIP_STEP = 12       # sg90: degrees per press
+# Bench knobs, shared with the on-screen arrow buttons so the two ways of
+# driving the arm agree. PULSE_MS is the coarse arrow's length, not the fine
+# one: 140ms did not shift a loaded shoulder at all — the arm's weight eats a
+# burst that short before it builds any speed. DUTY_MS above is the same idea
+# applied continuously.
+PULSE_MS = 420       # 360s: burst length per press
+GRIP_STEP = 12       # sg90: degrees per press (unused while ch11 is a 360)
 
 # The kill gesture: pinky alone, held. Long on purpose — it has to be
 # impossible to hit by accident, and a hand passing through odd shapes on its
 # way somewhere else must never switch the controls off mid-move.
 KILL_FINGERS = [False, False, False, True]      # index, middle, ring, pinky
 KILL_HOLD = 3.0
-
-PINCH_ON = 0.35      # fraction of your calibrated pinch range that counts as shut
-PINCH_OFF = 0.50     # and where it lets go again — hysteresis, so a held pinch
-                     # sitting near the threshold cannot chatter on and off
-
 
 def zone_at(x, y):
     """Which button that point is over, or None. First match wins; the table
@@ -220,13 +223,11 @@ def axis(value, centre, dead):
     return 0 if abs(d) < dead else (1 if d > 0 else -1)
 
 
-def pinching(m, cal, was):
-    """Is the pinch shut? Hysteresis: it takes a firmer pinch to press than to
-    keep holding, so a hand resting near the threshold does not chatter."""
-    lo, hi = cal["pinch_closed"], cal["pinch_open"]
-    span = max(hi - lo, 1e-6)
-    t = (m["pinch"] - lo) / span
-    return t < (PINCH_OFF if was else PINCH_ON)
+# IMPORTANT NOTE: the pinch used to be the press, and it misfired — a hand
+# reaching across the frame reads as a pinch over whatever button it passes,
+# and the joint runs. Engagement is now an explicit keypress that latches, so
+# the hand only ever chooses WHICH button; it can never decide to press one.
+# Aiming is therefore free: hover all you like, nothing moves until E.
 
 
 class Controller:
@@ -239,10 +240,26 @@ class Controller:
 
     def __init__(self):
         self.grip = 90
-        self.down = False           # pinch state, for edge detection
+        self.down = False           # running state, for edge detection
         self.held = None            # (ch, val) currently being driven
         self.next = 0.0             # when that needs feeding again
         self.kill_since = None      # when the pinky-only gesture started
+        self.engaged = False        # the latch: only a keypress sets this
+        self.speed = 0              # index into SPEEDS
+
+    def toggle(self):
+        self.engaged = not self.engaged
+        return self.engaged
+
+    def cycle_speed(self):
+        self.speed = (self.speed + 1) % len(SPEEDS)
+        return SPEEDS[self.speed][0]
+
+    def _duty(self, now):
+        """Full power, switched on and off. Below full, the joint gets the
+        first `frac` of every DUTY_MS cycle and nothing for the rest."""
+        frac = SPEEDS[self.speed][1]
+        return frac >= 1.0 or (now % DUTY_MS) < DUTY_MS * frac
 
     def _release(self, sends):
         if self.held:
@@ -256,7 +273,10 @@ class Controller:
         sends = []
 
         if m is None:
-            self.down = False
+            # Losing the hand drops the latch too, not just the joint: coming
+            # back into frame must never resume a move you have stopped
+            # watching.
+            self.down = self.engaged = False
             self.kill_since = None
             self._release(sends)
             return {"sends": sends, "hover": None, "pressed": False,
@@ -265,12 +285,16 @@ class Controller:
         # Pinky alone, held: switch the whole thing off. Checked before anything
         # else so it works even mid-hold — that is the point of a kill gesture.
         if m["fingers"] == KILL_FINGERS:
+            # Even a partial hold drops the latch: it already stops the joint,
+            # and leaving it armed means the move resumes the moment the hand
+            # changes shape again.
+            self.engaged = False
             if self.kill_since is None:
                 self.kill_since = now
             waited = now - self.kill_since
             if waited >= KILL_HOLD:
                 self.kill_since = None
-                self.down = False
+                self.down = self.engaged = False
                 self._release(sends)
                 return {"sends": sends, "hover": None, "pressed": False,
                         "stop": True, "kill": True, "grip": self.grip,
@@ -282,14 +306,17 @@ class Controller:
                     "mode": "pinky held - off in %.1fs" % (KILL_HOLD - waited)}
         self.kill_since = None
 
-        was, self.down = self.down, pinching(m, cal, self.down)
-        edge = self.down and not was          # the moment of the pinch
+        # Engaged is the latch; duty chops it into bursts. Everything below
+        # reads self.down exactly as it did when a pinch set it.
+        was, self.down = self.down, self.engaged and self._duty(now)
+        edge = self.down and not was          # the moment it starts running
         z = zone_at(m["point"][0], m["point"][1])
         label = z[4] if z else None
 
-        # Letting go stops the joint. So does sliding off the button you were
-        # holding — the alternative is a joint that keeps running because your
-        # hand drifted, which is the failure that matters here.
+        # Disengaging stops the joint, and so does the off half of a duty
+        # cycle. So does sliding off the button you were driving — the
+        # alternative is a joint that keeps running because your hand drifted,
+        # which is the failure that matters here.
         if self.held and (not self.down or z is None or z[6] != self.held[0]
                           or z[7] != self.held[1]):
             self._release(sends)
@@ -298,7 +325,8 @@ class Controller:
                "stop": False, "grip": self.grip}
 
         if z is None:
-            out["mode"] = "pinch a button to move"
+            out["mode"] = ("ENGAGED (%s) - hover a button" % SPEEDS[self.speed][0]
+                           if self.engaged else "hover a button, E to run")
             return out
         kind, ch, val = z[5], z[6], z[7]
 
@@ -309,19 +337,22 @@ class Controller:
                 if self.held is None or now >= self.next:
                     sends.append((ch, val))
                     self.held, self.next = (ch, val), now + REFRESH
-                out.update(pressed=True, mode="%s - holding" % label)
-            else:
-                out["mode"] = "over %s - pinch and hold" % label
+            # Lit while engaged, not just on the on-half: a button that blinks
+            # at the duty rate reads as a dropped press.
+            out.update(pressed=self.engaged,
+                       mode=("%s - RUNNING (%s)" % (label, SPEEDS[self.speed][0])
+                             if self.engaged else "over %s - E to run" % label))
             return out
 
         # The claw is positional, so it steps once per pinch rather than
         # running: holding a position command just re-sends the same angle.
         if not edge:
-            out["mode"] = ("holding - release to press again" if self.down
-                           else "over %s - pinch to step" % label)
+            out["mode"] = ("engaged - E off, then E again to step" if self.down
+                           else "over %s - E to step" % label)
             return out
         out["pressed"] = True
         if kind == "stop":
+            self.engaged = False        # STOP drops the latch, or E re-arms it
             self._release(sends)
             out.update(stop=True, mode="STOP")
             return out
@@ -520,13 +551,25 @@ def make_detector(model=None):
     return detect
 
 
+def open_cam(i):
+    """None if index i has no camera behind it. Opening is the only way to ask:
+    probing the device list wakes a Continuity Camera, and a busy one reports
+    as missing anyway."""
+    c = cv2.VideoCapture(i)
+    if not c.isOpened():
+        c.release()
+        return None
+    c.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
+    c.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
+    return c
+
+
 def main():
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        sys.exit("no camera. on macos, grant Terminal camera access in "
-                 "System Settings > Privacy & Security > Camera")
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
+    cam = int(next((a.split("=")[1] for a in sys.argv if a.startswith("--cam=")), 0))
+    cap = open_cam(cam)
+    if cap is None:
+        sys.exit("no camera %d. on macos, grant Terminal camera access in "
+                 "System Settings > Privacy & Security > Camera" % cam)
 
     win, detect = "arm - hand control", make_detector()
     link = Link(prefer_http="--http" in sys.argv)
@@ -543,14 +586,26 @@ def main():
     # stop must never outlive the hand that was driving it — same rule as the
     # firmware's deadman, enforced up here too because a frozen camera looks
     # exactly like a hand held perfectly still.
-    missing_since, ctl = None, Controller()
+    missing_since, ctl, readfail, camfail = None, Controller(), 0, 0
     while True:
         ok, frame = cap.read()
         if not ok:
+            # IMPORTANT NOTE: avfoundation hands back one empty frame on its
+            # own (device handoff, another app grabbing it). 30 in a row (~1s)
+            # is a real disconnect; quitting on the first one is not.
+            readfail += 1
+            if readfail < 30:
+                link.stop()
+                time.sleep(0.03)
+                continue
             break
+        readfail = 0
         frame = cv2.flip(frame, 1)
         h, w = frame.shape[:2]
         lm = detect(frame)
+        hint = ("cam %d%s · E run/stop · S speed · v switch · c recal · "
+                "space stop · q quit") % (
+            cam, " (only one)" if time.time() - camfail < 2 else "")
 
         if lm:
             missing_since = None
@@ -567,8 +622,10 @@ def main():
                 link.send(ch, v, force=True)
             draw_kill(frame, r.get("kill_progress"))
             banner(frame, [(r["mode"], (90, 220, 255)),
-                           ("claw %d deg" % r["grip"], (255, 255, 255)),
-                           ("c recalibrate · space stop · q quit", (170, 170, 170))])
+                           ("%s · speed %s" % ("ENGAGED" if ctl.engaged else "idle",
+                                               SPEEDS[ctl.speed][0]),
+                            (90, 220, 90) if ctl.engaged else (170, 170, 170)),
+                           (hint, (170, 170, 170))])
         else:
             r = ctl.feed(None, cal)
             for ch, v in r["sends"]:
@@ -578,7 +635,7 @@ def main():
                 link.stop()
             draw_zones(frame)
             banner(frame, [("NO HAND — stopped", (80, 80, 255)),
-                           ("c recalibrate · space stop · q quit", (170, 170, 170))])
+                           (hint, (170, 170, 170))])
 
         if not link.ok:
             banner(frame, [("board not answering (%s)" % link.how, (80, 80, 255))],
@@ -589,10 +646,31 @@ def main():
         if k in (ord('q'), 27):
             break
         if k == ord(' '):
+            ctl.engaged = False       # panic drops the latch, not just the pulse
             link.stop()
+        if k in (ord('e'), 13):
+            if not ctl.toggle():
+                link.stop()
+        if k == ord('s'):
+            ctl.cycle_speed()
+        if k == ord('v'):
+            # Cycling beats a menu: the picture in the window is the label.
+            # Try the next index, wrap to 0, and keep the current camera if
+            # neither opens — never end up with no camera at all.
+            link.stop()
+            camfail = time.time()
+            for nxt in (cam + 1, 0):
+                c = open_cam(nxt) if nxt != cam else None
+                if c is not None:
+                    cap.release()
+                    cap, cam, camfail = c, nxt, 0
+                    break
+            readfail = 0
         if k == ord('c'):
             link.stop()
+            keep = ctl.speed
             ctl = Controller()
+            ctl.speed = keep
             new = calibrate(cap, detect, win)
             if new:
                 cal = new
@@ -604,20 +682,27 @@ def main():
 
 
 def selftest():
-    """The hit test, the edge trigger and the burst timing are the whole
-    feature — a hover that moves a joint, or a held pinch that repeats, is the
-    kind of bug that only shows up with an arm swinging."""
+    """The hit test, the latch and the burst timing are the whole feature — a
+    hover that moves a joint, or an engaged joint that keeps running after the
+    hand drifts off, is the kind of bug that only shows up with an arm
+    swinging."""
     import types
     cal = {"x": .5, "y": .5, "span": .2, "roll": 0.,
            "pinch_open": 1.0, "pinch_closed": 0.2}
-    OPEN, SHUT = 0.9, 0.25            # well outside either threshold
 
-    def hand(x, y, pinch=OPEN):
-        return {"x": .5, "y": .5, "span": .2, "pinch": pinch, "roll": 0.,
+    def hand(x, y):
+        return {"x": .5, "y": .5, "span": .2, "pinch": 0.9, "roll": 0.,
                 "fingers": [True, False, False, False], "point": (x, y)}
 
     def centre(z):
         return z[0] + z[2] / 2, z[1] + z[3] / 2
+
+    FULL = len(SPEEDS) - 1            # duty off, so the timings below are exact
+
+    def armed(speed=None):
+        c = Controller()
+        c.engaged, c.speed = True, FULL if speed is None else speed
+        return c
 
     joints = (BASE, SHOULDER, ELBOW, WRIST)
     jogs = [z for z in ZONES if z[5] == "jog"]
@@ -628,12 +713,20 @@ def selftest():
         assert zone_at(x, y) is z, z[4]
         assert Controller().feed(hand(x, y), cal, now=0)["hover"] == z[4]
 
-    # hovering never sends anything, however long you hover
+    # hovering never sends anything, however long you hover — the latch is off
     for z in ZONES:
         c = Controller()
         for t in range(5):
             r = c.feed(hand(*centre(z)), cal, now=t)
             assert not r["pressed"] and not r["sends"], z[4]
+
+    # E latches, E again drops it; the default is off and slow
+    c = Controller()
+    assert not c.engaged and SPEEDS[c.speed][0] == "slow", "must start off, slow"
+    assert c.toggle() and c.engaged
+    assert not c.toggle() and not c.engaged
+    names = [c.cycle_speed() for _ in SPEEDS]
+    assert names == [n for n, _ in SPEEDS][1:] + [SPEEDS[0][0]], names
 
     # the kill gesture: pinky alone, held for KILL_HOLD
     def pinky(**kw):
@@ -651,10 +744,11 @@ def selftest():
 
     # and it drops whatever was being held, rather than leaving it running
     z = [z for z in ZONES if z[5] == "jog"][0]
-    c = Controller()
-    c.feed(hand(*centre(z), pinch=SHUT), cal, now=0)
-    k = c.feed(pinky(pinch=SHUT), cal, now=0.1)
+    c = armed()
+    c.feed(hand(*centre(z)), cal, now=0)
+    k = c.feed(pinky(), cal, now=0.1)
     assert (z[6], 0) in k["sends"], "kill gesture must release a held joint"
+    assert not c.engaged, "kill must drop the latch, not just the pulse"
 
     # a hand that is merely out of frame must not bank progress toward the kill
     c = Controller()
@@ -662,65 +756,76 @@ def selftest():
     c.feed(None, cal, now=1)
     assert not c.feed(pinky(), cal, now=KILL_HOLD - 0.5).get("kill")
 
-    # a pinch starts the joint and HOLDING keeps it fed, at the refresh rate
+    # engaging starts the joint and staying there keeps it fed, at the refresh rate
     for z in jogs:
-        c = Controller()
-        c.feed(hand(*centre(z)), cal, now=0)                    # hovering, open
-        r = c.feed(hand(*centre(z), pinch=SHUT), cal, now=0.01)
+        c = Controller(); c.speed = FULL
+        assert c.feed(hand(*centre(z)), cal, now=0)["sends"] == []   # hovering
+        c.toggle()
+        r = c.feed(hand(*centre(z)), cal, now=0.01)
         assert r["sends"] == [(z[6], z[7])], (z[4], r["sends"])
         # too soon to repeat: the board is already holding this value
-        assert c.feed(hand(*centre(z), pinch=SHUT), cal, now=0.02)["sends"] == []
+        assert c.feed(hand(*centre(z)), cal, now=0.02)["sends"] == []
         # but the deadman must be fed before it expires
-        assert c.feed(hand(*centre(z), pinch=SHUT), cal,
+        assert c.feed(hand(*centre(z)), cal,
                       now=0.01 + REFRESH)["sends"] == [(z[6], z[7])]
         assert REFRESH < 0.8, "the board stops a 360 after JOG_MS (0.8s)"
-        # letting go stops it, once
-        rel = c.feed(hand(*centre(z), pinch=OPEN), cal, now=1.0)
+        # E again stops it, once
+        c.toggle()
+        rel = c.feed(hand(*centre(z)), cal, now=1.0)
         assert rel["sends"] == [(z[6], 0)], rel["sends"]
-        assert c.feed(hand(*centre(z), pinch=OPEN), cal, now=1.1)["sends"] == []
+        assert c.feed(hand(*centre(z)), cal, now=1.1)["sends"] == []
 
-    # sliding off the button while still pinching stops it too
+    # sliding off the button while still engaged stops it too
     z = jogs[0]
-    c = Controller()
-    c.feed(hand(*centre(z), pinch=SHUT), cal, now=0)
-    off = c.feed(hand(0.5, 0.5, pinch=SHUT), cal, now=0.1)
+    c = armed()
+    c.feed(hand(*centre(z)), cal, now=0)
+    off = c.feed(hand(0.5, 0.5), cal, now=0.1)
     assert off["sends"] == [(z[6], 0)], "drifting off a held button must stop it"
 
     # moving from one button to another swaps cleanly: stop the old, start new
     a, b = jogs[0], jogs[1]
-    c = Controller()
-    c.feed(hand(*centre(a), pinch=SHUT), cal, now=0)
-    sw = c.feed(hand(*centre(b), pinch=SHUT), cal, now=0.1)
+    c = armed()
+    c.feed(hand(*centre(a)), cal, now=0)
+    sw = c.feed(hand(*centre(b)), cal, now=0.1)
     assert (a[6], 0) in sw["sends"] and (b[6], b[7]) in sw["sends"], sw["sends"]
 
-    # claw steps by one notch per pinch, and clamps
-    c = Controller()
-    plus = [z for z in ZONES if z[4] == "CLAW +"][0]
-    for i in range(1, 4):
-        c.feed(hand(*centre(plus), pinch=OPEN), cal, now=i * 10)
-        r = c.feed(hand(*centre(plus), pinch=SHUT), cal, now=i * 10 + 1)
-        assert r["sends"] == [(GRIP, 90 + i * GRIP_STEP)], r["sends"]
-    for i in range(40):
-        c.feed(hand(*centre(plus), pinch=OPEN), cal, now=100 + i * 2)
-        c.feed(hand(*centre(plus), pinch=SHUT), cal, now=101 + i * 2)
-    assert c.grip == 180, "claw must clamp, not run past its travel"
-
-    # a pinch off the buttons does nothing at all
-    c = Controller()
-    assert c.feed(hand(0.5, 0.5, pinch=SHUT), cal, now=0)["sends"] == []
-
-    # losing the hand stops, and releases whatever was being held
-    c = Controller()
+    # speed is duty, not a weaker pulse: the value sent is always full scale,
+    # and below full the joint gets bursts with real gaps between them
     z = jogs[0]
-    c.feed(hand(*centre(z), pinch=SHUT), cal, now=0)
+    for i, (name, frac) in enumerate(SPEEDS):
+        c = armed(i)
+        on = [t for t in range(int(DUTY_MS * 1000))
+              if c._duty(t / 1000.0)]
+        assert abs(len(on) / (DUTY_MS * 1000) - frac) < 0.02, (name, len(on))
+        r = c.feed(hand(*centre(z)), cal, now=0.0)      # start of a cycle: on
+        assert r["sends"] == [(z[6], z[7])], (name, r["sends"])
+    slow = armed(0)
+    slow.feed(hand(*centre(z)), cal, now=0.0)           # burst starts
+    gap = slow.feed(hand(*centre(z)), cal, now=DUTY_MS * 0.9)
+    assert gap["sends"] == [(z[6], 0)], "the off half must actually stop it"
+    assert gap["pressed"], "but the button stays lit, or it reads as a drop"
+
+    # the claw is a jog like the rest — ch11 has no position feedback, so there
+    # is no angle to step to and an angle command there never stops
+    assert [z for z in ZONES if z[4] == "CLAW +"][0] in jogs
+
+    # engaged off the buttons does nothing at all
+    c = armed()
+    assert c.feed(hand(0.5, 0.5), cal, now=0)["sends"] == []
+
+    # losing the hand stops, releases, and drops the latch
+    c = armed()
+    z = jogs[0]
+    c.feed(hand(*centre(z)), cal, now=0)
     gone = c.feed(None, cal, now=0.2)
     assert gone["stop"] and gone["sends"] == [(z[6], 0)]
+    assert not c.engaged, "a hand out of frame must not stay armed"
 
-    # hysteresis: mid-range holds if already down, does not start if not
-    mid = 0.2 + (PINCH_ON + PINCH_OFF) / 2 * 0.8
-    c = Controller(); c.down = True
-    assert pinching(hand(0, 0, mid), cal, True)
-    assert not pinching(hand(0, 0, mid), cal, False)
+    # STOP drops the latch too
+    st = [z for z in ZONES if z[5] == "stop"][0]
+    c = armed()
+    r = c.feed(hand(*centre(st)), cal, now=0)
+    assert r["stop"] and not c.engaged
 
     # buttons must not overlap, or the first in the table silently wins
     for i, a in enumerate(ZONES):

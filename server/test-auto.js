@@ -1,7 +1,7 @@
 // checks the two autonomy bits that have branches: the headlamp's step decision
 // and the 10s snapshot summary. no camera, no server, no llm.
 const assert = require("assert");
-const { lampStep } = require("./vision");
+const { lampStep, rampTo, LAMP_MAX } = require("./vision");
 const { parseSage, snapSummary, wantsTool } = require("./sage");
 
 // too dark -> halve upward, blown out -> halve down, in band -> leave it alone
@@ -13,6 +13,16 @@ assert.strictEqual(lampStep(10, 255).next, null);
 assert.strictEqual(lampStep(250, 0).next, null);
 // in band forgets the bracket, so the next scene starts a fresh walk
 assert.deepStrictEqual(lampStep(100, 80, 64, 96), { next: null, lo: 0, hi: 255 });
+
+// the announced ramp: every step lands, it ends exactly on the target, and it
+// never walks backwards (that would dim a lamp sage just said she was raising).
+const ramp = rampTo(0);
+assert.strictEqual(ramp[ramp.length - 1], LAMP_MAX);
+assert.ok(ramp.length > 1, "a ramp is more than one write");
+assert.ok(ramp.every((v, i) => i === 0 || v > ramp[i - 1]), "ramp must only go up");
+assert.deepStrictEqual(rampTo(LAMP_MAX), []);
+assert.deepStrictEqual(rampTo(0, 30, 10), [10, 20, 30]);
+assert.deepStrictEqual(rampTo(0, 25, 10), [10, 20, 25]); // ends on the target, not past it
 
 // it must converge, not hunt. `walk` runs the loop the way autoLamp does, against
 // whatever lamp->frame response is handed in, and returns the level it settles on.
@@ -53,6 +63,14 @@ assert.strictEqual(parseSage('{"text":"checking","tool":"SENSORS"}').tool, "sens
 assert.strictEqual(parseSage('{"text":"hm","action":"analyze"}').tool, "camera");
 assert.strictEqual(parseSage('{"text":"hm","tool":"drive"}').tool, null);
 assert.strictEqual(parseSage('{"text":"hm"}').tool, null);
+
+// a move she proposes rides in the same json. text only, capped, null when absent —
+// the card is built from this string, so a number or an object must never reach it.
+assert.strictEqual(parseSage('{"text":"want me to?","move":"forward 500"}').move, "forward 500");
+assert.strictEqual(parseSage('{"text":"holding"}').move, null);
+assert.strictEqual(parseSage('{"text":"hm","move":"   "}').move, null);
+assert.strictEqual(parseSage('{"text":"hm","move":42}').move, null);
+assert.ok(parseSage(JSON.stringify({ text: "x", move: "forward 500\n".repeat(60) })).move.length <= 400);
 
 // and the loop that runs them terminates: three passes means at most two tools,
 // because the last pass has to answer.

@@ -21,7 +21,7 @@ const FACES = {
   scanning: ["o", "_", "o"],
   thinking: [">", "_", "<"],
   clear:    ["^", "_", "^"],
-  caution:  [":", "0", ""],   // right eye blank — reads `:0`, css hides the span
+  caution:  [":", "O", ""],   // right eye blank — reads `:O`, css hides the span
   alert:    ["x", "_", "x"],
   work:     ["O", "_", "O"],
 };

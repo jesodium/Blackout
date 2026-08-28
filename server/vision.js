@@ -190,6 +190,19 @@ function lampStep(mean, led, lo = 0, hi = 255) {
   return { next: hi - lo <= LAMP_MIN || next === led ? null : next, lo, hi };
 }
 
+// the announced ramp: dark -> sage says she's turning the lamp on, then it walks
+// up to LAMP_MAX instead of snapping there. pure, so the walk is checkable without
+// a cam. empty list = already at or above the target, so nothing to write.
+const LAMP_MAX = parseInt(process.env.LAMP_MAX || "250", 10);
+const LAMP_RAMP_STEP = parseInt(process.env.LAMP_RAMP_STEP || "10", 10);
+function rampTo(from, to = LAMP_MAX, step = LAMP_RAMP_STEP) {
+  if (from >= to) return [];
+  const out = [];
+  for (let v = from + step; v < to; v += step) out.push(v);
+  out.push(to);
+  return out;
+}
+
 let lampAt = 0, lampMoved = 0, lampLo = 0, lampHi = 255, lampQuiet = false;
 async function autoLamp() {
   // settled? look far less often — /capture and /stream fight over the ai-thinker's
@@ -263,4 +276,4 @@ async function grabFrames(count = 4, gapMs = 1000) {
   return parts;
 }
 
-module.exports = { carveJpeg, upright, grabFrame, eyeParts, grabFrames, setLed, getLed, pingCam, autoLamp, lampStep };
+module.exports = { carveJpeg, upright, grabFrame, eyeParts, grabFrames, setLed, getLed, pingCam, autoLamp, lampStep, rampTo, LAMP_MAX };
