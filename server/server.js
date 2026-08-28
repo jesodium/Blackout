@@ -11,7 +11,7 @@ const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
-const { eyeParts, grabFrames, setLed, getLed, pingCam, autoLamp } = require("./vision");
+const { eyeParts, grabFrames, setLed, getLed, pingCam, rampTo, LAMP_MAX } = require("./vision");
 const { parseSage, snapSummary, wantsTool } = require("./sage");
 const recorder = require("./recorder");
 
@@ -30,25 +30,23 @@ const recorder = require("./recorder");
 // Also measured: response_format json_object costs 10x the latency here for output
 // parseSage already handles fenced — don't add it.
 const BRAINS = [
-  // openrouter first, on the same gemma-4-31b, because its free tier is the only one
+  // cerebras first, by operator call (2026-08-27). It is the fastest brain here
+  // (0.14-0.60s measured) and the only one whose vision model we pay for. Known
+  // cost of putting it first: on 2026-08-25 it answered 3 of 6 calls spaced 5s
+  // apart, the other 3 a bodyless 429 with no rate-limit headers — credits were
+  // live, so that is not the trial cap. A 429 cools it for the rest of the call
+  // (see chat() below), so a bad spell costs one round trip and falls through.
+  ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "gemma-4-31b", {}],
+  // openrouter next, on the same gemma-4-31b, because its free tier is the only one
   // whose limits fit an agent turn: 20 RPM / 50 req-day (1000 once $10 of credit has
-  // *ever* been bought). Cerebras' free trial is 5 RPM — one agentLoop is 3 calls in
-  // ~10s, so it 429s on the turn, not on the quota. Drop the ":free" suffix to pay for
-  // the same model at openrouter's rate if the free variant gets retired (they churn).
+  // *ever* been bought). Drop the ":free" suffix to pay for the same model at
+  // openrouter's rate if the free variant gets retired (they churn).
   ["openrouter", process.env.OPENROUTER_API_KEY, "https://openrouter.ai/api/v1", process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free", {}],
   // qwen3.6 thinks by default and its thinking is inside the reply, not a separate
   // field: measured, a 400-token budget went entirely to <think> and the json never
   // arrived. "none" is the same latency budget gemini's "minimal" is, for the same
   // reason — 400 tokens of reasoning, 0 of answer, is the failure it prevents.
   ["groq", process.env.GROQ_API_KEY, "https://api.groq.com/openai/v1", process.env.GROQ_MODEL || "qwen/qwen3.6-27b", { reasoning_effort: "none" }],
-  // then cerebras. It is the *fastest* brain here (0.14-0.60s measured) and the only
-  // one whose vision model we pay for — but it is not first, because on 2026-08-25 it
-  // answered 3 of 6 calls spaced a full 5s apart, the other 3 a bodyless 429 with no
-  // rate-limit headers to explain it. Credits were live; this is not the trial cap.
-  // A brain that misses half the time in front of the list turns its own 0.2s win
-  // into the whole chain's walk — which is the "0.5s, 0.8s, then 10s" the operator
-  // sees. Behind groq it costs nothing and still catches a groq TPM miss.
-  ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "gemma-4-31b", {}],
   ["gemini", process.env.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/", process.env.GEMINI_MODEL || "gemini-3.6-flash", { reasoning_effort: "minimal" }],
   // last: lm studio, which is an openai-compatible server on localhost — so "local
   // model" is a row in this table, not a code path. Gated on LMSTUDIO_URL because the
@@ -216,6 +214,10 @@ app.post("/api/chat", async (req, res) => {
   const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-12) : [];
   if (!msgs.length) return res.status(400).json({ error: "messages required" });
   const lang = LANG_INSTRUCT[req.body?.lang] ? req.body.lang : "en";
+  // the operator's "sage may suggest moves" toggle. off = she is told her drive is
+  // locked so she stops offering, and any move she writes anyway is dropped here
+  // rather than reaching a card the dashboard would then have to hide.
+  const moves = req.body?.moves !== false;
   try {
     const d = freshData();
     const ctx = d ? buildChatContext(d) : "No live readings right now — running dark.";
@@ -229,8 +231,10 @@ app.post("/api/chat", async (req, res) => {
       { role: "system", content: CHAT_SYSTEM },
       ...langMsg(lang),
       { role: "system", content: ctx },
+      ...(moves ? [] : [{ role: "system", content: "MOVE LOCK: your drive is locked out right now. Never offer to move or set \"move\" this turn." }]),
       ...mapped,
     ], { maxTokens: 400 });
+    if (!moves && reply) reply.move = null;
     res.json({ reply, steps });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -331,7 +335,7 @@ function processLine(raw) {
   recorder.push(data); // no-op unless a run is being recorded
   io.emit("sensor-data", data);
   maybeAutoAnalyze(data);
-  if (data.lux != null && data.lux < LUX_DARK) darkCheck();
+  if (data.lux != null) darkCheck(data.lux);
   pushHud(data);
 }
 
@@ -686,23 +690,51 @@ function recordFinding(text, dataUrl) {
   recorder.mark("finding", text);
 }
 
-// dark = sage is going blind, so check the eye and walk the headlamp until the
-// frame reads back in band. lux is only the trigger; autoLamp() judges from the
-// picture. one grab in flight at a time — /capture and /stream share the
-// ai-thinker's ram, and a queue of them starves the dashboard feed.
-const LUX_DARK = parseFloat(process.env.LUX_DARK || "45");
-let lampBusy = false;
-function darkCheck() {
+// dark = sage is going blind, so she says so and the headlamp ramps up to
+// LAMP_MAX. the line is canned, not an llm call: the venue has no internet and a
+// round trip is seconds spent blind — the same reason emitBlurt() exists.
+// IMPORTANT NOTE: this replaces the frame-judged bracket walk (autoLamp/lampStep,
+// still in vision.js). A ramp to a fixed 250 can blow out a close-up pale wall —
+// the walk is what read the frame back. Wire autoLamp in after the ramp if that
+// turns out to matter; the two can't both run or they hunt against each other.
+const LUX_DARK = parseFloat(process.env.LUX_DARK || "100");
+const LUX_LIGHT = parseFloat(process.env.LUX_LIGHT || String(LUX_DARK * 1.5)); // hysteresis: don't flap on the threshold
+const LAMP_RAMP_MS = parseInt(process.env.LAMP_RAMP_MS || "200", 10); // dwell per step
+const LAMP_BLURT = {
+  en: "It's going dark in here — turning the headlamp on so we can see.",
+  es: "Se está poniendo oscuro — enciendo la linterna para que veamos.",
+};
+let lampBusy = false, lampAuto = false;
+function darkCheck(lux) {
   if (lampBusy) return;
+  if (lux < LUX_DARK && !lampAuto && getLed() < LAMP_MAX) rampLamp(lux);
+  // light again: give the lamp back, or it burns for the rest of the run.
+  else if (lux >= LUX_LIGHT && lampAuto) {
+    lampAuto = false;
+    setLed(0).catch((e) => console.error("auto lamp off:", e.message));
+  }
+}
+
+async function rampLamp(lux) {
   lampBusy = true;
-  autoLamp()
-    .then((r) => {
-      if (!r || !r.changed) return;
-      io.emit("lamp-auto", { ...r, timestamp: Date.now() });
-      recorder.mark("analysis", `headlamp ${r.from} → ${r.led} (frame ${r.mean}/255)`);
-    })
-    .catch((e) => console.error("auto lamp:", e.message))
-    .finally(() => { lampBusy = false; });
+  lampAuto = true;
+  const from = getLed();
+  const text = LAMP_BLURT[currentLanguage] || LAMP_BLURT.en;
+  io.emit("agent-blurt", { text, timestamp: Date.now() });
+  recorder.mark("sage", text);
+  try {
+    for (const v of rampTo(from)) {
+      await setLed(v);
+      await new Promise((r) => setTimeout(r, LAMP_RAMP_MS));
+    }
+    io.emit("lamp-auto", { from, led: getLed(), timestamp: Date.now() });
+    recorder.mark("analysis", `headlamp ${from} → ${getLed()} (dark, ${Math.round(lux)} lx)`);
+  } catch (e) {
+    console.error("auto lamp:", e.message);
+    lampAuto = false; // cam never answered — let the next dark packet try again
+  } finally {
+    lampBusy = false;
+  }
 }
 
 // sage asking for a snapshot when she isn't sure about something: the last 10s of

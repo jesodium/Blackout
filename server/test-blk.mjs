@@ -2,7 +2,7 @@
 import assert from "node:assert";
 import fs from "node:fs";
 import { parse, serialize, evalCond, evalExpr, parseExpr, parseCond, condStr, exprStr, interp, lint, estimate, run,
-         compile, insLine, BOPS, BLK_MAX, SENSORS, CMPS, VERBS, clampArg, Unsupported } from "./public/js/blk.mjs";
+         compile, insLine, BOPS, BLK_MAX, SENSORS, CMPS, VERBS, clampArg, Unsupported, guard, GUARD_CM } from "./public/js/blk.mjs";
 
 /* parse + roundtrip */
 const src = `# demo
@@ -307,5 +307,51 @@ for (const [src, bit] of [
   ["set a 1\nset b 1\nset c 1\nset d 1\nset e 1\nset f 1\nset g 1\nset h 1\nset i 1", "variables"],
   ["call nope", "not defined"],
 ]) assert.throws(() => compile(parse(src).program), (e) => e instanceof Unsupported && e.message.includes(bit), src);
+
+// every move shape prompts/chat.md teaches sage must compile onto the board — the
+// whole reason her suggestions are blk is that `forward until dist < 5` stops in one
+// loop() pass. a prompt that drifts into `and`/expressions makes every card fall back
+// to the browser silently, which is exactly the ~400ms round trip it exists to avoid.
+for (const src of [
+  "speed 110\nforward until dist < 12 timeout 4000",
+  "back 600\nright 400",
+  "wait until temp < 30 timeout 5000\nforward 500",
+  "repeat 3\n  forward 400\n  left 300\nend",
+  "if dist < 20\n  back 500\nend\nstop",
+]) {
+  const { program, errors } = parse(src);
+  assert.deepEqual(errors, [], src);
+  assert.doesNotThrow(() => compile(program), src); // must run on the board, not up here
+}
+
+/* the sonar guard on sage's moves. a forward that isn't watching the wall is the one
+   thing a suggestion card must never carry — the ultrasonic is all that stands between
+   the rover and the rock, and a timed burst reads it exactly never. */
+const guarded = (src) => { const { program, added } = guard(parse(src).program); return { text: serialize(program), added }; };
+
+// a blind burst becomes the same burst with a bail-out: the ms it had is the timeout
+assert.deepEqual(guarded("forward 800"), { text: `forward until dist < ${GUARD_CM} timeout 800`, added: 1 });
+// her own dist guard is hers — the custom berth is the whole point
+assert.deepEqual(guarded("forward until dist < 25 timeout 3000"), { text: "forward until dist < 25 timeout 3000", added: 0 });
+// ...but an until with no timeout would grind forever
+assert.equal(guarded("forward until dist < 25").added, 1);
+assert.ok(guarded("forward until dist < 25").text.includes("timeout"));
+// a forward guarded on anything else gets the dist check instead: the board reads one
+// term per condition, so there is no way to and them together
+assert.equal(guarded("forward until lux > 100 timeout 3000").text, `forward until dist < ${GUARD_CM} timeout 3000`);
+// reverse and pivots are left alone — the sensor faces forward, a dist guard there
+// would fire on the wall being driven away from
+assert.deepEqual(guarded("back 600\nleft 400\nright 400"), { text: "back 600\nleft 400\nright 400", added: 0 });
+// nested bodies too, or an unguarded forward hides one loop deep
+assert.ok(guarded("repeat 3\n  forward 400\nend").text.includes("dist <"));
+assert.ok(guarded("if dist < 50\n  back 300\nelse\n  forward 500\nend").text.includes("forward until dist <"));
+// and what comes out still compiles onto the board — a guard that forced the browser
+// path would trade the wall for the ~400ms round trip it exists to avoid
+for (const src of ["forward 800", "repeat 3\n  forward 400\nend", "forward until lux > 100 timeout 3000"])
+  assert.doesNotThrow(() => compile(guard(parse(src).program).program), src);
+
+// the operator's own file is never rewritten — it gets a warning instead
+assert.ok(lint(parse("forward 500").program).some(w => w.includes("blind")));
+assert.deepEqual(lint(parse(`forward until dist < ${GUARD_CM} timeout 500`).program), []);
 
 console.log("blk ok");

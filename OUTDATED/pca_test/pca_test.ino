@@ -27,6 +27,9 @@
 //   n<ch>:<us>   trim a 360's neutral
 //   ?            dump every joint's live neutral (the page's copy is only a
 //                guess — trims live on the board and a reload loses them)
+//   T            sweep all 16 channels, one nudge each, printing the channel
+//                first — the way to find a servo after a re-plug
+//   t<ch>        nudge one channel, listed in sv[] or not
 //   r            reboot back to the sv[] defaults, when a trim session has
 //                wandered and you want a known state
 // V+ IS THE SERVO RAIL, 6V MAX. VCC is logic. Never 12V on V+.
@@ -55,12 +58,20 @@
 // the joint sits still, then write the number here so a reflash keeps it.
 // base: 1490, found on the bench 2026-08-24. shoulder/elbow still nominal.
 struct Joint { uint8_t ch; bool cont; int neutral; const char* name; };
+// Wiring as identified 2026-08-27, one channel at a time. ch11 is typed 360
+// (jog), not sg90: whatever is on it now runs continuously on an angle command
+// and never stops, which is either a real 360 or the original sg90 with its pot
+// stripped (it was stalled to death against the jaws). Positional channels get
+// no deadman in apply(), so a positional ch11 ran until STOP ALL — as cont it
+// gets JOG_MS like every other joint. Retype it false the day a healthy sg90
+// goes back on, and re-trim the neutral: no end stop means no clamp force, only
+// "run the jaws until you let go".
 Joint sv[] = {
-  { 0, true,  1490, "base"     },   // measured
-  { 4, true,  1500, "shoulder" },   // untrimmed
-  { 6, true,  1500, "elbow"    },   // untrimmed
-  { 8, true,  1500, "wrist"    },   // 360, not an sg90 — it spun on an angle cmd 2026-08-25
-  { 15, false, 0,   "gripper"  },   // added 2026-08-25, confirmed on ch15
+  { 15, true,  1490, "base"     },   // measured 2026-08-24, moved to ch15
+  { 12, true,  1500, "shoulder" },   // untrimmed
+  { 4,  true,  1500, "elbow"    },   // untrimmed
+  { 8,  true,  1500, "wrist"    },   // untrimmed — 360, not an sg90
+  { 11, true,  1500, "gripper"  },   // 360/stripped pot, see above — untrimmed
 };
 const uint8_t NSV = sizeof(sv) / sizeof(sv[0]);
 
@@ -129,6 +140,18 @@ void apply(uint8_t i, int v) {
   } else {
     setUs(sv[i].ch, map(constrain(v, 0, 180), 0, 180, ANG_MIN, ANG_MAX));
   }
+}
+
+// One nudge on a channel of unknown type. FULL power both ways, because on
+// this rig a gentle pulse is a weak one: 300us off neutral moved an unloaded
+// sg90 and nothing else, so four plugged-in joints identified as "nothing"
+// (2026-08-27). Out and back leaves the joint roughly where it started, and a
+// joint that is stuck against a bind one way still shows on the other.
+void nudgeRaw(uint8_t c) {
+  outputs(true);
+  setUs(c, 2200); delay(ID_MS);
+  setUs(c, 800);  delay(ID_MS);
+  off(c);
 }
 
 void allStop() {
@@ -207,6 +230,33 @@ void handle(String ln) {
     Serial.println(i2cOk ? F("i2c ok") : F("i2c STUCK — no pulses going out. check VCC/V+/GND, then reset"));
     return;
   }
+  // Read the chip's own registers back. "no sound from the servo" cannot tell
+  // a dead output from a dead lead, and every other test needs a plug pulled.
+  // MODE1 bit4 = SLEEP: a browned-out PCA9685 comes back asleep and emits
+  // nothing while still ACKing its address, so 'i2c ok' stays true and every
+  // channel goes quiet at once.
+  if (ln[0] == 'd' || ln[0] == 'D') {
+    if (!i2cOk) { Serial.println(F("i2c stuck, nothing to read")); return; }
+    int ch = constrain(ln.substring(1).toInt(), 0, 15);
+    Wire.beginTransmission(ADDR); Wire.write(MODE1);
+    Wire.endTransmission(false);
+    Wire.requestFrom(ADDR, 1);
+    uint8_t m1 = Wire.available() ? Wire.read() : 0xFF;
+    Wire.beginTransmission(ADDR); Wire.write(LED0_ON_L + 4 * ch);
+    Wire.endTransmission(false);
+    Wire.requestFrom(ADDR, 4);
+    uint8_t r[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+    for (uint8_t i = 0; i < 4 && Wire.available(); i++) r[i] = Wire.read();
+    uint16_t offc = ((uint16_t)(r[3] & 0x0F) << 8) | r[2];
+    Serial.print(F("MODE1 0x")); Serial.print(m1, HEX);
+    Serial.println(m1 & 0x10 ? F("  SLEEP SET — no pwm on any channel") : F("  awake"));
+    Serial.print(F("ch")); Serial.print(ch);
+    Serial.print(F(" off=")); Serial.print(offc);
+    Serial.print(F(" (")); Serial.print((uint32_t)offc * 20000 / 4096); Serial.print(F("us)"));
+    Serial.println(r[3] & 0x10 ? F("  FULL-OFF — pulse killed") : F("  driving"));
+    Serial.print(F("OE ")); Serial.println(digitalRead(OE_PIN) ? F("HIGH (all off)") : F("LOW (live)"));
+    return;
+  }
   if (ln == "?") {
     for (uint8_t i = 0; i < NSV; i++) {
       Serial.print(F("  ch")); Serial.print(sv[i].ch); Serial.print(' ');
@@ -217,11 +267,33 @@ void handle(String ln) {
     return;
   }
   if (ln == "r" || ln == "R") { Serial.println(F("reboot")); Serial.flush(); NVIC_SystemReset(); }
+  // Sweep every channel, not just the five in sv[]. After a re-plug a servo
+  // can sit on a channel no table knows about, and then 't' reports "no joint"
+  // for the one thing you are trying to find.
+  if (ln == "T") {
+    for (uint8_t c = 0; c < 16; c++) {
+      Serial.print(F("ch ")); Serial.print(c); Serial.println(F(" ..."));
+      Serial.flush();
+      nudgeRaw(c);
+      delay(900);           // long enough to see which joint it was
+    }
+    allStop();
+    Serial.println(F("sweep done"));
+    return;
+  }
   if (ln[0] == 't' || ln[0] == 'T') {
-    int i = find(ln.substring(1).toInt());
-    if (i < 0) { Serial.println(F("? no joint on that channel")); return; }
+    int ch = ln.substring(1).toInt();
+    int i = find(ch);
+    if (i < 0) {
+      // Unlisted channel: type is unknown, so use the pulse that is safe for
+      // both — a 360 turns, an sg90 swings to ~117deg, neither runs away.
+      if (ch < 0 || ch > 15) { Serial.println(F("? channel 0-15")); return; }
+      Serial.print(F("nudge ch")); Serial.print(ch); Serial.println(F(" (not in sv[])"));
+      nudgeRaw(ch);
+      return;
+    }
     idIdx = i; idUntil = millis() + ID_MS;
-    apply(i, sv[i].cont ? 35 : 120);
+    apply(i, sv[i].cont ? 100 : 120);   // 35% could not shift a loaded joint
     Serial.print(F("nudge ")); Serial.println(sv[i].name);
     return;
   }

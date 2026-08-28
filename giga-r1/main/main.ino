@@ -74,8 +74,11 @@ unsigned long connectAt = 0;
 uint8_t oledFrame = 0; // wraps freely — every pulse/spinner draw is frame % something
 unsigned long lastOledDraw = 0;
 unsigned long lastOledPhase = 0;
-// every redraw blocks ble.poll/drive/routine ticks behind it, so ~50fps, not more.
-#define OLED_DRAW_INTERVAL 20
+// a frame is ~1.3ms of spi (1KB at OLED_SPI_HZ) plus the draw, so the tick is not what
+// caps this — the blocking sensor reads are (see panelDelay). 10ms is still the floor
+// worth having: the ssd1306 refreshes itself at ~100Hz, so frames sent faster than that
+// are never displayed, they just eat loop() time.
+#define OLED_DRAW_INTERVAL 10
 #define OLED_PHASE_INTERVAL 120 // ~1s per breathing cycle (8 steps)
 
 /* matrix rain ("scr,1"). columns of cells, each dropping at its own rate. contrast on
@@ -226,37 +229,63 @@ void drawStatus() {
   }
 }
 
-// status glyphs, primitives instead of an icon font. each is ~36x38 hung off
-// (x, y) = top-left, and drawHud() captions every one so meaning never rests on the art.
-void drawSmile(int x, int y) {
-  int cx = x + 18, cy = y + 18;
-  oled.drawCircle(cx, cy, 17);              // face
-  oled.drawDisc(cx - 7, cy - 5, 2);         // eyes
-  oled.drawDisc(cx + 7, cy - 5, 2);
-  // mouth: two nested arcs, so it reads as a stroke and not a hairline
-  oled.drawCircle(cx, cy, 9, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
-  oled.drawCircle(cx, cy, 8, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
+/* sage's face on the panel — the same ascii the dashboard draws, so the robot
+   and the screen are one character and not two mascots. glyph table is a copy of
+   FACES in server/public/js/sageface.js (`npm run test:face` diffs the two); the
+   animation is here because the link only ever carries the safety level.
+   IMPORTANT NOTE: self-clocked off millis(), not oledFrame — that counter steps
+   every 120ms (8fps) and a shake at 8fps reads as a stutter. Offsets are whole
+   pixels because the panel has no others: past ~50fps a 3px sweep gains timing
+   accuracy, not smoothness. */
+enum { FACE_IDLE, FACE_SCANNING, FACE_CLEAR, FACE_CAUTION, FACE_ALERT, FACE_N };
+static const char FACE_G[FACE_N][3] = {  // left eye, mouth, right eye (0 = none)
+  {'-', '_', '-'},
+  {'o', '_', 'o'},
+  {'^', '_', '^'},
+  {':', 'O', 0},
+  {'x', '_', 'x'},
+};
+#define FACE_CX 27  // centre of the glyph column, clear of HUD_COL_X
+#define FACE_CY 42  // baseline
+// triangle wave, -amp..amp..-amp over `period` ms. integers only — the draw path
+// runs 100x a second and the h747's fpu is not free.
+static int8_t tri(uint16_t p, uint16_t period, int8_t amp) {
+  int32_t x = (int32_t)p * 4 * amp / period;
+  return (x <= 2 * amp) ? x - amp : 3 * amp - x;
+}
+// 0 .. amp .. 0 over `dur` ms — a hop, which starts and ends where it stood.
+static int8_t arc(uint16_t h, uint16_t dur, int8_t amp) {
+  int16_t d = (int16_t)h - dur / 2;
+  if (d < 0) d = -d;
+  return amp - (int16_t)d * amp * 2 / dur;
+}
+#define FACE_CYCLE 3400  // ms, same as the css sf-bob
+/* IMPORTANT NOTE: every move here travels several pixels, never one. a 1px or
+   two-position animation on a 1-bit panel doesn't read as motion at all — it reads
+   as two stills cutting between each other, however many times a second it is drawn.
+   frame rate was never the fix for that; travel is. */
+void drawFace(uint8_t mood) {
+  const char* g = FACE_G[mood];
+  unsigned long ms = millis();
+  uint16_t ph = ms % FACE_CYCLE;
+  int8_t dx = 0, dy = tri(ph, FACE_CYCLE, 1);  // nothing ever sits still — the css sf-bob
+  if (mood == FACE_SCANNING) dx = tri(ph, FACE_CYCLE, 6);            // sweeping the room
+  else if (mood == FACE_CLEAR) { uint16_t h = ms % 1200; if (h < 400) dy -= arc(h, 400, 4); }
+  else if (mood == FACE_ALERT) dx = tri(ms % 320, 320, 3);           // shake, css sf-shake
+  else if (mood == FACE_IDLE) dy = tri(ph, FACE_CYCLE, 2);           // breath
+  // eyes already shut (^_^, x_x) have nothing to blink with.
+  bool blink = ph >= 3240 && ph < 3360 && mood != FACE_CLEAR && mood != FACE_ALERT;
+  char buf[4] = {0, 0, 0, 0};
+  buf[0] = blink ? '-' : g[0];
+  buf[1] = g[1];
+  if (g[2]) buf[2] = blink ? '-' : g[2];
+  oled.setFont(u8g2_font_10x20_tr);
+  oled.drawStr(FACE_CX - oled.getStrWidth(buf) / 2 + dx, FACE_CY + dy, buf);
 }
 
-// filled = danger (blinks, see drawHud), hollow = caution. the "!" is drawn in
-// whichever colour the triangle isn't.
-void drawWarn(int x, int y, bool filled) {
-  int x0 = x, x1 = x + 44, apex = x + 22, base = y + 36;
-  if (filled) oled.drawTriangle(apex, y, x0, base, x1, base);
-  else {
-    oled.drawLine(apex, y, x0, base);
-    oled.drawLine(apex, y, x1, base);
-    oled.drawLine(x0, base, x1, base);
-  }
-  oled.setDrawColor(filled ? 0 : 1);
-  oled.drawBox(apex - 1, y + 12, 3, 13);
-  oled.drawBox(apex - 1, y + 28, 3, 3);
-  oled.setDrawColor(1);
-}
-
-// connected screen: banner, then the server's safety glyph on the left with its
+// connected screen: banner, then sage's face on the left with the server's
 // verdict + metrics in the column beside it.
-#define HUD_COL_X 54                  // clear of the 44px warn glyph
+#define HUD_COL_X 54                  // clear of the face column
 #define HUD_COL_W (OLED_W - HUD_COL_X)
 void drawHud() {
   oled.setFont(u8g2_font_5x7_tr);
@@ -264,12 +293,11 @@ void drawHud() {
   oled.drawHLine(6, 11, OLED_W - 12);
 
   const char* label = "STANDBY";
-  if (hudLevel == "ok") { drawSmile(10, 16); label = "SAFE"; }
-  else if (hudLevel == "warn") { drawWarn(4, 16, false); label = "CAUTION"; }
-  else if (hudLevel == "bad") {
-    if ((oledFrame / 2) % 2) drawWarn(4, 16, true); // ~480ms blink — catchable out of the corner of an eye
-    label = "DANGER";
-  }
+  uint8_t mood = FACE_SCANNING;
+  if (hudLevel == "ok") { mood = FACE_CLEAR; label = "SAFE"; }
+  else if (hudLevel == "warn") { mood = FACE_CAUTION; label = "CAUTION"; }
+  else if (hudLevel == "bad") { mood = FACE_ALERT; label = "DANGER"; }
+  drawFace(mood);
   oled.setFont(u8g2_font_7x13B_tr);
   oledCenterIn(label, HUD_COL_X, HUD_COL_W, 26);
 
@@ -538,6 +566,27 @@ void updateOled() {
   else if (bleConnected && millis() - connectAt >= HUD_BLINK_MS) drawHud();
   else drawStatus(); // splash, and the blinking handoff for the first HUD_BLINK_MS
   oled.sendBuffer();
+}
+
+// one panel tick: phase clock, one animation step, one redraw.
+void tickPanel() {
+  unsigned long now = millis();
+  if (now - lastOledPhase >= OLED_PHASE_INTERVAL) { lastOledPhase = now; oledFrame++; }
+  if (now - lastOledDraw >= OLED_DRAW_INTERVAL) {
+    lastOledDraw = now;
+    stepSaver(); // one animation step per drawn frame
+    updateOled();
+  }
+}
+
+// a blocking wait that still draws. the sonar's ring-down delays are ~180ms of dead
+// time every send — that, not the draw interval, is what the panel's frame rate
+// actually ran into, and a delay() there drops ~18 frames in a row. ble.poll() rides
+// along so an inbound stop isn't queued behind a ping either.
+// IMPORTANT NOTE: nothing called from here may block or ping, or this recurses.
+void panelDelay(unsigned long ms) {
+  unsigned long until = millis() + ms;
+  while ((long)(millis() - until) < 0) { BLE.poll(); tickPanel(); }
 }
 
 void setup() {
@@ -909,7 +958,7 @@ float medianPingCm() {
   for (uint8_t i = 0; i < SONAR_ITER; i++) {
     float v = pingCm();
     if (v >= 0) s[n++] = v;
-    delay(60); // <60ms and the prior burst's ring-down latches a false ~20cm echo
+    panelDelay(60); // <60ms and the prior burst's ring-down latches a false ~20cm echo
   }
   if (n == 0) return -1;
   for (uint8_t i = 1; i < n; i++) { // insertion sort, n is tiny
@@ -942,26 +991,21 @@ void loop() {
   tickDrive();
   tickBlk();
 
-  unsigned long nowAnim = millis();
-  if (nowAnim - lastOledPhase >= OLED_PHASE_INTERVAL) { lastOledPhase = nowAnim; oledFrame++; }
-  if (nowAnim - lastOledDraw >= OLED_DRAW_INTERVAL) {
-    lastOledDraw = nowAnim;
-    stepSaver(); // one animation step per drawn frame
-    updateOled();
-  }
+  tickPanel();
 
   unsigned long now = millis();
   bool busy = routine || blkPc >= 0 || blkLoading || drvEnd;
   // everything below this line blocks the panel — one ping is ~25ms of dead time in a
-  // 20ms draw tick, a dropped frame in five. so an idle rover under a screensaver drops
-  // to 2hz telemetry; anything moving clears `busy` and puts 10hz back.
+  // 10ms draw tick, and the dht11 read another ~30ms. the sonar's own waits draw
+  // through panelDelay(), the rest can't, so an idle rover under a screensaver still
+  // drops to 2hz telemetry; anything moving clears `busy` and puts 10hz back.
   if (now - lastSend < (saver && !busy ? SAVER_SEND_INTERVAL : SEND_INTERVAL)) return;
   lastSend = now;
 
-  // median-of-3 blocks ~200ms with no ble.poll() in it, so an inbound stop just waits.
-  // anything moving (or animating) takes a single ~25ms ping instead: noisier, but
-  // steps land on time. consecutive pings still land 100ms apart, clear of ring-down.
-  float raw = (busy || saver) ? pingCm() : medianPingCm();
+  // median-of-3 takes ~200ms of wall clock, but it draws and polls its way through
+  // (panelDelay), so it costs cadence and not the panel or an inbound stop. anything
+  // moving takes a single ~25ms ping instead: noisier, but steps land on time. consecutive pings still land 100ms apart, clear of ring-down.
+  float raw = busy ? pingCm() : medianPingCm();
   if (raw >= 0) {
     distF = (distF < 0) ? raw : distF + DIST_ALPHA * (raw - distF);
   } else {

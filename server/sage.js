@@ -48,6 +48,13 @@ function snapSummary(packets) {
   return `${packets.length} readings over ${span.toFixed(1)}s \u00b7 ${bits.join(", ")}`;
 }
 
+// a move sage wants to make, written as BLK source (see prompts/blk.md). it is a
+// *proposal*: nothing turns until the operator presses RUN on the card. BLK and not
+// a drive command because `forward until dist < 5` compiles onto the board's own vm —
+// the stop happens in one loop() pass instead of a ble round trip, which is the
+// difference between stopping at 5cm and hitting the wall.
+const parseMove = (v) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 400) : null);
+
 // a discovery worth keeping, e.g. "drawing detected: looks like a bison". null most turns.
 // capped at 140 chars for one panel row.
 function parseFinding(v) {
@@ -74,10 +81,11 @@ function parseSage(raw) {
         led: parseLed(o.led),
         finding: parseFinding(o.finding),
         snapshot: parseSnapshot(o.snapshot),
+        move: parseMove(o.move),
       };
     } catch { /* fall through to raw */ }
   }
-  return { text: s, status: null, action: null, tool: null, toolArg: null, led: null, finding: null, snapshot: null };
+  return { text: s, status: null, action: null, tool: null, toolArg: null, led: null, finding: null, snapshot: null, move: null };
 }
 
 module.exports = { parseSage, snapSummary, wantsTool, SAGE_TOOLS };

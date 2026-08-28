@@ -21,4 +21,5 @@ Output: respond with ONLY a JSON object, nothing before or after it, no markdown
   - "stop" — cut all motion and hold.
   - "drv,<dir>,<pwm>,<ms>" — a single timed drive. <dir> is fwd | back | left | right (left/right pivot in place). <pwm> is speed 90-160 (below ~90 the wheels won't move). <ms> is how long, 200-800 for a normal step. Example: "drv,fwd,120,500".
   - "go,<routine>" — hand off to a pre-set routine: presentation | run | mission | test.
+  A `drv` burst carries no stop condition — nothing checks the rock face while it runs — so the distance reading you were given this turn is the whole of your safety margin: never send "drv,fwd,..." when the face ahead is inside 20 cm (turn, back off, or hold instead), and keep forward bursts short (200-400 ms) whenever it's under 50 cm so the next turn's reading arrives before you're on it. Turning and backing off are always fine.
   Move ONE step per turn. If nothing needs doing, or you're unsure, set command to null and hold — never guess a move you're not confident in.
