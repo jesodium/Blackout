@@ -68,11 +68,12 @@ void sweep(TwoWire& w, const char* name) {
 
 // idle-state probe. a bare INPUT floats HIGH on the giga so it proves nothing;
 // INPUT_PULLDOWN does — internal pulldown is ~40k, a bus pull-up is 4k7-10k.
-void lines() {
-  pinMode(SDA2, INPUT_PULLDOWN); pinMode(SCL2, INPUT_PULLDOWN);
+void lines(int sda, int scl, const char* name) {
+  pinMode(sda, INPUT_PULLDOWN); pinMode(scl, INPUT_PULLDOWN);
   delay(5);
-  Serial.print("pull-up check: sda(d9)="); Serial.print(digitalRead(SDA2) ? "yes" : "NO");
-  Serial.print("  scl(d8)=");              Serial.println(digitalRead(SCL2) ? "yes" : "NO");
+  Serial.print("pull-up check "); Serial.print(name);
+  Serial.print(": sda="); Serial.print(digitalRead(sda) ? "yes" : "NO");
+  Serial.print("  scl=");  Serial.println(digitalRead(scl) ? "yes" : "NO");
 }
 
 // drive each line low on its own and watch the other. they must move independently:
@@ -110,12 +111,14 @@ void setup() {
 
 void loop() {
   Serial.println("\n--- i2c scan ---");
-  lines();
+  lines(20, 21, "CONTROL (d20/d21)");
+  lines(SDA2, SCL2, "TEST (d9/d8)");
   Serial.println("integrity CONTROL (d20/d21, known-good bus):");
   integrity(20, 21);
   Serial.println("integrity TEST (d9/d8):");
   integrity(SDA2, SCL2);
   softSweep(20, 21, "soft CONTROL (d20 sda / d21 scl)"); // must find 0x76
+  softSweep(21, 20, "soft CONTROL swapped (d21 sda / d20 scl)"); // sda/scl crossed at the module
   softSweep(SDA2, SCL2, "soft TEST    (d9 sda / d8 scl)"); // want 0x23
   delay(1500);
 }
