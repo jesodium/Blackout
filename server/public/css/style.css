@@ -421,6 +421,11 @@ input[type="range"]:focus { box-shadow: none; }
   transform: translate(-50%, -50%) rotate(-90deg);
 }
 
+/* detection overlay — same class as the feed on purpose, so it gets the identical
+   size and -90deg mount rotation and the boxes land on the objects with no maths.
+   drawn in frame-pixel coords; see drawBoxes() in js/detect.mjs. */
+.cam-boxes { pointer-events: none; z-index: 1; }
+
 .viewport-fallback {
   position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 10px; text-align: center;

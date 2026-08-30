@@ -28,7 +28,7 @@ Node.js PC server/dashboard.
   not 5V tolerant, so the ultrasonic is an RCWL-1601 (3.3V-capable, HC-SR04
   drop-in) rather than an HC-SR04, and the dht11 is powered at 3V too. A 5V
   sensor here means a 5V signal into a 3.3V pin. Also drives an
-  L298N (ENA D3, IN1 D2, IN2 D7, IN3 D6, IN4 D4, ENB D10 — pins follow the
+  L298N (ENA D3, IN1 D2, IN2 D7, IN3 D6, IN4 D4, ENB D5 — pins follow the
   loom's wire colours, not connector order; D8 is SCL2, kept free for Wire2)
   and runs on-board `Step` motion routines
   (`routines.h`, see "Dictated routines" below) or direct gamepad/dashboard
@@ -239,6 +239,43 @@ Node.js PC server/dashboard.
     **Only one `/stream` at a time exists** — the cam runs a second httpd on :81 whose
     handler never returns — so a reconnect must tear down before opening, and two
     CamViews mounted at once would deadlock.
+  - **Object detection on the feed** — DETECT OBJECTS next to CAMERA SETTINGS draws
+    labelled boxes over the live frame (coco-ssd / ssdlite-mobilenet-v2 on tfjs,
+    `public/js/detect.mjs`). **Not opencv+yolo**: `model.detect(img)` returns the 80
+    coco classes with NMS and the label table already done, where a yolo `.onnx` is
+    letterboxing + sigmoid decode + NMS by hand and opencv.js is a 10MB wasm on top.
+    Everything is vendored (`vendor/tf.min.js`, `vendor/coco-ssd.min.js`,
+    `models/coco-ssd/`, 18MB of weights) because the venue has no internet and the
+    stock `cocoSsd.load()` fetches from storage.googleapis — which works on the bench
+    and dies on comp day. `npm run test:detect` is that check. The 18MB is also why
+    the model loads on the first toggle, not at boot.
+    **This is the one place a canvas is allowed** — it reads the `<img>`'s `blob:` url,
+    which is same-origin, so the frame isn't tainted; pointing it at the cam url
+    directly would throw. The overlay canvas carries the **same `.cam-feed` class** as
+    the feed and is sized to the frame's natural size, so it inherits the -90deg mount
+    rotation and every fpv zoom — boxes are drawn in frame-pixel coords with no
+    mapping maths.
+    **The model is fed an un-rotated frame, not the raw one** (`detectUpright()`), for
+    the same reason `upright()` exists in `vision.js`: the cam is mounted on its side,
+    only the css ever un-rotates it, and coco-ssd is not rotation invariant — a desk
+    read *sink 0.28* sideways and *keyboard 0.72* upright, and across this cam's own
+    stills rotating first found 20 objects against 12. The boxes come back in the
+    rotated frame's coords and `rotBox()` maps them back to raw-frame coords so the
+    overlay's inherited css transform still lands them on the object; that mapping is
+    a sign error waiting to happen, so `npm run test:detect` checks it off-browser.
+    The -90 in `detect.mjs` and the `rotate()` on `.cam-feed` are the same fact written
+    twice — remount the cam upright and both go together.
+    **The label is drawn counter-rotated +90** for that same reason: inheriting the css
+    transform is what keeps the boxes aligned for free, but it also turns the text, so a
+    label drawn plainly above a box comes out *beside* it reading bottom-to-top. Cancel
+    the rotation and screen-up becomes canvas +x, which is where the plate goes (and it
+    is clamped into the frame — coco hands back boxes that overhang the edge). Keep it
+    thin and small: the box is the readout, the label only says which box. Detection is on its own 100ms timer with a busy flag rather than off
+    the paint path, so a slow machine drops boxes instead of frames — measured 25ms
+    warm on webgl (47ms first, 733ms to load the model), against a feed that arrives
+    at ~10fps, so every frame gets boxes. Without webgl it falls back to cpu at
+    ~280ms and the busy flag just skips ticks. `DET_MIN_SCORE` is a bench knob — a
+    real shot of a person off this cam came back at 0.52.
   - **Auto headlamp:** `lux < 100` (`LUX_DARK`) means Sage is going blind, so
     `darkCheck()` in `server.js` fires a canned line of hers on `agent-blurt`
     ("it's going dark in here — turning the headlamp on") and ramps the cam lamp

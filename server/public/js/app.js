@@ -10,6 +10,7 @@ import { parse as blkParse, run as blkRun, lint as blkLint, estimate as blkEstim
 import { SageFace } from "./sageface.js";
 import { initPadNav, cursorOn } from "./padnav.mjs";
 import { mjpegSplit } from "./mjpeg.mjs";
+import { loadDetector, detectUpright, drawBoxes } from "./detect.mjs";
 
 const html = htm.bind(React.createElement);
 
@@ -943,6 +944,15 @@ const CAM_PICKS = [
 ];
 
 const STALL_MS = 5000; // no frame for this long, while connected = reconnect
+// object detection runs on its own timer rather than off the paint path, so a slow
+// machine drops boxes instead of frames. 100ms because that IS the feed — the cam
+// sends ~10fps at SVGA and one inference measured 25ms warm on webgl (47ms first,
+// 733ms model load), so every frame gets boxes with the gpu still mostly idle.
+// The busy flag is what makes it safe to lower: a machine that can't keep up (the
+// judges' tablet, webgl unavailable and it falls back to cpu at ~280ms) skips ticks
+// instead of queueing behind itself.
+const DET_MS = 100;
+const DET_MIN_SCORE = 0.5;  // bench knob: a real cam shot of a person came back at 0.52
 
 /* camera view (esp32-cam mjpeg) — lives inside the stage */
 function CamView() {
@@ -951,11 +961,14 @@ function CamView() {
   const [yielded, setYielded] = useState(false);
   const [host, setHost] = useState(camHost());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [detect, setDetect] = useState(() => localStorage.getItem("camDetect") === "1");
+  const [detState, setDetState] = useState("off"); // off | loading | on | failed
   // defaults mirror what the firmware sets at boot — the panel opens showing the
   // real state, not zeroes. change one here only if you change it in main.ino too.
   const [sliders, setSliders] = useState({ brightness: -1, contrast: -1, saturation: 0, ae_level: 0, led: 15 });
   const [picks, setPicks] = useState({ wb_mode: 0, framesize: 8 });
   const imgRef = useRef(null);
+  const boxRef = useRef(null);
 
   useEffect(() => {
     // hang up before unmounting. removeattribute aborts the fetch now — unlike src="", it doesn't re-request page url.
@@ -1024,6 +1037,30 @@ function CamView() {
     })();
     return () => { alive = false; ctl.abort(); if (shown) URL.revokeObjectURL(shown); };
   }, [yielded, nonce, host]);
+
+  // object detection: read the <img> that's already on screen (its blob: url is
+  // same-origin, so the canvas isn't tainted) and paint boxes on the overlay canvas.
+  // sized to the frame, so it inherits the img's own css transform — see drawBoxes.
+  useEffect(() => {
+    if (!detect || yielded || state !== "live") { setDetState("off"); return; }
+    let alive = true, model = null, busy = false;
+    setDetState("loading");
+    loadDetector().then((m) => { if (alive) { model = m; setDetState("on"); } })
+      .catch(() => { if (alive) setDetState("failed"); });
+    const id = setInterval(async () => {
+      const img = imgRef.current, cv = boxRef.current;
+      if (!model || busy || !img || !cv || !img.naturalWidth) return;
+      busy = true;
+      try {
+        const boxes = await detectUpright(model, img, 20, DET_MIN_SCORE);
+        if (!alive) return;
+        if (cv.width !== img.naturalWidth) { cv.width = img.naturalWidth; cv.height = img.naturalHeight; }
+        drawBoxes(cv.getContext("2d"), boxes, cv.width, cv.height);
+      } catch { /* a frame swapped mid-read; next tick has a whole one */ }
+      finally { busy = false; }
+    }, DET_MS);
+    return () => { alive = false; clearInterval(id); };
+  }, [detect, yielded, state]);
 
   // the watchdog: connected, but no frame in STALL_MS. bumping the nonce tears the
   // socket down and opens a new one — silent, because the last frame stays on screen
@@ -1098,7 +1135,10 @@ function CamView() {
         // alt="" on purpose: there's no src until the first blob lands, and the
         // broken-image alt renders rotated -90deg with the frame (vertical text).
         // the section is already labelled by cam-h.
-        ? html`<img ref=${imgRef} alt="" class="cam-feed" />`
+        ? html`<${React.Fragment}>
+            <img ref=${imgRef} alt="" class="cam-feed" />
+            ${detect ? html`<canvas ref=${boxRef} class="cam-feed cam-boxes" aria-hidden="true" />` : null}
+          <//>`
         : html`<div class="viewport-fallback">${t("cam.offline")}<br/>
             <small>${base}</small><br/>
             <input type="text" class="cam-host" defaultValue=${host} aria-label=${t("zone.camera")}
@@ -1110,6 +1150,9 @@ function CamView() {
       <span class="stage-chip">${t(yielded ? "cam.tag.scanning" : "cam.tag." + state)}</span>
       ${state === "live" && !yielded ? html`
         <div class="cam-tools">
+          <button type="button" class=${"hud-btn" + (detect ? " is-active" : "")} aria-pressed=${detect}
+            onClick=${() => { const v = !detect; setDetect(v); localStorage.setItem("camDetect", v ? "1" : "0"); }}>
+            ${t("cam.detect")}${detect && detState !== "on" ? " · " + t("cam.detect." + detState) : ""}</button>
           <button type="button" class="hud-btn" aria-expanded=${settingsOpen}
             onClick=${() => setSettingsOpen(o => !o)}>${t("cam.settings")}</button>
           ${settingsOpen ? html`
@@ -2604,7 +2647,9 @@ function App() {
   const [reportClosing, setReportClosing] = useState(false); // true while the exit transition plays
   const [clients, setClients] = useState([]); // every dashboard on the lan (host's roster)
   const [devicesOpen, setDevicesOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false); // false | "open" | "closing"
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [detect, setDetect] = useState(() => localStorage.getItem("camDetect") === "1");
+  const [detState, setDetState] = useState("off"); // off | loading | on | failed // false | "open" | "closing"
   const [onboardStep, setOnboardStep] = useState(false); // false | "hero" | "model" | "pair" — first-run, ahead of the spotlight tour
   const [onboardModel, setOnboardModel] = useState(null); // "v2" | "v3" | null — cosmetic, picked in the onboard flow
   const [onboardClosing, setOnboardClosing] = useState(false); // true while the exit transition plays

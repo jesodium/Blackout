@@ -15,6 +15,19 @@
 #define ECHO_PIN 50
 // IMPORTANT NOTE: a8-a11 are pure-analog — pinMode/digitalWrite there is a compile error.
 #define DHT_PIN A6
+// three relay channels, NOT leds on pins: each pin is a low-current input to a
+// relay module that switches the light's own supply. so the pin never sees lamp
+// current, digitalWrite only (a relay can't be dimmed — pwm just chatters the
+// coil), and these sit off the pwm block on purpose, d10 being the last one free.
+// IMPORTANT NOTE: the common relay boards are ACTIVE LOW — HIGH releases, LOW
+// pulls the coil in. RELAY_ON is that polarity in one place; flip it if the
+// board turns out to be active-high (lights on at boot = flip it).
+#define RELAY_CAM_LED 26   // cam light
+#define RELAY_STRIP   28   // led strip
+#define RELAY_LED     30   // spare led
+#define RELAY_ON  LOW
+#define RELAY_OFF HIGH
+static const uint8_t RELAY_PINS[] = {RELAY_CAM_LED, RELAY_STRIP, RELAY_LED};
 // bme280 is i2c on Wire (d20/d21). IMPORTANT NOTE: it can't move to d44/d46 —
 // pg_10/ph_15 have no i2c alternate function on the h747.
 // oled: ssd1306 128x64 on SPI1 (d13 sck, d11 copi), cs tied to gnd on the panel.
@@ -95,7 +108,7 @@ char mtxCell[MTX_COLS][MTX_ROWS];
 
 
 #define BOARD_NAME "BLACKOUT-V3" // status screen + ble local name + serial banner
-// l298n. pins follow the loom's wire colours, not connector order — d5 is free.
+// l298n. pins follow the loom's wire colours, not connector order — d10 is free.
 // IMPORTANT NOTE: in1..in4 aren't contiguous — iterate MOTOR_PINS, never a range.
 // IMPORTANT NOTE: keep the run inside d2-d13, the giga's whole pwm band.
 #define ENA 3  // motor a speed (pwm), gris
@@ -107,8 +120,9 @@ char mtxCell[MTX_COLS][MTX_ROWS];
 // to 5v and these pins do nothing.
 // IMPORTANT NOTE: enb can't share a timer with ena. d2 and d3 are both TIM15, and the
 // mbed core gives the second PwmOut on a shared timer a channel that never comes up
-// (enb stayed silently low). d10 is TIM1, its own; d5 also works. digital pins don't care.
-#define ENB 10  // motor b speed (pwm), naranja
+// (enb stayed silently low). d5 is PA_7, its own timer again; d10 (TIM1) also
+// works and is the fallback if the right side ever comes up silently dead.
+#define ENB 5  // motor b speed (pwm), naranja
 static const uint8_t MOTOR_PINS[] = {IN1, IN2, IN3, IN4};
 #define SONAR_ITER 3            // pings per reading, median drops spikes
 #define SONAR_TIMEOUT_US 25000UL // ~430cm round-trip + margin, no echo = timeout
@@ -175,6 +189,14 @@ unsigned long stepStart = 0;
 // either sensor missing (or a dead bus) just leaves its own fields at 0.
 Adafruit_BME280 bme;
 bool bmeOk = false;
+// begin() only ever ran in setup(), so a bme rewired on a live board stayed dead
+// until someone reset it — and a bus that wedged mid-run kept bmeOk true while every
+// read failed the range gate, freezing the last good value on screen looking live.
+// both are the same fix: re-probe on the env cadence.
+uint8_t bmeMiss = 0;              // consecutive rejected reads
+const uint8_t BME_MISS_MAX = 5;   // ~5s at ENV_INTERVAL before we call the bus gone
+unsigned long lastBmeTry = 0;
+const unsigned long BME_RETRY_MS = 5000; // don't hammer a bus with nothing on it
 DHT11 dht(DHT_PIN);
 int temp = 0, humid = 0;  // °C, % — last good dht read, cached
 float pressure = 0;       // hPa — last good bme read, cached
@@ -597,8 +619,8 @@ void setup() {
   // HIGH, so pulseIn never sees an edge and every reading comes back -1.
   pinMode(ECHO_PIN, INPUT_PULLDOWN);
 
-  // 0x76 on most breakouts, 0x77 on adafruit's. boot only — a hotplugged bme waits
-  // for a reset, which beats probing a dead bus every loop.
+  // 0x76 on most breakouts, 0x77 on adafruit's. a miss here isn't fatal — bmeRetry()
+  // re-probes on the env cadence, so a hotplug or a rewire recovers without a reset.
   Wire.begin();
   bmeOk = bme.begin(0x76) || bme.begin(0x77);
   Serial.println(bmeOk ? "BME280 ok" : "BME280 not found");
@@ -616,6 +638,9 @@ void setup() {
   oled.setContrast(255); // it boots at ~0x7F
   updateOled();
 
+  // relays off BEFORE output mode: an output pin defaults low, which on an
+  // active-low board is ON — set the level first and nothing flashes at boot.
+  for (uint8_t p : RELAY_PINS) { digitalWrite(p, RELAY_OFF); pinMode(p, OUTPUT); }
   for (uint8_t p : MOTOR_PINS) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
   pinMode(ENA, OUTPUT); pinMode(ENB, OUTPUT);
   analogWrite(ENA, 0); analogWrite(ENB, 0); // stopped until told otherwise
@@ -1025,10 +1050,16 @@ void loop() {
     if (bmeOk) {
       // a glitched read compensates the registers' reset value into a real-looking
       // number, not nan, so gate on the datasheet range.
-      // IMPORTANT NOTE: a wedged bus therefore freezes the value rather than lying.
-      // re-begin() after n rejects if it ever needs to recover without a reset.
       float p = bme.readPressure() / 100.0F; // Pa -> hPa
-      if (p > 300 && p < 1100) pressure = p;
+      if (p > 300 && p < 1100) { pressure = p; bmeMiss = 0; }
+      else if (++bmeMiss >= BME_MISS_MAX) { bmeOk = false; pressure = 0; }
+    } else if (now - lastBmeTry >= BME_RETRY_MS) {
+      // IMPORTANT NOTE: begin() on a bus with nothing on it is a handful of NACKed
+      // transactions, not a hang — cheap at 0.2Hz. it blocks the panel like any other
+      // i2c work, so if it ever grows past that it belongs behind panelDelay().
+      lastBmeTry = now;
+      bmeOk = bme.begin(0x76) || bme.begin(0x77);
+      if (bmeOk) { bmeMiss = 0; Serial.println("BME280 back"); }
     }
     if (luxOk) {
       float l = readLux();

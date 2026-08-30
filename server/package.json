@@ -25,7 +25,8 @@
     "test:rec": "node test-rec.js",
     "test:elev": "node test-elev.mjs",
     "test:auto": "node test-auto.js",
-    "test:mjpeg": "node test-mjpeg.mjs"
+    "test:mjpeg": "node test-mjpeg.mjs",
+    "test:detect": "node test-detect.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
