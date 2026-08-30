@@ -35,6 +35,15 @@ Node.js PC server/dashboard.
   drive commands over the same BLE `cmdChar` — routines run standalone on
   the board so a BLE drop mid-run doesn't strand it. `motor_test/` is a
   bench-only sketch for wiring/direction checks, not part of the build.
+  - **Three relay channels** (D26 cam light, D28 led strip, D30 spare led) — each
+    pin is a low-current input to a relay module that switches the light's own
+    supply, so the pin never sees lamp current. `digitalWrite` only: a relay
+    can't be dimmed, pwm just chatters the coil, which is why they sit outside
+    the D2-D13 pwm band on purpose. **The common boards are ACTIVE LOW** — HIGH
+    releases, LOW pulls in — so `RELAY_ON`/`RELAY_OFF` hold that polarity in one
+    place (lights on at boot = flip it), and the level is written *before*
+    `pinMode(OUTPUT)` or the pin's default low turns everything on for a moment
+    at boot.
   - **Screensavers** (see "Screensavers" below): the console can put a
     screensaver on the panel instead of the HUD. The board animates it; the
     link only carries which one, and a BLE drop turns it off.
