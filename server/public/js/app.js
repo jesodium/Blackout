@@ -2088,7 +2088,7 @@ function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lan
 const SAVERS = ["saverOff", "matrix", "saverBounce", "saverStars", "saverTetris"];
 
 /* console drawer — logs, findings, serial, motor bench. slides over the cockpit */
-function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, enabled, onTutorial, saver, onSaver, moves, onMoves }) {
+function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, enabled, onTutorial, saver, onSaver, moves, onMoves, buzz, onBuzz }) {
   if (!open) return null;
   const tabs = [["logs", t("zone.logs")], ["findings", t("zone.analysis")], ["serial", t("zone.serial")], ["motor", t("colo.motor")]];
   return html`
@@ -2104,6 +2104,11 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
         <button type="button" class=${"serial-btn drawer-moves" + (moves ? " is-on" : "")}
           aria-pressed=${!!moves} onClick=${onMoves} title=${t("drawer.movesTitle")}>
           ${t("drawer.moves")}: ${t(moves ? "drawer.on" : "drawer.off")}
+        </button>
+        ${/* the buzzer follows the hud level on the board — this is the mute, not a trigger */""}
+        <button type="button" class=${"serial-btn drawer-buzz" + (buzz ? " is-on" : "")}
+          aria-pressed=${!!buzz} onClick=${onBuzz} title=${t("drawer.buzzTitle")}>
+          ${t("drawer.buzz")}: ${t(buzz ? "drawer.on" : "drawer.off")}
         </button>
         ${/* the screensavers run on the board itself — this is only the picker */""}
         <select class="serial-btn drawer-saver" disabled=${!enabled} value=${saver}
@@ -3033,6 +3038,17 @@ function App() {
   // firmware drops the screensaver when the link does, so the picker can't stay set through it.
   useEffect(() => { if (!bridge.running) setSaver(0); }, [bridge.running]);
 
+  /* buzzer mute. the board already sounds off the same hud level the panel face wears —
+     this only says whether it may. re-pushed on every (re)connect because the flag lives
+     on the board and a reset brings it back on. */
+  const [buzz, setBuzz] = useState(() => localStorage.getItem("buzzer") !== "false");
+  const toggleBuzz = useCallback(() => setBuzz(b => {
+    localStorage.setItem("buzzer", String(!b));
+    sendCmd("buz," + (!b ? 1 : 0));
+    return !b;
+  }), [sendCmd]);
+  useEffect(() => { if (bridge.running) sendCmd("buz," + (buzz ? 1 : 0)); }, [bridge.running]);
+
   const loadBridge = useCallback(async () => {
     try { const r = await fetch("/api/bridge"); const d = await r.json();
       setBridge(b => ({ ...b, running: d.running })); } catch { /* offline */ }
@@ -3526,7 +3542,8 @@ function App() {
         ${!judge && html`<${Drawer} open=${drawer} tab=${drawerTab} onTab=${setDrawerTab} onClose=${closeDrawer}
           logs=${logs} serialLines=${serialLines} onClearSerial=${clearSerial}
           chat=${activeChat} onCmd=${sendCmd} enabled=${canDrive} onTutorial=${restartTour}
-          saver=${saver} onSaver=${pickSaver} moves=${moves} onMoves=${toggleMoves} />`}
+          saver=${saver} onSaver=${pickSaver} moves=${moves} onMoves=${toggleMoves}
+            buzz=${buzz} onBuzz=${toggleBuzz} />`}
       </div>
 
       <${Toasts} items=${toasts} />

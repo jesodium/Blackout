@@ -635,7 +635,7 @@ input[type="range"]:focus { box-shadow: none; }
 .fl-move.is-declined .fl-body { border-left-color: var(--line); opacity: 0.6; }
 .fl-move.is-running .fl-body { border-left-color: var(--accent); }
 /* the toggle is a button, not a checkbox — the drawer bar is all serial-btn */
-.drawer-moves.is-on { color: var(--go); border-color: var(--go); }
+.drawer-moves.is-on, .drawer-buzz.is-on { color: var(--go); border-color: var(--go); }
 
 .fl-work .fl-mark { color: var(--accent); animation: spin 1.1s linear infinite; }
 .fl-work .fl-t { font: 700 10px/1.6 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }

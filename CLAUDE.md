@@ -44,6 +44,20 @@ Node.js PC server/dashboard.
     place (lights on at boot = flip it), and the level is written *before*
     `pinMode(OUTPUT)` or the pin's default low turns everything on for a moment
     at boot.
+  - **Buzzer on D75**, driven off the same `hud,<level>` the panel face already gets —
+    `tickBuzz()` in `main.ino`: `bad` holds a tone until the level clears, `warn` beeps
+    twice *on entry* and stops (a nuisance alarm gets tuned out), anything else is
+    silent, and a BLE drop clears `hudLevel` so a lost link silences it. `tone()` on the
+    mbed core is ticker-driven, so it needs no pwm pin and never blocks; it is stepped
+    from `panelDelay()` too or the beat stretches through the sonar's ring-down waits.
+    Re-issuing `tone()` while it is already sounding leaks a `DigitalOut` each call
+    (core bug), which is why `buzzSet()` only ever writes on a change. **`noTone()`
+    does not silence an active module** — it detaches the ticker and drops the pin
+    object wherever the last toggle left it, and half the time that is HIGH, which on
+    a buzzer with its own oscillator is a beep that never ends; `buzzSet()` parks the
+    pin low by hand after it. CONSOLE → BUZZER is the mute (`buz,<0|1>`, off silences
+    at once); the flag lives on the board, so the dashboard re-pushes it on every
+    connect — a reset brings it back on.
   - **Screensavers** (see "Screensavers" below): the console can put a
     screensaver on the panel instead of the HUD. The board animates it; the
     link only carries which one, and a BLE drop turns it off.
