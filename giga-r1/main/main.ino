@@ -28,6 +28,20 @@
 #define RELAY_ON  LOW
 #define RELAY_OFF HIGH
 static const uint8_t RELAY_PINS[] = {RELAY_CAM_LED, RELAY_STRIP, RELAY_LED};
+// buzzer on a plain digital pin. IMPORTANT NOTE: this module is ACTIVE — it has its own
+// oscillator and only takes on/off, so tone() bought nothing: every pitch came out the
+// same beep. Plain digitalWrite, and the pairing tune carries the riff's rhythm, not its
+// melody. Swap in a passive piezo and pitch is worth having back (the hz column in
+// PAIR_TUNE is still the real note) — that means tone() here again, and its two traps:
+// re-issuing it while sounding leaks a DigitalOut, and noTone() drops the pin wherever
+// the last toggle left it, so it still has to be parked by hand.
+// The board is ACTIVE LOW: it sounds on LOW, silent on HIGH. Flip the pair if yours isn't.
+#define BUZZ_PIN 75
+#define BUZZ_SOUND LOW
+#define BUZZ_IDLE  HIGH
+#define BUZZ_HZ 2400   // the alarm pitch; the tune carries its own
+#define BUZZ_BEEP_MS 120
+#define BUZZ_GAP_MS 600  // caution chirps every BEEP+GAP for as long as the level holds
 // bme280 is i2c on Wire (d20/d21). IMPORTANT NOTE: it can't move to d44/d46 —
 // pg_10/ph_15 have no i2c alternate function on the h747.
 // oled: ssd1306 128x64 on SPI1 (d13 sck, d11 copi), cs tied to gnd on the panel.
@@ -590,6 +604,80 @@ void updateOled() {
   oled.sendBuffer();
 }
 
+// buzzer follows the hud level and nothing else: "bad" holds the tone and "warn" chirps,
+// both until the level goes back to good — an alarm that times itself out is an alarm
+// nobody acts on. A ble drop clears hudLevel, so a lost link silences it. IMPORTANT NOTE: no delay() in here — it is stepped from loop() and
+// from panelDelay(), which is what keeps the beat through the sonar's ring-down waits.
+String buzzLevel = "";
+uint16_t buzzHz = 0;     // pitch currently sounding, 0 = parked
+#define buzzOn (buzzHz != 0)
+unsigned long buzzAt = 0;
+
+bool buzzEnabled = true; // console toggle ("buz,<0|1>"); a mute the operator can reach
+
+// pairing tune: played once when the board starts advertising (boot, and after a drop),
+// so the operator hears it is up and looking for a console without watching the panel.
+// {hz, ms} per step, hz 0 is a rest. Two rising beeps, ~260ms — a power-on chirp, not a
+// song: this fires on every ble drop, and anything longer is something you learn to hate
+// by the third reconnect. High because the piezo is loudest up there.
+struct BuzzNote { uint16_t hz; uint16_t ms; };
+const BuzzNote PAIR_TUNE[] = { {1568,80}, {0,40}, {2093,140} };
+const uint8_t PAIR_TUNE_N = sizeof(PAIR_TUNE) / sizeof(PAIR_TUNE[0]);
+uint8_t tuneStep = PAIR_TUNE_N; // >= N is idle
+unsigned long tuneAt = 0;
+
+// IMPORTANT NOTE: noTone() detaches the ticker and drops the pin object wherever the
+// last toggle left it — half the time that is the sounding level, which is a beep that
+// never ends. Park it by hand after.
+void buzzPark() {
+  noTone(BUZZ_PIN);
+  pinMode(BUZZ_PIN, OUTPUT);
+  digitalWrite(BUZZ_PIN, BUZZ_IDLE);
+}
+
+void buzzTone(uint16_t hz) {
+  if (!buzzEnabled) hz = 0;
+  if (hz == buzzHz) return; // re-issuing tone() while sounding leaks a DigitalOut
+  buzzHz = hz;
+  if (hz) { tone(BUZZ_PIN, hz); return; }
+  buzzPark();
+}
+
+void buzzSet(bool on) { buzzTone(on ? BUZZ_HZ : 0); }
+
+void startPairTune() {
+  tuneStep = 0;
+  tuneAt = millis();
+  buzzTone(PAIR_TUNE[0].hz);
+  Serial.print("pair tune: "); Serial.print(PAIR_TUNE_N); Serial.println(" notes");
+}
+
+// one step of the pairing tune. true while it owns the buzzer, so an alarm can't fight
+// it mid-note — the two never overlap anyway, hudLevel is cleared while unpaired.
+bool tickTune() {
+  if (tuneStep >= PAIR_TUNE_N) return false;
+  if (millis() - tuneAt < PAIR_TUNE[tuneStep].ms) return true;
+  tuneAt = millis();
+  if (++tuneStep >= PAIR_TUNE_N) { buzzTone(0); return false; }
+  buzzTone(PAIR_TUNE[tuneStep].hz);
+  return true;
+}
+
+void tickBuzz() {
+  if (tickTune()) return;
+  if (hudLevel != buzzLevel) {
+    buzzLevel = hudLevel;
+    buzzAt = millis();
+    buzzSet(hudLevel == "bad" || hudLevel == "warn");
+    return;
+  }
+  if (hudLevel == "bad") return;   // solid, held until the level goes back to good
+  if (hudLevel != "warn") return;  // silent and done
+  if (millis() - buzzAt < (buzzOn ? BUZZ_BEEP_MS : BUZZ_GAP_MS)) return;
+  buzzAt = millis();
+  buzzSet(!buzzOn);
+}
+
 // one panel tick: phase clock, one animation step, one redraw.
 void tickPanel() {
   unsigned long now = millis();
@@ -608,7 +696,7 @@ void tickPanel() {
 // IMPORTANT NOTE: nothing called from here may block or ping, or this recurses.
 void panelDelay(unsigned long ms) {
   unsigned long until = millis() + ms;
-  while ((long)(millis() - until) < 0) { BLE.poll(); tickPanel(); }
+  while ((long)(millis() - until) < 0) { BLE.poll(); tickPanel(); tickBuzz(); }
 }
 
 void setup() {
@@ -641,6 +729,7 @@ void setup() {
   // relays off BEFORE output mode: an output pin defaults low, which on an
   // active-low board is ON — set the level first and nothing flashes at boot.
   for (uint8_t p : RELAY_PINS) { digitalWrite(p, RELAY_OFF); pinMode(p, OUTPUT); }
+  buzzPark(); // silent from boot
   for (uint8_t p : MOTOR_PINS) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
   pinMode(ENA, OUTPUT); pinMode(ENB, OUTPUT);
   analogWrite(ENA, 0); analogWrite(ENB, 0); // stopped until told otherwise
@@ -660,6 +749,7 @@ void setup() {
   BLE.addService(sensorService);
   BLE.advertise();
   Serial.println("BLE advertising as " BOARD_NAME);
+  startPairTune(); // last, so the first note isn't held through the rest of setup()
 }
 
 // the one motion primitive: signed per-side pwm, -255..255, motor a = l, b = r.
@@ -948,6 +1038,20 @@ void handleCmd(String c) {
   else if (c.startsWith("go,")) startRoutine(c.substring(3));
   else if (c.startsWith("drv,")) startDrive(c);
   else if (c.startsWith("blk,")) handleBlk(c);
+  // console mute. off silences immediately, it doesn't wait for the level to clear.
+  // mute parks the pin outright rather than going through buzzSet's change gate: if
+  // buzzOn ever disagrees with the hardware, "already silent" is exactly the state
+  // that leaves it screaming with no way to stop it.
+  // bench hook: sound one pitch until the next buzz command.
+  else if (c.startsWith("hz,")) { tuneStep = PAIR_TUNE_N; buzzTone(c.substring(3).toInt()); }
+  // bench hook: replay the pairing tune without power-cycling the board.
+  else if (c == "tune") { Serial.println("tune: replaying pairing tune"); startPairTune(); }
+  else if (c.startsWith("buz,")) {
+    buzzEnabled = c.substring(4).toInt() != 0;
+    if (!buzzEnabled) { buzzHz = 0; tuneStep = PAIR_TUNE_N; buzzPark(); }
+    // "-" is no level, so unmuting re-arms on the next tick whatever the level is.
+    else buzzLevel = "-";
+  }
   else if (c.startsWith("cam,")) { camState = c.substring(4); if (!saver) updateOled(); }
   else if (c.startsWith("hud,")) {
     int sep = c.indexOf(',', 4);
@@ -1005,7 +1109,7 @@ void loop() {
     Serial.println(bleConnected ? "BLE central connected" : "BLE central gone");
     // a drop invalidates the hud, and the screensaver goes with it — nothing else can
     // switch one off, so it must never outlive the console that turned it on.
-    if (!bleConnected) { hudLevel = ""; hudMetrics = ""; saver = SCR_OFF; }
+    if (!bleConnected) { hudLevel = ""; hudMetrics = ""; saver = SCR_OFF; startPairTune(); }
     updateOled();
   }
 
@@ -1017,6 +1121,7 @@ void loop() {
   tickBlk();
 
   tickPanel();
+  tickBuzz();
 
   unsigned long now = millis();
   bool busy = routine || blkPc >= 0 || blkLoading || drvEnd;
