@@ -1,21 +1,17 @@
-// mission recorder — telemetry + cam stills to disk, replayed by the dashboard.
-// grabs happen server-side on purpose: the cam is a different origin, so a
-// <canvas> drawn from the dashboard's mjpeg <img> is tainted and can't be read
-// back. vision.js already owns the /capture path (and un-rotates), so reuse it.
+// run recorder: telemetry and findings written to disk so a run can be replayed
+// a run is a folder: telemetry samples, findings, and a meta.json
+
 const fs = require("fs");
 const path = require("path");
 const { grabFrame } = require("./vision");
 
 const DIR = path.join(__dirname, "recordings");
-// the ai-thinker board shares ram between /stream and /capture. 2 fps alongside
-// a live dashboard feed is what it takes without starving the stream.
-// IMPORTANT NOTE: fixed rate, no adaptive backoff — drop REC_FPS if the feed stutters.
+
 const FPS = parseFloat(process.env.REC_FPS || "2");
-const MAX_MIN = parseInt(process.env.REC_MAX_MIN || "15", 10); // safety stop; disk isn't infinite
+const MAX_MIN = parseInt(process.env.REC_MAX_MIN || "15", 10);
 
-let rec = null; // the run in progress, or null
+let rec = null;
 
-// ids are ours (slug + timestamp), so anything else in a url is an attack, not a typo.
 const runDir = (id) => (/^[A-Za-z0-9_-]+$/.test(id) ? path.join(DIR, id) : null);
 const slug = (s) => String(s || "").replace(/[^a-z0-9 _-]/gi, "").trim().slice(0, 40).replace(/\s+/g, "-");
 
@@ -32,9 +28,6 @@ function start(name) {
   return state();
 }
 
-// one still. a slow grab must never stack up behind the interval, hence `busy`.
-// the cam dropping is marked once, not once per failed grab — the replay draws
-// it as a "camera dead" stretch, so it needs the edges, not every miss.
 async function tick() {
   if (!rec || rec.busy) return;
   rec.busy = true;
@@ -51,15 +44,10 @@ async function tick() {
   } finally { if (rec) rec.busy = false; }
 }
 
-// every telemetry packet, stamped relative to the run start.
 function push(data) {
   if (rec) rec.packets.push({ ...data, t: Date.now() - rec.t0 });
 }
 
-// a beat worth seeing again on the timeline: a finding, an analysis, sage
-// talking, the cam dying. kinds are the client's EVENT_META keys.
-// IMPORTANT NOTE: capped at 500 — a long run with a chatty sage shouldn't
-// turn run.json into something the browser has to think about.
 function mark(kind, text) {
   if (!rec || rec.events.length >= 500) return;
   rec.events.push({ t: Date.now() - rec.t0, kind, text: String(text || "").trim().slice(0, 200) });
@@ -78,7 +66,6 @@ function stop() {
 
 const state = () => rec && { id: rec.id, name: rec.name, since: rec.t0, frames: rec.frames.length, packets: rec.packets.length };
 
-// a run with no run.json is either the one recording now or one a crash orphaned — skip both.
 function list() {
   if (!fs.existsSync(DIR)) return [];
   return fs.readdirSync(DIR).map((id) => {

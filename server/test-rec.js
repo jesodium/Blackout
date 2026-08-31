@@ -1,6 +1,5 @@
-// recorder self-check: no cam, no server. REC_FPS=0 kills the frame grabber so
-// this exercises the part with the logic in it — relative stamps, run.json,
-// listing, and that a junk id can't escape the recordings dir.
+// recorder: ids, double start, and what a run keeps
+
 process.env.REC_FPS = "0";
 const assert = require("assert");
 const fs = require("fs");
@@ -13,7 +12,7 @@ assert.equal(rec.start("again").id, started.id, "second start must not clobber t
 
 rec.push({ dist: 10 });
 const t = Date.now();
-while (Date.now() - t < 20); // busy-wait so the two packets get different stamps
+while (Date.now() - t < 20);
 rec.push({ dist: 20 });
 
 rec.mark("finding", "  relic fragment  ");
@@ -43,4 +42,4 @@ assert.equal(rec.remove(run.id), true);
 assert.equal(rec.read(run.id), null, "gone after delete");
 
 console.log("recorder ok");
-process.exit(0); // vision.js holds an mdns socket open
+process.exit(0);

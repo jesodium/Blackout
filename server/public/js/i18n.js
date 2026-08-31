@@ -1,16 +1,8 @@
-/* ---------------- i18n (en/es) ----------------
-   flat key dict. t(key, params) does {param} interpolation.
-   language is module-scoped + persisted; app re-renders on change so every
-   t() call (read at render time) picks up the new language. */
-
 export const LANGS = [
   { code: "en", label: "English", voice: "en-US-AvaNeural", speech: "en-US" },
   { code: "es", label: "Español", voice: "es-ES-ElviraNeural", speech: "es-ES" },
 ];
 
-// fixed onboarding lines — pre-generated as static audio server-side
-// so playback is instant. keys match audio filenames:
-// /audio/onboard-<lang>-<key>.mp3
 export const ONBOARDING = {
   en: {
     intro: "Hey — I'm Sage, the AI running the recon unit you're sending into the dark. Walk me through the job, one thing at a time.",
@@ -28,9 +20,11 @@ export const ONBOARDING = {
   },
 };
 
+// ---- strings ----
+// keys are prefixed by where they show up (mast., zone., ask., …); both languages
+// carry the same set, and t() falls back to english on a miss.
 const DICT = {
   en: {
-    /* masthead */
     "skip": "Skip to sensor readings",
     "mast.console": "Flight Console · WRO 2026",
     "mast.port": "Port",
@@ -129,8 +123,6 @@ const DICT = {
     "log.bridgeRepair": "Re-pairing Bluetooth & restarting bridge…",
     "toast.bridgeOn": "BT bridge started",
     "toast.bridgeOff": "BT bridge stopped",
-
-    /* orientation */
     "zone.orientation": "Orientation",
     "zone.camera": "Camera Feed",
     "cam.tag.loading": "Link · Connecting",
@@ -162,8 +154,6 @@ const DICT = {
     "hud.roll": "Roll",
     "hud.pitch": "Pitch",
     "hud.yaw": "Yaw",
-
-    /* environment + sensors */
     "zone.environment": "Environment",
     "tag.channels": "05 ch",
     "sensor.temp": "Temp",
@@ -188,15 +178,11 @@ const DICT = {
     "st.warning": "Warning",
     "st.poor": "Poor",
     "st.moderate": "Moderate",
-
-    /* trends */
     "zone.trends": "Trends",
     "trend.dist": "Dist",
     "trend.humid": "Humid",
     "trend.temp": "Temp",
     "trend.awaiting": "A W A I T I N G   T E L E M E T R Y",
-
-    /* analysis / memory */
     "zone.analysis": "Analysis",
     "tag.found": "{n} found",
     "tag.nominal": "nominal",
@@ -205,8 +191,6 @@ const DICT = {
     "find.tempUp": "Temperature climbing",
     "find.tempHigh": "High temperature detected",
     "find.obstacle": "Obstacle / wall encountered",
-
-    /* agent */
     "zone.agent": "Agent",
     "badge.standby": "Standby",
     "badge.online": "Online",
@@ -289,8 +273,6 @@ const DICT = {
     "verdict.awaiting": "Awaiting Data",
     "verdict.noTelemetry": "No telemetry yet",
     "verdict.nominal": "All readings nominal",
-
-    /* chat sessions */
     "chat.sessions": "Sessions",
     "chat.empty": "No chats created.",
     "chat.untitled": "Untitled",
@@ -299,8 +281,6 @@ const DICT = {
     "chat.delete": "Delete chat",
     "chat.new": "+ New Chat",
     "chat.newTitle": "New Recon",
-
-    /* briefing wizard */
     "brief.objLabel": "Objective",
     "brief.objQ": "What's the job down there — what am I going in to do?",
     "brief.objPh": "e.g. find a route through the collapsed section, check for survivors",
@@ -320,8 +300,6 @@ const DICT = {
     "brief.next": "Next",
     "brief.speak": "Speak",
     "brief.listening": "● Listening…",
-
-    /* ask */
     "ask.mic": "Ask Sage",
     "ask.pick": "Suggested questions",
     "ask.listening": "● Listening…",
@@ -330,8 +308,6 @@ const DICT = {
     "ask.s2": "How humid is it?",
     "ask.s3": "Are we level?",
     "ask.s4": "Push on or back out?",
-
-    /* logs */
     "zone.logs": "Activity Log",
     "log.tabAll": "All",
     "log.tabSystem": "System",
@@ -366,8 +342,6 @@ const DICT = {
     "sage.backAck": "Backing up, {s}s.",
     "sage.leftAck": "Pivoting left, {s}s.",
     "sage.rightAck": "Pivoting right, {s}s.",
-
-    /* serial */
     "zone.serial": "Serial Monitor",
     "serial.pause": "Pause",
     "serial.resume": "Resume",
@@ -376,8 +350,6 @@ const DICT = {
     "serial.hide": "Hide",
     "serial.toggleTitle": "Toggle (backtick `)",
     "serial.empty": "No serial traffic yet…",
-
-    /* ticker */
     "tick.temp": "Temp",
     "tick.humid": "Humid",
     "tick.pressure": "Pres",
@@ -388,13 +360,9 @@ const DICT = {
     "tick.link": "Link",
     "link.live": "Live",
     "link.down": "Down",
-
-    /* colophon */
     "colo.field": "Field Console",
     "colo.sensorHub": "Sensor Hub",
     "colo.motor": "Motor",
-
-    /* cockpit rework */
     "stage.title": "Live View",
     "zone.drive": "Drive",
     "drive.routines": "Routines",
@@ -433,8 +401,6 @@ const DICT = {
     "update.done": "Update complete.",
     "update.error": "Update failed. Check the log above.",
     "update.close": "Close",
-
-    /* first-run tour */
     "tour.skip": "Skip tour",
     "tour.next": "Next",
     "tour.done": "Got it",
@@ -460,7 +426,6 @@ const DICT = {
     "tour.mirrorShare.t": "Judges' tablet",
     "tour.mirrorShare.b": "Open the LAN address on any tablet for a live mirror. It stays view-only until you grant control from Devices.",
   },
-
   es: {
     "skip": "Saltar a las lecturas de sensores",
     "mast.console": "Consola de Vuelo · WRO 2026",
@@ -560,7 +525,6 @@ const DICT = {
     "log.bridgeRepair": "Re-emparejando Bluetooth y reiniciando puente…",
     "toast.bridgeOn": "Puente BT iniciado",
     "toast.bridgeOff": "Puente BT detenido",
-
     "zone.orientation": "Orientación",
     "zone.camera": "Cámara",
     "cam.tag.loading": "Enlace · Conectando",
@@ -592,7 +556,6 @@ const DICT = {
     "hud.roll": "Alabeo",
     "hud.pitch": "Cabeceo",
     "hud.yaw": "Guiñada",
-
     "zone.environment": "Entorno",
     "tag.channels": "05 ca",
     "sensor.temp": "Temp",
@@ -617,13 +580,11 @@ const DICT = {
     "st.warning": "Advertencia",
     "st.poor": "Mala",
     "st.moderate": "Moderada",
-
     "zone.trends": "Tendencias",
     "trend.dist": "Dist",
     "trend.humid": "Humedad",
     "trend.temp": "Temp",
     "trend.awaiting": "E S P E R A N D O   T E L E M E T R Í A",
-
     "zone.analysis": "Análisis",
     "tag.found": "{n} hallados",
     "tag.nominal": "nominal",
@@ -632,7 +593,6 @@ const DICT = {
     "find.tempUp": "Temperatura subiendo",
     "find.tempHigh": "Temperatura alta detectada",
     "find.obstacle": "Obstáculo / muro encontrado",
-
     "zone.agent": "Agente",
     "badge.standby": "En Espera",
     "badge.online": "En Línea",
@@ -715,7 +675,6 @@ const DICT = {
     "verdict.awaiting": "Esperando Datos",
     "verdict.noTelemetry": "Aún sin telemetría",
     "verdict.nominal": "Todas las lecturas nominales",
-
     "chat.sessions": "Sesiones",
     "chat.empty": "No hay chats creados.",
     "chat.untitled": "Sin título",
@@ -724,7 +683,6 @@ const DICT = {
     "chat.delete": "Eliminar chat",
     "chat.new": "+ Nuevo Chat",
     "chat.newTitle": "Nuevo Reconocimiento",
-
     "brief.objLabel": "Objetivo",
     "brief.objQ": "¿Cuál es el trabajo allí abajo — qué voy a hacer?",
     "brief.objPh": "p. ej. encontrar una ruta por la sección colapsada, buscar supervivientes",
@@ -744,7 +702,6 @@ const DICT = {
     "brief.next": "Siguiente",
     "brief.speak": "Hablar",
     "brief.listening": "● Escuchando…",
-
     "ask.mic": "Preguntar a Sage",
     "ask.pick": "Preguntas sugeridas",
     "ask.listening": "● Escuchando…",
@@ -753,7 +710,6 @@ const DICT = {
     "ask.s2": "¿Cuánta humedad hay?",
     "ask.s3": "¿Estamos nivelados?",
     "ask.s4": "¿Seguir o retroceder?",
-
     "zone.logs": "Registro de Actividad",
     "log.tabAll": "Todo",
     "log.tabSystem": "Sistema",
@@ -788,7 +744,6 @@ const DICT = {
     "sage.backAck": "Retrocediendo, {s}s.",
     "sage.leftAck": "Girando a la izquierda, {s}s.",
     "sage.rightAck": "Girando a la derecha, {s}s.",
-
     "zone.serial": "Monitor Serial",
     "serial.pause": "Pausar",
     "serial.resume": "Reanudar",
@@ -797,7 +752,6 @@ const DICT = {
     "serial.hide": "Ocultar",
     "serial.toggleTitle": "Alternar (tecla `)",
     "serial.empty": "Sin tráfico serial aún…",
-
     "tick.temp": "Temp",
     "tick.humid": "Húmd",
     "tick.pressure": "Pres",
@@ -808,11 +762,9 @@ const DICT = {
     "tick.link": "Enlace",
     "link.live": "Activo",
     "link.down": "Caído",
-
     "colo.field": "Consola de Campo",
     "colo.sensorHub": "Concentrador",
     "colo.motor": "Motor",
-
     "stage.title": "Vista en Vivo",
     "zone.drive": "Control",
     "drive.routines": "Rutinas",
@@ -851,8 +803,6 @@ const DICT = {
     "update.done": "Actualización completa.",
     "update.error": "La actualización falló. Revisa el registro.",
     "update.close": "Cerrar",
-
-    /* tour inicial */
     "tour.skip": "Saltar tutorial",
     "tour.next": "Siguiente",
     "tour.done": "Entendido",
@@ -880,6 +830,7 @@ const DICT = {
   },
 };
 
+// ---- lookup ----
 let LANG = (() => {
   const saved = localStorage.getItem("lang");
   return LANGS.some(l => l.code === saved) ? saved : "en";
