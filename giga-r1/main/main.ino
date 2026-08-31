@@ -603,8 +603,9 @@ void setup() {
 
   pinMode(ECHO_PIN, INPUT_PULLDOWN);
 
-  Wire.begin();
-  bmeOk = bme.begin(0x76) || bme.begin(0x77);
+  // bme sits on SDA1/SCL1 (d102/d101 = Wire1), not the d20/d21 Wire bus.
+  Wire1.begin();
+  bmeOk = bme.begin(0x76, &Wire1) || bme.begin(0x77, &Wire1);
   Serial.println(bmeOk ? "BME280 ok" : "BME280 not found");
 
   Wire2.begin();
@@ -1014,7 +1015,7 @@ void loop() {
       else if (++bmeMiss >= BME_MISS_MAX) { bmeOk = false; pressure = 0; }
     } else if (now - lastBmeTry >= BME_RETRY_MS) {
       lastBmeTry = now;
-      bmeOk = bme.begin(0x76) || bme.begin(0x77);
+      bmeOk = bme.begin(0x76, &Wire1) || bme.begin(0x77, &Wire1);
       if (bmeOk) { bmeMiss = 0; Serial.println("BME280 back"); }
     }
     if (luxOk) {
