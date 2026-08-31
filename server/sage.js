@@ -1,18 +1,10 @@
-// sage answers in json. parseSage is tolerant
-// strips json fences, grabs outer {...}, voices raw string on failure
-// kept standalone so it's testable without booting server
-// important: prompt-instructed json, not response_format:json_object
-// not every provider on the fallback list supports it. switch once both do.
+// parsing for sage's json replies — the tool call rides in the json, not in a
+// provider function-calling api, because the three brains spell that three ways.
+
 const SAGE_STATUS = new Set(["clear", "caution", "danger"]);
 
-// tools sage can reach for on her own turn. the loop in server.js runs the one she
-// names, hands her the result and asks again — that is the whole agent loop.
-// "camera" is the old action:"analyze" under a name that reads like a tool; the
-// other prompts still say action, so that spelling keeps working.
 const SAGE_TOOLS = new Set(["camera", "sensors"]);
-// "sensors:temperature" — the part after the colon is what she went looking for,
-// in her own words and her own language, so the transcript can say "Sage used
-// temperature readings" instead of the generic tool name.
+
 function parseTool(o) {
   const raw = typeof o.tool === "string" ? o.tool.trim() : "";
   const [head, ...rest] = raw.split(":");
@@ -21,18 +13,13 @@ function parseTool(o) {
   return { tool: o.action === "analyze" ? "camera" : null, toolArg: null };
 }
 
-// lamp level 0-255. non-number or out-of-range -> null ("leave it alone")
 function parseLed(v) {
   const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
   return Number.isFinite(n) ? Math.max(0, Math.min(255, Math.round(n))) : null;
 }
 
-// a reason to keep the last 10 seconds of telemetry, e.g. "readings are jumping and
-// I can't tell why". null nearly every turn.
 const parseSnapshot = (v) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 140) : null);
 
-// one line describing a window of telemetry: what moved, and between what. this is
-// what the operator actually reads — the raw packets stay in the json on disk.
 const SNAP_FIELDS = [["temp", "\u00b0C"], ["humid", "%"], ["dist", "cm"], ["lux", "lx"], ["alt", "m"]];
 function snapSummary(packets) {
   if (!packets.length) return "no readings";
@@ -48,23 +35,13 @@ function snapSummary(packets) {
   return `${packets.length} readings over ${span.toFixed(1)}s \u00b7 ${bits.join(", ")}`;
 }
 
-// a move sage wants to make, written as BLK source (see prompts/blk.md). it is a
-// *proposal*: nothing turns until the operator presses RUN on the card. BLK and not
-// a drive command because `forward until dist < 5` compiles onto the board's own vm —
-// the stop happens in one loop() pass instead of a ble round trip, which is the
-// difference between stopping at 5cm and hitting the wall.
 const parseMove = (v) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 400) : null);
 
-// a discovery worth keeping, e.g. "drawing detected: looks like a bison". null most turns.
-// capped at 140 chars for one panel row.
 function parseFinding(v) {
   const s = typeof v === "string" ? v.trim() : "";
   return s ? s.slice(0, 140) : null;
 }
 
-// the agent loop is bounded on purpose: every extra pass is another paid round
-// trip the operator sits through, and a model that keeps asking for the camera
-// would never answer. the last pass always answers instead of reaching again.
 const wantsTool = (sage, step, max) => !!(sage && sage.tool) && step < max - 1;
 
 function parseSage(raw) {
@@ -83,7 +60,7 @@ function parseSage(raw) {
         snapshot: parseSnapshot(o.snapshot),
         move: parseMove(o.move),
       };
-    } catch { /* fall through to raw */ }
+    } catch {  }
   }
   return { text: s, status: null, action: null, tool: null, toolArg: null, led: null, finding: null, snapshot: null, move: null };
 }

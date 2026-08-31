@@ -1,17 +1,14 @@
-// esp32-cam (ai-thinker) — standalone mjpeg streamer
-// dashboard gets stream directly over http
-// stream url: http://blackout-cam.local/stream (or ip on serial)
-// single file — all espressif's camerawebserver example does for mjpeg
+// mjpeg streamer on its own wifi and power. the flash lamp is the boot indicator:
+// slow blink booting, fast blink on error, steady dim once connected — setup() only.
+
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include "esp_http_server.h"
-#include "arduino_secrets.h"  // secret_*_home / secret_*_hotspot — gitignored, copy from .example
+#include "arduino_secrets.h"
 
-// --- LED indicator ---
-// flash LED (GPIO 4) for visual debug: boot = slow blink, error = rapid blink, connected = steady dim
 #define LED_PIN 4
-#define LED_BRIGHT 32   // steady brightness when connected (0-255)
+#define LED_BRIGHT 32
 #define LED_OFF 0
 
 enum LedMode { LED_BOOT, LED_CONNECTED, LED_ERROR };
@@ -25,7 +22,7 @@ static void ledUpdate() {
   switch (ledMode) {
     case LED_BOOT:      interval = 500; break;
     case LED_ERROR:     interval = 100; break;
-    case LED_CONNECTED: ledcWrite(LED_PIN, LED_BRIGHT); return; // steady
+    case LED_CONNECTED: ledcWrite(LED_PIN, LED_BRIGHT); return;
   }
   if (now - ledPrevMs >= interval) {
     ledPrevMs = now;
@@ -34,27 +31,17 @@ static void ledUpdate() {
   }
 }
 
-// -> http://blackout-cam.local/stream
-// important note: don't rely on this name — use the cam's ip instead
-// the tp-link router hijacks .local and answers with 127.0.0.1
-// real fixes: disable router's .local interception or set mac dns off 192.168.1.1
-// registration stays for networks that behave.
+// ---- wifi ----
 #define MDNS_NAME "blackout-cam"
 
-// --- network config ---
-// pick one: secret_ssid_home, secret_ssid_school, or secret_ssid_hotspot
-// (creds in arduino_secrets.h, gitignored)
 #define CAM_NETWORK SECRET_SSID_HOTSPOT
 
-// static ip for iphone hotspot (172.20.10.0/28, gateway .1, usable .2-.14,
-// cam takes .10 so phone's dhcp — starting at .2 — won't collide)
-// note: android hotspot uses a different subnet — change all three if switching phones
-#define CAM_USE_STATIC true   // set true for hotspot static ip
+#define CAM_USE_STATIC true
 IPAddress CAM_IP (172, 20, 10, 10);
 IPAddress CAM_GW (172, 20, 10, 1);
-IPAddress CAM_MASK(255, 255, 255, 240);   // /28
+IPAddress CAM_MASK(255, 255, 255, 240);
 
-// ai-thinker esp32-cam pin map (don't change unless you have a different board)
+// ---- ai-thinker pinout ----
 #define PWDN_GPIO_NUM  32
 #define RESET_GPIO_NUM -1
 #define XCLK_GPIO_NUM   0
@@ -72,13 +59,14 @@ IPAddress CAM_MASK(255, 255, 255, 240);   // /28
 #define HREF_GPIO_NUM  23
 #define PCLK_GPIO_NUM  22
 
+// ---- http handlers ----
+// /stream lives on its own server on :81 and its handler never returns, so there is
+// only ever one stream
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char* STREAM_CT = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
 static const char* STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
 static const char* STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
 
-// single-shot jpeg. returns immediately so it can share a server task.
-// sage grabs this (see server/vision.js) — never the stream (infinite loop).
 static esp_err_t capture_handler(httpd_req_t* req) {
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) { httpd_resp_send_500(req); return ESP_FAIL; }
@@ -96,7 +84,7 @@ static esp_err_t stream_handler(httpd_req_t* req) {
   while (true) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) return ESP_FAIL;
-    // send boundary, header, jpeg. any failure = client gone, stop
+
     if (httpd_resp_send_chunk(req, STREAM_BOUNDARY, strlen(STREAM_BOUNDARY)) != ESP_OK ||
         httpd_resp_send_chunk(req, part, snprintf(part, sizeof(part), STREAM_PART, fb->len)) != ESP_OK ||
         httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len) != ESP_OK) {
@@ -108,8 +96,6 @@ static esp_err_t stream_handler(httpd_req_t* req) {
   return ESP_OK;
 }
 
-// live sensor control: get /control?var=<name>&val=<value>
-// returns "ok:<name>=<val>" on success. cors headers set for dashboard
 static esp_err_t control_handler(httpd_req_t* req) {
   char buf[64] = {0}, var[32] = {0}, val[16] = {0};
   if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) != ESP_OK)
@@ -120,10 +106,7 @@ static esp_err_t control_handler(httpd_req_t* req) {
   if (!s) { httpd_resp_send_500(req); return ESP_FAIL; }
   int v = atoi(val);
   int ok = -1;
-  // framesize is the only one that reallocates the frame buffer. it can't go above
-  // whatever c.frame_size was at init (that sized the psram allocation) — SVGA here,
-  // so 0..FRAMESIZE_SVGA(8). higher res = fewer fps over wifi; svga is the fps/detail
-  // pick for driving. bump c.frame_size below if you want the ceiling raised (uxga max).
+
   if      (!strcmp(var, "framesize"))    ok = s->set_framesize(s, (framesize_t)v);
   else if (!strcmp(var, "brightness"))   ok = s->set_brightness(s, v);
   else if (!strcmp(var, "contrast"))     ok = s->set_contrast(s, v);
@@ -154,8 +137,6 @@ static esp_err_t control_handler(httpd_req_t* req) {
 }
 
 void startServer() {
-  // two instances on purpose: each httpd runs one handler task, and stream_handler
-  // never returns. so /capture on :80 and /stream on :81 (own ctrl_port so both start)
   httpd_handle_t main_srv = NULL, stream_srv = NULL;
 
   httpd_config_t mc = HTTPD_DEFAULT_CONFIG();
@@ -168,25 +149,20 @@ void startServer() {
 
   httpd_config_t sc = HTTPD_DEFAULT_CONFIG();
   sc.server_port = 81;
-  sc.ctrl_port   = 32769;  // must differ from mc's 32768 or the 2nd start fails
-  // suspected: "feed never returns after analysis until refresh".
-  // stream handler never returns while a client is connected, so the task
-  // can't accept a new /stream until the loop breaks. dead sockets fill
-  // the pool and server refuses new connections. lru_purge_enable lets
-  // oldest sockets get reclaimed instead. timeouts shorten wait before
-  // handler exits.
-  // important note: unconfirmed on hardware — verify on serial before trusting
-  sc.lru_purge_enable  = true; // reclaim oldest socket instead of refusing new ones
-  sc.send_wait_timeout = 2;    // seconds; stalled write => handler exits sooner
+  sc.ctrl_port   = 32769;
+
+  sc.lru_purge_enable  = true;
+  sc.send_wait_timeout = 2;
   sc.recv_wait_timeout = 2;
   httpd_uri_t stream_uri = { "/stream", HTTP_GET, stream_handler, NULL };
   if (httpd_start(&stream_srv, &sc) == ESP_OK)
     httpd_register_uri_handler(stream_srv, &stream_uri);
 }
 
+// ---- setup ----
 void setup() {
   Serial.begin(115200);
-  ledcAttach(LED_PIN, 5000, 8); ledcWrite(LED_PIN, 0);  // flash LED off, controlled by ledUpdate()
+  ledcAttach(LED_PIN, 5000, 8); ledcWrite(LED_PIN, 0);
 
   camera_config_t c = {};
   c.ledc_channel = LEDC_CHANNEL_0; c.ledc_timer = LEDC_TIMER_0;
@@ -197,47 +173,27 @@ void setup() {
   c.pin_pwdn=PWDN_GPIO_NUM; c.pin_reset=RESET_GPIO_NUM;
   c.xclk_freq_hz = 20000000;
   c.pixel_format = PIXFORMAT_JPEG;
-  // psram present: bigger frame + double buffer.
-  // no psram: smaller frame so it fits, or camera_init fails.
-  // important note: bigger frame + lower quality = more wifi bandwidth -> lower fps
-  // svga@10 is the sweet spot for a moving robot
-  // frame_size doesn't change field of view — that's the lens
+
   if (psramFound()) { c.frame_size = FRAMESIZE_SVGA; c.jpeg_quality = 10; c.fb_count = 2; }
   else              { c.frame_size = FRAMESIZE_QVGA; c.jpeg_quality = 15; c.fb_count = 1; }
-  // with fb_count=2 the default (grab_when_empty) hands out the *older* buffered
-  // frame, so fpv runs a whole frame behind reality. grab_latest drops the stale
-  // one — you see now, not 100ms ago. costs nothing but the skipped frame.
+
   c.grab_mode = CAMERA_GRAB_LATEST;
 
-  // don't bail on camera failure — bring wifi up first so the board is
-  // always reachable and can report why it's broken
   bool camOk = esp_camera_init(&c) == ESP_OK;
   if (!camOk) { Serial.println("camera init failed — check ribbon cable seating / power"); ledMode = LED_ERROR; }
 
-  // defective module mounted upside-down: vflip+hmirror = 180° in the sensor
-  // this fixes only the 180° component — the 90° mount rotation is still
-  // done in css and vision.js; the ov2640 can't rotate 90 in-sensor
-  // important note: hardware defect flip; remove these if the module is swapped
   if (camOk) {
     sensor_t* s = esp_camera_sensor_get();
     s->set_vflip(s, 1);
     s->set_hmirror(s, 1);
-    s->set_brightness(s, -1);  // tone down — too bright
-    s->set_contrast(s, -1);    // less harsh
-    // the pink/magenta wash is white balance, not brightness. force the full awb
-    // chain on explicitly — mode 0 = auto. all three matter: whitebal alone leaves
-    // the gains frozen at whatever the sensor booted with, which is the pink.
+    s->set_brightness(s, -1);
+    s->set_contrast(s, -1);
+
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
     s->set_wb_mode(s, 0);
-    // important note: if it's still pink with awb on, it's the module — cheap
-    // ai-thinker clones ship with no ir-cut filter, so infrared bleeds in and reads
-    // as magenta. no register fixes that. sweep wb_mode 1-4 over /control to
-    // compensate, or swap the module. see docs for the live-tuning curl.
   }
 
-  // join the chosen network (cam_network define above). static ip for hotspot,
-  // dhcp otherwise. simple — no auto-scan, no priority guessing
   const char *ssid = CAM_NETWORK;
   const char *pass =
     ssid == SECRET_SSID_HOME    ? SECRET_PASS_HOME :
@@ -249,24 +205,23 @@ void setup() {
     Serial.println("WiFi.config failed — falling back to DHCP");
   WiFi.begin(ssid, pass);
   for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
-    for (int j = 0; j < 10; j++) { delay(50); ledUpdate(); } // 500ms with LED animation
-    Serial.printf("st=%d\n", WiFi.status()); // 1=no_ssid 4=fail 6=disconnect
+    for (int j = 0; j < 10; j++) { delay(50); ledUpdate(); }
+    Serial.printf("st=%d\n", WiFi.status());
   }
   if (WiFi.status() != WL_CONNECTED) {
     Serial.printf("WiFi FAILED, status=%d — 1=SSID-not-found 4=bad-password\n", WiFi.status());
     ledMode = LED_ERROR;
-    // reboot and retry (~20s/cycle) instead of sitting dead until a power cycle
-    // covers "hotspot turned on after cam booted"
+
     Serial.println("rebooting in 5s to retry...");
     for (int i = 0; i < 100; i++) { delay(50); ledUpdate(); }
     ESP.restart();
   }
-  // show connected briefly, then release LED for camera flash control
+
   if (camOk) {
     ledMode = LED_CONNECTED;
-    for (int i = 0; i < 40; i++) { delay(50); ledUpdate(); } // 2s steady dim
+    for (int i = 0; i < 40; i++) { delay(50); ledUpdate(); }
   }
-  ledcWrite(LED_PIN, 0); // LED off — camera software controls flash via control?var=led
+  ledcWrite(LED_PIN, 0);
   MDNS.begin(MDNS_NAME);
   Serial.printf("\nnet up: http://%s  cam=%s\n",
                 WiFi.localIP().toString().c_str(), camOk ? "OK" : "FAIL");
@@ -274,4 +229,4 @@ void setup() {
   startServer();
 }
 
-void loop() { delay(1000); }  // all work is in http handlers; LED is off after boot
+void loop() { delay(1000); }

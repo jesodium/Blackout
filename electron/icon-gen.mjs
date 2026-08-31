@@ -1,6 +1,3 @@
-// One-shot: server/public/brand.svg -> build/icon.png (1024) + build/icon.icns.
-// Uses server's sharp + macOS sips/iconutil — no new deps. Outputs are committed;
-// packaging never runs this.
 import { createRequire } from "module";
 import { execFileSync } from "child_process";
 import fs from "fs";

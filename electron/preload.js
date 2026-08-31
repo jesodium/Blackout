@@ -1,5 +1,3 @@
-// The whole desktop surface the dashboard sees. Browser tabs have no
-// window.blackout — every renderer use is feature-detected on it.
 const { contextBridge, ipcRenderer } = require("electron");
 
 const sub = (channel) => (cb) => {
@@ -10,14 +8,14 @@ const sub = (channel) => (cb) => {
 
 contextBridge.exposeInMainWorld("blackout", {
   desktop: true,
-  platform: process.platform, // "darwin" hides a hiddenInset window's traffic lights over the topbar's left edge
-  onBleDevices: sub("ble:devices"), // cb([{deviceId, deviceName}]) — grows as devices appear
+  platform: process.platform,
+  onBleDevices: sub("ble:devices"),
   onBleClosed: sub("ble:closed"),
-  selectBleDevice: (deviceId) => ipcRenderer.send("ble:select", deviceId ?? ""), // "" cancels
-  saveFile: (opts) => ipcRenderer.invoke("dialog:save", opts), // {defaultName, data, filters} -> bool
-  openFile: (opts) => ipcRenderer.invoke("dialog:open", opts), // {filters} -> {name, text} | null
-  onSettingsOpen: sub("settings:open"), // menu → Settings / API Keys… (Cmd+,)
-  getSettings: () => ipcRenderer.invoke("settings:get"), // -> {GEMINI_API_KEY, GEMINI_MODEL, CEREBRAS_API_KEY, CEREBRAS_MODEL, DEEPGRAM_API_KEY, TTS_VOICE}
-  saveSettings: (values) => ipcRenderer.invoke("settings:save", values), // -> true
+  selectBleDevice: (deviceId) => ipcRenderer.send("ble:select", deviceId ?? ""),
+  saveFile: (opts) => ipcRenderer.invoke("dialog:save", opts),
+  openFile: (opts) => ipcRenderer.invoke("dialog:open", opts),
+  onSettingsOpen: sub("settings:open"),
+  getSettings: () => ipcRenderer.invoke("settings:get"),
+  saveSettings: (values) => ipcRenderer.invoke("settings:save", values),
   relaunch: () => ipcRenderer.invoke("app:relaunch"),
 });

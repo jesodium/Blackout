@@ -9,18 +9,19 @@
 <link rel="icon" href="assets/mark.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<!-- Archivo is the console's ui face — the agent tile is a copy of it, so it needs the same type -->
+
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
 <style>
-/* ============ tokens ============ */
+
+/* ---- tokens ---- */
 :root{
   --bg:#0e0e10; --bg-2:#141416;
   --line:rgba(255,255,255,.09); --line-2:rgba(255,255,255,.18);
   --ink:#f3f0ea; --muted:#a29c93; --dim:#6d6862;
   --accent:#e0a45c; --accent-hi:#efb571; --accent-ink:#1a1409;
-  --go:#2fb182;                               /* the console's "clear" green, for sage */
+  --go:#2fb182;
   --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
-  --serif:"Instrument Serif",Georgia,serif;   /* codenames only — the one voice that isn't machine */
+  --serif:"Instrument Serif",Georgia,serif;
   --ease:cubic-bezier(.22,1,.36,1);
 }
 *{margin:0;padding:0;box-sizing:border-box}
@@ -38,12 +39,10 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .head{margin-bottom:34px}
 .head h2{font-size:clamp(1.8rem,3.6vw,2.5rem);margin-bottom:12px}
 
-/* one fade-up, only when js is there to switch it back on */
 .js [data-reveal]{opacity:0;transform:translateY(12px);
   transition:opacity 500ms var(--ease),transform 500ms var(--ease)}
 .js [data-reveal].in{opacity:1;transform:none}
 
-/* ============ buttons ============ */
 .btn{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;border-radius:10px;
   font-size:13px;letter-spacing:.04em;border:1px solid var(--line-2);cursor:pointer;background:transparent;color:var(--ink);
   transition:background-color 150ms ease,border-color 150ms ease,color 150ms ease}
@@ -52,10 +51,6 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .btn-primary:hover{background:var(--accent-hi);border-color:var(--accent-hi)}
 .btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
 
-/* ============ topbar — floating oval ============ */
-/* fixed, not sticky: the pill rides over the hero video instead of pushing it
-   down, so the hero gets the whole viewport. .hero's 120px top padding already
-   leaves the clearance this needs. */
 .top{position:fixed;top:14px;left:0;right:0;z-index:20}
 .top .wrap{display:flex;align-items:center;gap:18px;min-height:56px;
   padding:0 10px 0 22px;border:1px solid var(--line-2);border-radius:999px;
@@ -63,12 +58,12 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
   box-shadow:0 14px 38px -22px #000,inset 0 1px 0 rgba(255,255,255,.05)}
 .top .links{display:flex;gap:18px;margin-left:auto;font-size:12.5px;color:var(--muted)}
 .top .links a:hover{color:var(--accent)}
+
+/* ---- hero ---- */
 .top .btn{padding:9px 18px;font-size:12px;border-radius:999px}
-/* links carry the margin-left:auto that pushes the cta right — hiding them
-   would strand the cta next to the mark, so it takes the auto margin over */
+
 @media (max-width:680px){.top .links{display:none}.top .btn{margin-left:auto}}
 
-/* ============ hero ============ */
 .hero{position:relative;isolation:isolate;border-top:0;overflow:hidden;min-height:100svh;
   display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;
   padding:120px 24px 90px}
@@ -77,7 +72,7 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .hero .wash{position:absolute;inset:0;z-index:-2;background:
   radial-gradient(120% 90% at 50% 30%,rgba(10,10,12,.25) 0%,rgba(10,10,12,.7) 62%,rgba(10,10,12,.97) 100%),
   linear-gradient(0deg,var(--bg) 0%,rgba(10,10,12,.55) 26%,rgba(10,10,12,.15) 55%)}
-/* scanline sweep */
+
 .hero .scan{position:absolute;inset:0;z-index:-1;pointer-events:none;overflow:hidden}
 .hero .scan::before{content:"";position:absolute;left:0;right:0;height:120px;top:-140px;
   background:linear-gradient(0deg,transparent,rgba(224,164,92,.06),transparent);
@@ -98,7 +93,6 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
   text-transform:uppercase;color:#fff}
 .wro img{height:20px;width:auto;background:#f3f0ea;border-radius:4px;padding:4px 7px;box-sizing:content-box}
 
-/* ============ telemetry ticker ============ */
 .ticker{border-bottom:1px solid var(--line);overflow:hidden;padding:18px 0;
   -webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);
   mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)}
@@ -108,24 +102,20 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .ticker i{font-style:normal;color:var(--accent)}
 @keyframes marquee{to{transform:translateX(-50%)}}
 
-/* ============ the run — four plain columns ============ */
 .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:22px}
-/* hover drags the frame open from its bottom-left corner: out to the right and up into the
-   gap above, so it never covers its own label, and the columns after it slide over by exactly
-   what it gained — nothing overlaps, the row just makes room */
+
 .step{position:relative;transition:transform 340ms var(--ease)}
 .step .shot{overflow:hidden;border:1px solid var(--line);border-radius:10px;margin-bottom:14px;
   transform-origin:0 100%;
   transition:transform 340ms var(--ease),border-color 200ms ease,box-shadow 340ms ease}
 .step:last-child .shot{transform-origin:100% 100%}
-/* only where there's a real pointer and four columns to shove — on touch and on the stacked
-   layouts the push has nowhere to go and would run off the page */
+
 @media (hover:hover) and (min-width:901px){
-  .steps{margin-top:72px}          /* headroom for the frame to grow up into */
+  .steps{margin-top:72px}
   .step:hover{z-index:2}
   .step:hover .shot{transform:scale(1.4);border-color:var(--line-2);box-shadow:0 18px 46px rgba(0,0,0,.55)}
   .step:hover ~ .step{transform:translateX(40%)}
-  /* the last column has nothing to its right, so it opens leftward and shoves the others instead */
+
   .steps:has(.step:last-child:hover) .step:not(:last-child){transform:translateX(-40%)}
 }
 .step img,.step video{width:100%;aspect-ratio:16/10;object-fit:cover}
@@ -134,14 +124,12 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 @media (max-width:900px){.steps{grid-template-columns:1fr 1fr}}
 @media (max-width:520px){.steps{grid-template-columns:1fr}}
 
-/* ============ the console — a collage of working pieces of the app ============
-   three of the four tiles are not pictures of the console, they *are* it: the camera
-   picker, sage's face and the routine builder run right here. only the two frames that
-   need real hardware behind them (the rover render, the fpv feed) are stills. */
 .collage{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;align-items:stretch}
 .tile{position:relative;display:flex;flex-direction:column;background:var(--bg-2);
   border:1px solid var(--line);border-radius:12px;overflow:hidden;
   transition:border-color 200ms ease}
+
+/* ---- tiles ---- */
 .tile:hover,.tile:focus-within{border-color:var(--line-2)}
 .tile .cap{padding:13px 16px 15px;border-top:1px solid var(--line);background:var(--bg-2)}
 .tile h3{font-size:12px;letter-spacing:.14em;text-transform:uppercase;font-weight:500;margin-bottom:6px}
@@ -153,9 +141,6 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .t-fpv{grid-column:span 7}
 .t-blk{grid-column:span 12;overflow:visible}
 
-/* --- the 3d viewport: the console's own scene (js/scene.js, three.js), running here.
-   the chrome around it is the console's too, so the tokens are re-declared like the
-   agent tile's and the rules stay selector-for-selector the app's. --- */
 .stage-3d{
   --panel:#101012; --inset:#060607; --glass:rgba(9,9,10,.72);
   --line:rgba(236,229,214,.09); --line-2:rgba(236,229,214,.22);
@@ -165,7 +150,7 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .stage-view{position:absolute;inset:0;overflow:hidden;container-type:size}
 .stage-view--3d canvas#vis-canvas{width:100%!important;height:100%!important;display:block}
 .stage-3d.is-free canvas#vis-canvas{touch-action:none}
-/* the still stands in until the model is on screen — and stays if webgl is missing */
+
 .view-poster{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 46%;
   z-index:1;transition:opacity 400ms var(--ease)}
 .view-poster.is-gone{opacity:0;pointer-events:none}
@@ -196,7 +181,6 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .hud-tele dt{font:700 8.5px/1 var(--grotesk);letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3)}
 .stage-3d .hud-tele dd{font:500 13px/1 var(--mono);color:var(--ink);font-variant-numeric:tabular-nums}
 
-/* --- fpv: the frame drifts under the pointer, the hud drifts against it --- */
 .stage-fpv{--px:0;--py:0;aspect-ratio:16/9;cursor:crosshair}
 .stage-fpv img{width:100%;height:100%;object-fit:cover;scale:1.14;
   translate:calc(var(--px) * -18px) calc(var(--py) * -14px);
@@ -210,10 +194,6 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .fpv-ring{position:absolute;left:50%;top:50%;width:88px;height:88px;translate:-50% -50%;border-radius:50%;
   border:1px solid rgba(224,164,92,.22)}
 
-/* --- sage: the console's agent panel, ported 1:1 from server/public/css/style.css.
-   the console's own tokens are re-declared on the tile so the block below can stay
-   selector-for-selector identical to the app's — the only edits are the `.stage-sage`
-   prefixes that beat the landing page's own `.tile h3` / `.tile p` / `.btn` rules. --- */
 .stage-sage{
   --panel:#101012; --panel-2:#17171a; --inset:#060607;
   --line:rgba(236,229,214,.09); --line-2:rgba(236,229,214,.22);
@@ -256,7 +236,7 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
   align-self:flex-start;padding:6px 10px;background:transparent;border-radius:99px;
   border:1px solid var(--line-2);color:var(--ink-2);font:600 10px var(--mono);letter-spacing:.04em;
   max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* the voice picker is a picture of the console's — nothing to switch without tts here */
+
 .agent-voice-sel{pointer-events:none;flex-shrink:0;min-height:30px;font-size:11px;padding:0 24px 0 8px;
   font-family:var(--grotesk);color:var(--ink-2);background-color:transparent;
   border:1px solid var(--line-2);border-radius:var(--r-s)}
@@ -266,7 +246,7 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;
   padding:14px;margin:10px 14px 0;border-radius:10px;
   background:var(--inset);border:1px solid var(--line);
-  color:var(--agent-c,var(--ink-2));            /* glyph color follows intent */
+  color:var(--agent-c,var(--ink-2));
   transition:color .45s ease}
 .agent-grid{
   position:absolute;inset:0;z-index:0;opacity:.08;color:currentColor;
@@ -275,9 +255,10 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
   -webkit-mask-image:radial-gradient(circle at center,#000 28%,transparent 72%);
           mask-image:radial-gradient(circle at center,#000 28%,transparent 72%)}
 
-/* halo rings pulsing behind glyph */
 .agent-orb{position:relative;z-index:1;display:grid;place-items:center;
   width:min(clamp(64px,10dvh,118px),64cqh);height:min(clamp(64px,10dvh,118px),64cqh)}
+
+/* ---- agent orb + face ---- */
 .agent-orb::before,.agent-orb::after{
   content:"";position:absolute;inset:14px;border:1px solid currentColor;border-radius:50%;
   opacity:0;animation:orb-halo 3.2s ease-out infinite}
@@ -285,7 +266,6 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 @keyframes orb-halo{0%{transform:scale(.6);opacity:.3}100%{transform:scale(1.3);opacity:0}}
 .stage-sage.is-alert .agent-orb::before,.stage-sage.is-alert .agent-orb::after{animation-duration:1.4s}
 
-/* the glyph */
 .ai-glyph{position:relative;z-index:1;display:block;overflow:visible;
   width:min(clamp(40px,6dvh,68px),40cqh);height:min(clamp(40px,6dvh,68px),40cqh)}
 @container (max-height:108px){.agent-state-label,.agent-eq{display:none}}
@@ -331,8 +311,6 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
   animation:agent-text-in .4s ease}
 .agent-state-label .sage-face{font-size:26px}
 
-/* sage's face — lifted from server/public/css/style.css so the landing page blinks
-   the same way the console does. every offset is in em, so it scales with font-size. */
 .sage-face{--sf-gx:0em;--sf-gy:0em;position:relative;display:inline-flex;align-items:center;justify-content:center;
   color:currentColor;font:700 1em/1 var(--mono);letter-spacing:.12em;white-space:pre;user-select:none;
   text-shadow:0 0 .35em color-mix(in srgb,currentColor 45%,transparent);
@@ -372,7 +350,6 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .sage-face.is-alert .sf-open,.sage-face.is-alert .sf-shut{animation:none}
 .sage-face.is-alert .sf-scan{animation:sf-shake .32s ease-in-out infinite}
 
-/* voice equalizer (speaking) */
 .agent-eq{position:relative;z-index:1;display:flex;align-items:flex-end;gap:3px;height:15px;color:currentColor}
 .agent-eq i{width:3px;height:100%;border-radius:99px;background:currentColor;transform-origin:bottom;
   animation:eq .8s ease-in-out infinite}
@@ -382,7 +359,6 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .agent-eq i:nth-child(5){animation-delay:.22s}
 @keyframes eq{0%,100%{transform:scaleY(.28)}50%{transform:scaleY(1)}}
 
-/* what the agent says */
 .agent-speech{padding:8px 16px 0}
 .stage-sage .agent-text{
   margin:0;padding-left:13px;border-left:2px solid var(--agent-c,var(--accent));color:var(--ink);
@@ -399,7 +375,6 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .agent-timing b{color:var(--ink-2);font-weight:700}
 .agent-timing.is-live,.agent-timing.is-live b{color:var(--agent-c,var(--accent))}
 
-/* go/no-go verdict */
 .verdict{
   margin:8px 16px 0;padding:7px 12px;display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;
   border:1px solid var(--line);border-left:3px solid var(--ink-3);border-radius:8px;
@@ -416,7 +391,6 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .agent-foot .btn--primary{flex:1}
 .foot-icon{flex:none;width:42px;padding:0;display:grid;place-items:center;font-size:14px}
 
-/* secondary actions live behind ⋯ so the foot is one primary button wide */
 .foot-menu{position:relative;flex-shrink:0}
 .foot-menu>summary{list-style:none;letter-spacing:.1em}
 .foot-menu>summary::-webkit-details-marker{display:none}
@@ -450,7 +424,7 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .ai-hist>summary::before{content:"▸ ";color:var(--accent)}
 .ai-hist[open]>summary::before{content:"▾ "}
 .ai-hist-list{display:flex;flex-direction:column;gap:4px;margin-top:8px;max-height:168px;overflow-y:auto}
-/* open history floats over the panel — expanding in flow would grow the box past the tile */
+
 .agent-hist[open] .ai-hist-list{
   position:absolute;z-index:5;left:16px;right:16px;bottom:calc(100% - 4px);
   padding:8px;background:var(--panel);border:1px solid var(--line-2);border-radius:10px;
@@ -463,9 +437,10 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .ai-hist-time{font:500 10px/1.45 var(--mono);color:var(--accent);flex-shrink:0}
 .ai-hist-empty{font:400 11.5px/1.45 var(--grotesk);color:var(--ink-3);padding:8px 10px}
 
-/* --- blk: a routine you can actually build, next to a recording of the real editor --- */
 .lab{display:grid;grid-template-columns:1fr 1fr;min-height:296px}
 .lab-build{display:grid;grid-template-rows:auto 1fr auto;gap:10px;padding:14px;min-width:0}
+
+/* ---- palette + lab ---- */
 .pal{display:flex;flex-wrap:wrap;gap:6px}
 .pal button{padding:7px 11px;border-radius:99px;cursor:pointer;border:1px solid transparent;
   font-family:var(--mono);font-size:11px;color:#0e0e10;font-weight:500;
@@ -490,7 +465,7 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .lab-run #blkRun{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:500}
 .lab-run #blkRun:hover{background:var(--accent-hi);color:var(--accent-ink)}
 .lab-run .out{margin-left:auto;font-size:10.5px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase}
-/* the recording of the editor: hover pulls it out of the tile */
+
 .tape{position:relative;overflow:hidden;border-left:1px solid var(--line);background:#000;
   transition:transform 420ms var(--ease),box-shadow 420ms var(--ease)}
 .tape video{width:100%;height:100%;object-fit:cover;object-position:50% 40%}
@@ -507,13 +482,11 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
   .t-3d,.t-fpv,.t-blk{grid-column:span 12}
   .t-sage{grid-column:span 12;grid-row:auto}
   .lab{grid-template-columns:1fr}
-  /* stacked, the 16/10 frame is too short for the hud — the rail and the telemetry
-     ribbon end up on top of each other. give the viewport a squarer frame instead */
+
   .stage-3d{aspect-ratio:1/1}
   .hud-tele{gap:4px 14px;padding:8px 10px}
   .stage-3d .hud-tele dd{font-size:12px}
-  /* stacked, the tile is content-sized, so the stage's height is indefinite and its
-     container query (the glyph is sized in cqh) resolves to zero — pin it instead */
+
   .stage-sage .agent-stage{flex:none;height:300px}
   .tape{border-left:0;border-top:1px solid var(--line);aspect-ratio:16/10}
 }
@@ -524,7 +497,6 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
   .stage-fpv img,.fpv-hud{translate:none!important}
 }
 
-/* ============ pricing ============ */
 .plan{display:grid;grid-template-columns:1fr 1fr;gap:clamp(24px,4vw,48px);align-items:start;
   border:1px solid var(--line);border-radius:16px;padding:clamp(24px,3.4vw,38px);background:var(--bg-2)}
 .price{font-size:clamp(2.4rem,5vw,3.2rem);line-height:1;font-weight:500;letter-spacing:-.02em;margin-bottom:10px}
@@ -540,20 +512,20 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 @media (max-width:760px){.plan .shots{grid-column:auto}}
 .note{margin-top:22px;font-size:12.5px;color:var(--dim);border-left:2px solid var(--line-2);padding-left:16px;max-width:74ch}
 
-/* ============ model library ============ */
+/* ---- library ---- */
 .lib{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:16px;align-items:start}
 .shelf{display:grid;gap:8px}
-/* one wide plate per model, its own photo behind the name */
+
 .card{position:relative;overflow:hidden;isolation:isolate;cursor:pointer;text-align:left;color:inherit;
   min-height:104px;padding:18px 20px;display:flex;align-items:center;gap:14px;
   border:1px solid var(--line);border-radius:12px;background:var(--bg-2);
   transition:border-color 180ms ease}
 .card>img{position:absolute;inset:0;z-index:-2;width:100%;height:100%;object-fit:cover;
   opacity:.5;filter:grayscale(.45) saturate(.9);transition:opacity 260ms ease,filter 260ms ease}
-/* the scrim keeps the type legible whatever the photo does */
+
 .card::before{content:"";position:absolute;inset:0;z-index:-1;
   background:linear-gradient(90deg,rgba(14,14,16,.92) 26%,rgba(14,14,16,.5) 62%,rgba(14,14,16,.22))}
-/* no photo on record — the plate wears the survey grid instead, on purpose */
+
 .card.nophoto{background:
   linear-gradient(90deg,var(--bg-2) 40%,transparent),
   linear-gradient(var(--line) 1px,transparent 1px) 0 0/26px 26px,
@@ -565,7 +537,7 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .card .v{font-size:clamp(1.6rem,3.4vw,2.1rem);line-height:1;text-transform:uppercase}
 .card .code{font-family:var(--serif);font-style:italic;font-size:clamp(1.05rem,2vw,1.3rem);line-height:1;color:var(--muted)}
 .card[aria-selected="true"] .code{color:var(--accent)}
-/* the tag sits over the photo — its own plate keeps it readable on a bright thumb */
+
 .card .tag{margin-left:auto;flex:none;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
   background:rgba(14,14,16,.72);border-radius:5px;padding:4px 8px}
 .card.live .tag{color:var(--accent)}
@@ -590,26 +562,25 @@ section{padding:clamp(56px,9vh,96px) 0;border-top:1px solid var(--line)}
 .file .feat .hasnt::before{content:"✕";color:var(--dim)}
 @media (max-width:900px){.lib{grid-template-columns:1fr}.file{position:static}}
 
-/* ============ sponsors ============ */
 .tiers{display:grid;gap:10px}
 .tier{--rank:var(--dim);display:grid;grid-template-columns:150px 1fr;gap:18px;align-items:center;
   padding:18px 20px;border:1px solid var(--line);border-left:2px solid var(--rank);border-radius:12px}
 .tier.diamond{--rank:#9fe4ff}
+
+/* ---- sponsors + footer ---- */
 .tier.platinum{--rank:#d9d5cd}
 .tier.standard{--rank:var(--accent)}
 .tier h3{font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;font-weight:500;color:var(--rank)}
 .tier ul{list-style:none;display:flex;flex-wrap:wrap;gap:8px}
 .tier li{font-size:12.5px;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 14px}
 .tier li.open{color:var(--dim);border-style:dashed}
-/* IMPORTANT NOTE: sponsor logos keep their own white background — cutting it out kills
-   artwork drawn for white paper. Rounded so the white block reads as a chip. */
+
 .tier li img{height:40px;width:auto;border-radius:6px;filter:grayscale(1);opacity:.9}
 .tier li a:hover img{filter:none;opacity:1}
 .tier li a:hover{color:var(--accent)}
 .more{margin-top:22px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
 @media (max-width:640px){.tier{grid-template-columns:1fr;gap:12px}}
 
-/* ============ closer + footer ============ */
 .closer{text-align:center}
 .closer h2{font-size:clamp(1.6rem,4.4vw,2.6rem);margin-bottom:20px}
 .closer h2 span{color:var(--accent)}
@@ -703,6 +674,7 @@ footer nav a:hover{color:var(--accent)}
   </div>
 </section>
 
+<!-- the readings here are simulated: no rover on the other end -->
 <section id="app">
   <div class="wrap">
     <div class="head" data-reveal>
@@ -712,8 +684,7 @@ footer nav a:hover{color:var(--accent)}
     </div>
     <div class="collage">
       <figure class="tile t-3d" data-reveal>
-        <!-- the console's live view (ThreeDeeBox in app.js): same scene, same hud, same
-             camera presets. the readings are simulated — no rover on the other end. -->
+
         <div class="stage stage-3d" id="camStage">
           <div class="stage-view stage-view--3d">
             <canvas id="vis-canvas"></canvas>
@@ -751,8 +722,7 @@ footer nav a:hover{color:var(--accent)}
       </figure>
 
       <figure class="tile t-sage" data-reveal>
-        <!-- the console's agent card, node for node (server/public/js/app.js → Agent).
-             the model behind it is the only thing missing: the replies are canned. -->
+
         <div class="stage stage-sage is-clear" id="sageZone" style="--agent-c:var(--go)">
           <div class="zone-head">
             <h3 class="zone-title" data-i18n="app.agent">Agent</h3>
@@ -896,7 +866,7 @@ footer nav a:hover{color:var(--accent)}
   </div>
 </section>
 
-<!-- id kept as #roadmap so existing links (nav, sponsors page) still land here -->
+<!-- id kept as #roadmap so the nav and the sponsors page still land here -->
 <section id="roadmap">
   <div class="wrap">
     <div class="head" data-reveal>
@@ -904,8 +874,7 @@ footer nav a:hover{color:var(--accent)}
       <h2 data-i18n="roadmap.h2">Every version rewrites the last.</h2>
       <p class="lede" data-i18n="roadmap.lede">Pick a model to read its file.</p>
     </div>
-    <!-- IMPORTANT NOTE: both columns render from roadmap.json (initModels below) —
-         edit that file to add, reorder or rename models, no HTML editing needed. -->
+
     <div class="lib">
       <div class="shelf" id="mdlShelf" role="tablist" aria-label="Models"></div>
       <div class="file" id="mdlFile" role="tabpanel" tabindex="-1"></div>
@@ -913,6 +882,7 @@ footer nav a:hover{color:var(--accent)}
   </div>
 </section>
 
+<!-- names come from sponsors.json via sponsors.js -->
 <section id="sponsors">
   <div class="wrap">
     <div class="head" data-reveal>
@@ -920,7 +890,7 @@ footer nav a:hover{color:var(--accent)}
       <h2 data-i18n="sponsors.h2">Nobody funds the dark alone.</h2>
     </div>
     <div class="tiers">
-      <!-- names come from sponsors.json via sponsors.js -->
+
       <article class="tier diamond"><h3 data-i18n="sponsors.diamond">Diamond</h3><ul data-tier="diamond"></ul></article>
       <article class="tier platinum"><h3 data-i18n="sponsors.platinum">Platinum</h3><ul data-tier="platinum"></ul></article>
       <article class="tier standard"><h3 data-i18n="sponsors.standard">Standard</h3><ul data-tier="standard"></ul></article>
@@ -966,8 +936,7 @@ footer nav a:hover{color:var(--accent)}
 <script>
 document.documentElement.classList.add('js');
 
-/* i18n — key dict read by [data-i18n]/[data-i18n-html]/[data-i18n-alt] attributes.
-   currentLang is persisted; a toggle just re-runs the render passes. */
+// ---- strings ----
 const DICT = {
   en: {
     meta: {
@@ -1003,7 +972,7 @@ const DICT = {
       cam1: "isometric", cam2: "front", cam3: "top", cam4: "side", cam5: "free",
       gyro: "Gyro · Locked", heading: "Heading",
       hudDist: "Dist", hudRoll: "Roll", hudPitch: "Pitch", hudYaw: "Yaw",
-      /* the agent tile speaks the console's own strings — same keys, same wording as js/i18n.js */
+
       agent: "Agent", session: "← Sessions · Cave survey", sageOnline: "Online", sageHello: "I'll help you with anything.",
       voiceEdge: "🔊 Voice · Edge",
       more: "More actions", askPick: "Suggested questions",
@@ -1204,10 +1173,11 @@ const DICT = {
 };
 
 (async () => {
+
+  // ---- page ----
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduced) document.querySelectorAll('video[autoplay]').forEach(v => { v.removeAttribute('autoplay'); v.pause(); });
 
-  /* feature ticker — build one lane, duplicate for the seamless loop */
   const tickerFeed = [
     'AGENT <i>SAGE — VISION + VOICE</i>',
     'ROUTINES <i>SURVIVE A DROPPED LINK</i>',
@@ -1221,7 +1191,6 @@ const DICT = {
   const lane = document.getElementById('lane');
   if (lane) lane.innerHTML = tickerFeed.concat(tickerFeed).map(t => `<span>${t}</span>`).join('');
 
-  /* saved choice wins; otherwise fall back to the browser's own language */
   let currentLang = localStorage.getItem('blk-lang')
     || (navigator.language && (
       navigator.language.toLowerCase().startsWith('zh') ? 'zh'
@@ -1236,7 +1205,7 @@ const DICT = {
     if (descEl) descEl.setAttribute('content', DICT[currentLang].meta.desc);
     document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = dictGet(el.dataset.i18n); });
     document.querySelectorAll('[data-i18n-html]').forEach(el => { el.innerHTML = dictGet(el.dataset.i18nHtml); });
-    /* <video> has no alt — same key lands on aria-label instead */
+
     document.querySelectorAll('[data-i18n-alt]').forEach(el => {
       const t = dictGet(el.dataset.i18nAlt);
       if (el.tagName === 'IMG') el.alt = t; else el.setAttribute('aria-label', t);
@@ -1245,8 +1214,7 @@ const DICT = {
     document.getElementById('langSelect').value = currentLang;
   }
 
-  /* scramble-in: the target text resolves left to right out of noise. Character count never
-     changes, so the box can be measured the moment it starts and nothing reflows mid-run. */
+  // ---- text scramble ----
   const NOISE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#%&/*<>';
   function scramble(el, text, ms = 420) {
     if (el._raf) cancelAnimationFrame(el._raf);
@@ -1262,12 +1230,12 @@ const DICT = {
       return p < 1;
     };
     const tick = (now) => { if (paint(now)) el._raf = requestAnimationFrame(tick); };
-    paint(start);                       /* first frame now, so the height measures right */
+    paint(start);
     el._raf = requestAnimationFrame(tick);
   }
 
-  /* model library — both columns come from roadmap.json, so the lineup is editable
-     without touching HTML. Built once; a language toggle only repaints the text. */
+  // ---- model picker ----
+  // fed from models.json, so adding or renaming one is not an html edit
   async function initModels() {
     const shelf = document.getElementById('mdlShelf'), file = document.getElementById('mdlFile');
     if (!shelf || !file) return null;
@@ -1285,8 +1253,6 @@ const DICT = {
 
     const paintTags = () => cards.forEach((c, i) => { c.querySelector('.tag').textContent = models[i][currentLang].state; });
 
-    /* the panel is built once and then repainted in place — that's what lets the photo
-       cross-fade, the type scramble and the box resize instead of blinking to the next model */
     file.innerHTML = `
       <div class="shot"><img alt="" loading="lazy"></div>
       <div class="body">
@@ -1312,7 +1278,6 @@ const DICT = {
 
       const h0 = file.offsetHeight;
 
-      /* photo: fade out, swap once the new one is decoded, fade back in */
       if (m.image && m.image !== shotImg.getAttribute('src')) {
         shot.hidden = false;
         shotImg.style.opacity = 0;
@@ -1325,7 +1290,6 @@ const DICT = {
         shotImg.alt = L.cap || '';
       }
 
-      /* the rows are structural, so rebuild them; the text lands via scramble */
       els.stats.innerHTML = L.stats.map(() => '<div><dt></dt><dd></dd></div>').join('');
       els.feat.innerHTML = L.features.map(f => `<li class="${f.has ? 'has' : 'hasnt'}"></li>`).join('');
       scramble(els.state, L.state);
@@ -1338,7 +1302,6 @@ const DICT = {
       });
       els.feat.querySelectorAll('li').forEach((li, k) => scramble(li, L.features[k].label));
 
-      /* scramble keeps the character count, so the only height change is the new content's */
       const h1 = file.scrollHeight;
       if (!reduced && !firstShow && h0 !== h1) {
         file.animate([{ height: h0 + 'px' }, { height: h1 + 'px' }],
@@ -1350,7 +1313,7 @@ const DICT = {
     cards.forEach((c, i) => {
       c.addEventListener('click', () => {
         show(i);
-        /* stacked layout — the file sits below the shelf, so bring it into view or the click looks dead */
+
         if (matchMedia('(max-width:900px)').matches) file.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
       c.addEventListener('keydown', e => {
@@ -1367,7 +1330,6 @@ const DICT = {
     return { refresh: () => { paintTags(); show(at); } };
   }
 
-  /* the headline arrives out of noise — the plain half first, the accent word last */
   function heroIn() {
     const h1 = document.getElementById('heroTitle');
     const [lead, accent] = [h1.firstChild, h1.querySelector('span')];
@@ -1375,19 +1337,13 @@ const DICT = {
     if (accent) scramble(accent, accent.textContent, 900);
   }
 
-  /* ---- the console collage: three tiles that actually run ---- */
-
-  /* camera picker — same five angles the console offers, five real renders */
-  /* the 3d viewport — the console's own scene module, three.js and the rover model.
-     it is 3 MB of payload, so none of it is fetched until the tile is near the screen.
-     the telemetry it renders is simulated: a slow sweep of the gallery, closing on a
-     wall and backing off, so the chassis and the distance marker actually move. */
   const loadScript = (src) => new Promise((ok, no) => {
     const el = document.createElement('script');
     el.src = src; el.onload = ok; el.onerror = () => no(new Error(src));
     document.head.appendChild(el);
   });
 
+  // ---- camera demo ----
   async function initCams() {
     const stage = document.getElementById('camStage');
     if (!stage) return;
@@ -1395,7 +1351,6 @@ const DICT = {
     const canvas = document.getElementById('vis-canvas');
     const poster = document.getElementById('camPoster');
 
-    /* wait for the tile to come near before pulling three.js down */
     await new Promise(go => {
       const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) { io.disconnect(); go(); } },
         { rootMargin: '400px' });
@@ -1410,7 +1365,6 @@ const DICT = {
       scene = createRoverScene(canvas, { onLog: (msg) => { if (/loaded/i.test(msg)) poster.classList.add('is-gone'); } });
       scene.bindCompass(document.getElementById('camCompass'));
     } catch (e) {
-      /* no webgl, or the model never arrived — the still stays up and the rail goes quiet */
       btns.forEach(b => b.disabled = true);
       return;
     }
@@ -1421,7 +1375,6 @@ const DICT = {
       scene.setCamera(b.dataset.cam);
     }));
 
-    /* the readings: a patrol loop, not a recording — same fields the board sends */
     const out = { dist: document.getElementById('hudDist'), roll: document.getElementById('hudRoll'),
                   pitch: document.getElementById('hudPitch'), yaw: document.getElementById('hudYaw') };
     const t0 = performance.now();
@@ -1439,7 +1392,6 @@ const DICT = {
     if (!reduced) setInterval(step, 100);
   }
 
-  /* fpv — the frame drifts with the pointer, the reticle drifts against it */
   function initFpv() {
     const st = document.getElementById('fpvStage');
     if (!st) return;
@@ -1451,12 +1403,9 @@ const DICT = {
     st.addEventListener('pointerleave', () => set(0, 0));
   }
 
-  /* sage — the console's agent panel, running here. face, glyphs, intents, verdict and
-     history behave exactly as in app.js; the only difference is that no model answers,
-     so each question has a canned reply and the timings are made up. */
   const FACES = { idle: ['-', '_', '-'], scanning: ['o', '_', 'o'], thinking: ['o', '_', 'O'], clear: ['^', '_', '^'], caution: [':', 'o', ':'], alert: ['x', '_', 'x'] };
   const INTENT_C = { idle: 'var(--ink-3)', scanning: 'var(--ink-2)', thinking: 'var(--ink)', clear: 'var(--go)', caution: 'var(--warn)', alert: 'var(--accent)' };
-  /* the glyphs, straight out of AgentIcon() — one svg per intent, the parts animated in css */
+
   const GLYPHS = {
     thinking: `<svg class="ai-glyph" viewBox="0 0 120 120" aria-hidden="true"><circle class="g-faint" cx="60" cy="60" r="40"/>
       <circle class="g-track" cx="60" cy="60" r="40"/><g class="g-spin g-orbit">
@@ -1475,7 +1424,7 @@ const DICT = {
       <circle class="g-fill g-core" cx="60" cy="60" r="7"/></svg>`
   };
   GLYPHS.alert = GLYPHS.caution;
-  /* one row per menu item (0-4), then the run-analysis reply — reply key, intent, verdict */
+
   const REPLIES = [
     { a: 'sageA0', m: 'clear',   v: ['go',   'verdictSafe',    'verdictNominal'] },
     { a: 'sageA1', m: 'clear',   v: ['go',   'verdictSafe',    'verdictNominal'] },
@@ -1484,6 +1433,9 @@ const DICT = {
     { a: 'sageA4', m: 'clear',   v: ['go',   'verdictSafe',    'verdictDist'] },
     { a: 'sageARun', m: 'clear', v: ['go',   'verdictSafe',    'verdictNominal'] }
   ];
+
+  // ---- sage demo ----
+  // the replies are canned: this page has no model behind it
   function initSage() {
     const zone = document.getElementById('sageZone'), face = document.getElementById('sageFace'),
           orb = document.getElementById('sageOrb'), label = document.getElementById('sageLabel'),
@@ -1504,7 +1456,6 @@ const DICT = {
     };
     setMood('clear');
 
-    /* eyes follow the pointer — written straight to css vars, same as the console */
     addEventListener('pointermove', (e) => {
       const r = face.getBoundingClientRect();
       if (!r.width || r.bottom < 0 || r.top > innerHeight) return;
@@ -1537,7 +1488,7 @@ const DICT = {
       if (busy) return;
       busy = true; acts.forEach(b => b.disabled = true); run.disabled = true;
       run.textContent = dictGet('app.analyzing');
-      /* analysing: the stage drops to the one label, the timing counter runs live */
+
       setMood('thinking'); zone.classList.add('is-analyzing');
       orb.style.display = label.style.display = 'none';
       let ghost = zone.querySelector('.agent-analyzing-label');
@@ -1573,13 +1524,11 @@ const DICT = {
 
     acts.forEach(b => b.addEventListener('click', () => { b.closest('details').open = false; ask(+b.dataset.ask); }));
     run.addEventListener('click', () => ask(5));
-    /* the ⋯ menu closes on blur, same as the console's */
+
     const menu = document.getElementById('sageMenu');
     menu.addEventListener('focusout', (e) => { if (!menu.contains(e.relatedTarget)) menu.open = false; });
   }
 
-  /* blk — a routine you build by tapping, run on a toy of the editor's simulator.
-     open-loop like the real board: each step is a duration, nothing corrects it. */
   const BLK_OPS = {
     fwd:   { cls: 'op-move', key: 'app.blkFwd',   dist:  38, turn:   0, ms: 480 },
     back:  { cls: 'op-move', key: 'app.blkBack',  dist: -30, turn:   0, ms: 420 },
@@ -1587,6 +1536,8 @@ const DICT = {
     right: { cls: 'op-turn', key: 'app.blkRight', dist:   0, turn:  90, ms: 380 },
     say:   { cls: 'op-say',  key: 'app.blkSay',   dist:   0, turn:   0, ms: 520 }
   };
+
+  // ---- blk demo ----
   function initBlk() {
     const list = document.getElementById('blkProg'), cv = document.getElementById('blkArena');
     if (!list || !cv) return;
@@ -1693,10 +1644,10 @@ const DICT = {
     heroIn();
     sponsorsRender(dictGet('sponsors.open'));
     if (modelsApi) modelsApi.refresh();
-    if (blkApi) blkApi.refresh();          /* the routine's own steps aren't [data-i18n] */
+    if (blkApi) blkApi.refresh();
   });
 
-  /* the only motion left: one fade-up per block, on first sight */
+  // ---- reveal on scroll ----
   const io = new IntersectionObserver((entries) => {
     for (const en of entries) if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
   }, { rootMargin: '0px 0px -8% 0px' });

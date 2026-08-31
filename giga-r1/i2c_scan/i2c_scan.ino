@@ -1,31 +1,24 @@
-// bench-only. splits "mbed Wire2 can't drive these pins" from "the wiring is bad".
-// Wire (d20/d21) sweep is the control — it must find the bme at 0x76, which proves
-// the scan logic itself. then the same sweep on d8/d9 bit-banged by hand.
-// IMPORTANT NOTE: soft-i2c is a DIAGNOSTIC only. it is slow and has no arbitration
-// — if it turns out to be the only thing that works, move the sensor to a real bus
-// rather than shipping this.
+// i2c probe. d20/d21 runs first as a positive control: "nothing on the bus" means
+// nothing until the same code has found the bme at 0x76.
+
 #include <Wire.h>
 
-#define SDA2 9  // d9
-#define SCL2 8  // d8
-// the bit-bang runs on whichever pair is loaded here, so it can be pointed at the
-// bme's bus as a positive control — "nothing" only means something once the same
-// code has found 0x76 on d20/d21.
+#define SDA2 9
+#define SCL2 8
+
 int sSda = SDA2, sScl = SCL2;
 
-// open-drain by hand: release = INPUT (the bus pull-up lifts it), drive = OUTPUT LOW.
-// never drive a line high — that's what makes it a bus.
 static inline void rel(int p) { pinMode(p, INPUT); }
 static inline void low(int p) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
-static inline void tick()     { delayMicroseconds(5); } // ~100kHz
+static inline void tick()     { delayMicroseconds(5); }
 
 static void sStart() { rel(sSda); rel(sScl); tick(); low(sSda); tick(); low(sScl); tick(); }
 static void sStop()  { low(sSda); tick(); rel(sScl); tick(); rel(sSda); tick(); }
 
-static bool sBit(bool b) {          // write one bit, return the line we clocked out
+static bool sBit(bool b) {
   b ? rel(sSda) : low(sSda);
   tick(); rel(sScl); tick();
-  // clock stretching: a slave may hold scl low until it's ready
+
   unsigned long t0 = millis();
   while (digitalRead(sScl) == LOW && millis() - t0 < 5) {}
   bool v = digitalRead(sSda);
@@ -33,16 +26,15 @@ static bool sBit(bool b) {          // write one bit, return the line we clocked
   return v;
 }
 
-// returns true if the slave pulled sda low on the 9th clock = ack
 static bool sByte(uint8_t b) {
   for (int i = 7; i >= 0; i--) sBit(b & (1 << i));
-  bool nack = sBit(1);              // release sda, let the slave answer
+  bool nack = sBit(1);
   return !nack;
 }
 
 static bool sProbe(uint8_t addr) {
   sStart();
-  bool ack = sByte(addr << 1);      // write bit
+  bool ack = sByte(addr << 1);
   sStop();
   return ack;
 }
@@ -66,8 +58,6 @@ void sweep(TwoWire& w, const char* name) {
   Serial.println(n ? "" : "nothing");
 }
 
-// idle-state probe. a bare INPUT floats HIGH on the giga so it proves nothing;
-// INPUT_PULLDOWN does — internal pulldown is ~40k, a bus pull-up is 4k7-10k.
 void lines(int sda, int scl, const char* name) {
   pinMode(sda, INPUT_PULLDOWN); pinMode(scl, INPUT_PULLDOWN);
   delay(5);
@@ -76,11 +66,6 @@ void lines(int sda, int scl, const char* name) {
   Serial.print("  scl=");  Serial.println(digitalRead(scl) ? "yes" : "NO");
 }
 
-// drive each line low on its own and watch the other. they must move independently:
-// if pulling sda also drags scl (or vice versa) the two are shorted somewhere, which
-// nacks every address forever while both lines still read "pull-up present".
-// also checks each line can actually be pulled to 0 and released back to 1 — a line
-// that won't rise has a dead pull-up, one that won't fall is shorted to 3v3.
 void integrity(int sda, int scl) {
   pinMode(sda, INPUT); pinMode(scl, INPUT); delay(2);
   Serial.print("  released:  sda="); Serial.print(digitalRead(sda));
@@ -105,8 +90,6 @@ void integrity(int sda, int scl) {
 void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 3000);
-  // no Wire.begin(): the soft control drives d20/d21 by hand, and the hw peripheral
-  // owning those pins at the same time is what wedged the board earlier.
 }
 
 void loop() {
@@ -117,8 +100,8 @@ void loop() {
   integrity(20, 21);
   Serial.println("integrity TEST (d9/d8):");
   integrity(SDA2, SCL2);
-  softSweep(20, 21, "soft CONTROL (d20 sda / d21 scl)"); // must find 0x76
-  softSweep(21, 20, "soft CONTROL swapped (d21 sda / d20 scl)"); // sda/scl crossed at the module
-  softSweep(SDA2, SCL2, "soft TEST    (d9 sda / d8 scl)"); // want 0x23
+  softSweep(20, 21, "soft CONTROL (d20 sda / d21 scl)");
+  softSweep(21, 20, "soft CONTROL swapped (d21 sda / d20 scl)");
+  softSweep(SDA2, SCL2, "soft TEST    (d9 sda / d8 scl)");
   delay(1500);
 }

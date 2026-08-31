@@ -14,90 +14,52 @@ import { loadDetector, detectUpright, drawBoxes } from "./detect.mjs";
 
 const html = htm.bind(React.createElement);
 
-// icons are files masked with currentColor — see icons.mjs / public/icons/
-const NO_FEED = []; // stable identity: a fresh [] every render re-renders the feed
+const NO_FEED = [];
 const Icon = ({ n }) => html`<i class=${"icn icn-" + n} aria-hidden="true" />`;
 
-// mirror mode: the judges' tablet reaches this dashboard over the lan, the operator's
-// laptop over localhost. anything not local is a read-only copy — same telemetry, no
-// link/firmware/drive controls (stop still works, an e-stop should never be gated).
-// ?operator on the url unlocks a second machine for good.
+// ---- viewer / cam host ----
+// anything not on localhost is a read-only copy. ?operator unlocks a second machine for good.
 const VIEWER = (() => {
   if (new URLSearchParams(location.search).has("operator")) localStorage.setItem("operator", "1");
   return !localStorage.getItem("operator") &&
     !["localhost", "127.0.0.1", "[::1]", "::1"].includes(location.hostname);
 })();
 
-// cam mjpeg stream. known homes: tp-link, iphone hotspot, school
-// camera walks this list on failure until one loads. offline panel field overrides (localStorage).
 const CAM_HOSTS = ["172.20.10.10", "192.168.1.111", "blackout-cam.local"];
 const CAM_HOST_DEFAULT = CAM_HOSTS[0];
 const camHost = () => localStorage.getItem("camHost") || CAM_HOST_DEFAULT;
 const camUrl = (host) => `http://${host}:81/stream`;
 
-/* sensor model */
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
 
-// min/max define the meter's travel. st() returns [labelkey, kind] — label is i18n key resolved at render.
-// zeroOk: this sensor can legitimately read 0. everything else sends 0 only because
-// nothing is wired to that pin yet, and a 0 rendered as "normal/good" is a green lamp
-// for hardware that isn't on the robot — see reads() below.
+// ---- sensor model ----
+// min/max is the meter's travel, st() picks the label and the colour band.
+// zeroOk marks the two sensors that can really read 0 — everything else sends 0 because nothing is wired yet.
 const SENSORS = [
   { key: "temp",  unit: "°C",  d: 1, min: 0, max: 60,   st: v => v > 45 ? ["st.critical", "abort"] : v > 35 ? ["st.high", "warn"] : ["st.normal", "go"] },
   { key: "humid", unit: "%",   d: 1, min: 0, max: 100,  st: v => v > 75 ? ["st.humid", "warn"] : v < 20 ? ["st.dry", "warn"] : ["st.good", "go"] },
-  // distance is navigation cue, never hazard: caution when close to wall (<10cm), clear otherwise
   { key: "dist",  unit: "cm",  d: 0, min: 0, max: 200,  invert: true, zeroOk: true, st: v => v < 10 ? ["st.tooClose", "warn"] : ["st.clear", "go"] },
-  // elevation, derived server-side from the bme280's pressure — metres above/below
-  // where the rover started (server zeroes on the first reading), so the meter is
-  // centred: 50% is level, it fills climbing and drains descending. never a hazard,
-  // so it always reads "go" — worstSensor() walks this same list for the go/no-go
-  // verdict and elevation must never sway it.
-  // cm: tap the tile to read centimetres instead. the server rounds alt to 0.1 m,
-  // so cm moves in 10s — it's for close-up steps/ramps, not extra precision.
   { key: "alt",   unit: "m",   d: 0, min: -25, max: 25, cm: true, zeroOk: true, st: () => ["st.normal", "go"] },
-  // raw barometric pressure from the bme280 — the number "alt" above is derived from.
-  // never a hazard (weather, not cave air), so always "go": worstSensor() walks this
-  // list for the verdict. 0 means no bme wired, so no zeroOk.
   { key: "pressure", unit: "hPa", d: 1, min: 950, max: 1050, st: () => ["st.normal", "go"] },
-  // gy-302/bh1750 ambient light. never a hazard (a cave is meant to be dark) so it
-  // always reads "go" — worstSensor() walks this list for the verdict.
-  // IMPORTANT NOTE: zeroOk because 0 lx is a real reading in the dark, which means
-  // the tile can't tell "dark" from "not wired" — the board's boot banner
-  // ("BH1750 not found") is the wiring check, not this.
   { key: "lux", unit: "lx", d: 0, min: 0, max: 1000, zeroOk: true,
     st: v => v < 1 ? ["st.dark", "go"] : v > 500 ? ["st.bright", "go"] : ["st.normal", "go"] },
 ];
 
-// a reading only counts if it's a number and not a bare 0 from an unwired pin.
-// dist and alt are the exceptions (nothing in range / level with the start), so they
-// carry zeroOk. everything reading a sensor walks through here: the tile, the trend
-// line, and the go/no-go verdict — otherwise a sensor that doesn't exist votes "safe".
 const reads = (s, v) => v != null && !isNaN(v) && (v !== 0 || s.zeroOk);
 
-// telemetry watchdog. the board streams at 10Hz (2Hz behind a screensaver), so nothing
-// for this long means the link is dead even when the socket and the gatt connection are
-// both still nominally up — a frozen sketch keeps its ble connection. every number on
-// screen is then a lie the operator can't spot, so the tiles blank and the link pill
-// drops instead of holding the last packet forever. no firmware ping needed: the sensor
-// stream is already the heartbeat.
 const PKT_STALE_MS = 3000;
 
-// voice/chat command triggers: saying one of these fires ble directly instead of going to llm
-// routines are fixed on-board scripts and drive is live joystick. accents stripped, dots/commas survive.
+// ---- voice commands ----
 const norm = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
   .replace(/[\u00a1\u00bf!?]/g, "").replace(/\s+/g, " ").trim();
 const DRIVE_PWM = 140, DRIVE_MS = 501;
 
-// two match paths:
-// 1. order — explicit "i order you" marker, whatever direction word appears wins
-// 2. lead — bare imperatives with no marker, anchored and verb-gated
 const ORDER = /^(?:sage[\s,]*)?(?:te (?:lo )?ordeno|te pido|orden|i order you|order)(?:\s+que)?\b\s*(.+)/;
 const LEAD = "^(?:sage[\\s,]*)?(?:please\\s+|por favor\\s+)?(?:(?:can|could) you\\s+)?" +
   "(?:(?:go|move|drive|turn|head|ir|ve|vaya|vayas|gira|gires|anda|muevete|camina|sigue)\\s+)*" +
   "(?:(?:a la|al|hacia|para|to the)\\s+)*";
 const drv = (words) => new RegExp(LEAD + `(?:${words})\\b`);
 
-// "for 2 seconds" -> 2000, "500ms" -> 500, unsaid -> 501. capped at 5s (no encoder feedback).
 function driveMs(txt) {
   const m = txt.match(/(\d+(?:[.,]\d+)?)\s*(ms|milliseconds?|milisegundos?|s|secs?|seconds?|segundos?)\b/);
   if (!m) return DRIVE_MS;
@@ -105,7 +67,6 @@ function driveMs(txt) {
   return Math.min(5000, Math.max(50, Math.round(m[2][0] === "m" ? n : n * 1000)));
 }
 
-// one direction-word list for both paths. stemmed covers conjugations. "stop" tested first so "para de avanzar" halts.
 const DIRS = [
   { w: "stop|halt|freeze|alto|frena\\w*|deten\\w*|pare\\w*|parat\\w*|para(?!\\s+(?:atras|adelante|delante|la|el|de))",
     cmd: () => "stop", ackKey: "sage.stopAck" },
@@ -124,7 +85,6 @@ const CMD_TRIGGERS = [
   ...DIRS,
 ];
 
-// marked order -> direction word anywhere in rest; otherwise anchored imperative. returns null if no match, goes to sage.
 function matchCmd(txt) {
   const ord = txt.match(ORDER);
   if (ord) return DIRS.find(d => d.bare.test(ord[1])) || null;
@@ -137,7 +97,7 @@ const TRENDS = [
   { key: "temp", tkey: "trend.temp", color: "#3b82f6" },
 ];
 
-/* tts */
+// ---- speech ----
 let voices = [];
 const loadVoices = () => { voices = window.speechSynthesis?.getVoices() || []; };
 loadVoices();
@@ -146,10 +106,10 @@ function browserSpeak(text, { onStart, onEnd } = {}) {
   if (!text || !window.speechSynthesis || !voices.length) { onEnd?.(); return; }
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  const sl = speechLang();          // e.g. "en-US" / "es-ES"
-  const pre = sl.slice(0, 2);       // "en" / "es"
+  const sl = speechLang();
+  const pre = sl.slice(0, 2);
   u.rate = 0.9; u.lang = sl;
-  // null when no same-language voice -> engine picks by u.lang. never fall back to voices[0] for spanish.
+
   u.voice = voices.find(v => v.lang.startsWith(pre) && /samantha|alex|google|enhanced|jorge|alvaro|helena/i.test(v.name))
     || voices.find(v => v.lang.startsWith(pre)) || null;
   u.onstart = () => onStart?.();
@@ -158,8 +118,6 @@ function browserSpeak(text, { onStart, onEnd } = {}) {
   speechSynthesis.speak(u);
 }
 
-// mission findings: when a metric newly worsens, the analysis panel logs a discovery.
-// bands match the server's status thresholds so agent and panel agree.
 const FINDINGS = [
   { k: "temp",  warn: 35,  danger: 45,  msg: { 1: "find.tempUp", 2: "find.tempHigh" } },
   { k: "dist",  close: 10,              msg: { 1: "find.obstacle" } },
@@ -170,16 +128,13 @@ const bandOf = (f, v) => {
   return v >= f.danger ? 2 : v >= f.warn ? 1 : 0;
 };
 
-// split into sentences so we speak first one immediately instead of waiting for whole reply
 const splitSpeech = (t) => (t.match(/[^.!?]+[.!?]+|\S[^.!?]*$/g) || [t]).map(s => s.trim()).filter(Boolean);
 
-// ms edge / deepgram neural tts via server proxy; falls back to browser tts on failure.
-// plays sentence-by-sentence, prefetching next clip while current one plays (max 2 concurrent requests).
 let ttsAudio = null;
 let ttsToken = 0;
-let ttsOnEnd = null; // active speak()'s onEnd, so stopSpeech() can settle ui
-let ttsProviderRef = "edge"; // "edge" | "deepgram", updated by app toggle
-// cut off whatever's playing: supersede loop, stop audio, settle ui.
+let ttsOnEnd = null;
+let ttsProviderRef = "edge";
+
 function stopSpeech() {
   ttsToken++;
   ttsAudio?.pause();
@@ -197,9 +152,9 @@ async function speak(text, { onStart, onEnd } = {}) {
   const firstStart = () => { if (!started) { started = true; onStart?.(); } };
   let cur = mk(parts[0]);
   for (let i = 0; i < parts.length; i++) {
-    if (myToken !== ttsToken) { cur?.pause(); return; } // newer speak() superseded us
+    if (myToken !== ttsToken) { cur?.pause(); return; }
     const a = cur;
-    const next = i + 1 < parts.length ? mk(parts[i + 1]) : null; // prefetch next clip
+    const next = i + 1 < parts.length ? mk(parts[i + 1]) : null;
     ttsAudio = a;
     try {
       await new Promise((resolve, reject) => {
@@ -209,7 +164,7 @@ async function speak(text, { onStart, onEnd } = {}) {
       });
     } catch {
       if (myToken !== ttsToken) return;
-      browserSpeak(parts.slice(i).join(" "), { onStart: firstStart, onEnd }); // proxy/offline fallback
+      browserSpeak(parts.slice(i).join(" "), { onStart: firstStart, onEnd });
       return;
     }
     cur = next;
@@ -217,8 +172,6 @@ async function speak(text, { onStart, onEnd } = {}) {
   if (myToken === ttsToken) { ttsOnEnd = null; onEnd?.(); }
 }
 
-// onboarding lines are pre-rendered to /audio/onboard-<lang>-<key>.mp3 (no 5-7s synth wait).
-// play the static clip; fall back to live tts if file is missing.
 function playOnboard(key, fallbackText, { onStart, onEnd } = {}) {
   ttsAudio?.pause();
   window.speechSynthesis?.cancel();
@@ -232,7 +185,7 @@ function playOnboard(key, fallbackText, { onStart, onEnd } = {}) {
   a.play().catch(fall);
 }
 
-/* zone header (title · tag/tools) */
+// ---- panels ----
 function Head({ title, tag, children }) {
   return html`
     <div class="zone-head">
@@ -241,7 +194,6 @@ function Head({ title, tag, children }) {
     </div>`;
 }
 
-/* canvas: trends */
 function Trends({ packet }) {
   const ref = useRef(null);
   const hist = useRef([]);
@@ -279,14 +231,12 @@ function Trends({ packet }) {
   return html`<canvas ref=${ref}></canvas>`;
 }
 
-/* reading tile (sensor strip) */
 function Reading({ s, value }) {
   const [inCm, setInCm] = useState(false);
-  const cm = s.cm && inCm; // unit swap only, the meter keeps its own scale
+  const cm = s.cm && inCm;
   const has = reads(s, value);
   const [labelKey, kind] = has ? s.st(value) : [null, ""];
-  // no reading at all vs. a sensor that hasn't reported yet — both get "—", but a
-  // pin sending 0 forever is the one worth naming out loud.
+
   const label = has ? t(labelKey) : value === 0 ? t("st.noRead") : "—";
   const name = t("sensor." + s.key);
   const raw = has ? Math.max(0, Math.min(100, ((value - s.min) / (s.max - s.min)) * 100)) : 0;
@@ -311,7 +261,6 @@ function Reading({ s, value }) {
     </div>`;
 }
 
-/* cam box — standalone camera feed */
 function CamBox({ packet, onFpv }) {
   return html`
     <section class="zone stage-cam reveal" aria-labelledby="cam-h">
@@ -328,7 +277,6 @@ function CamBox({ packet, onFpv }) {
     </section>`;
 }
 
-/* 3d box — standalone 3d orientation viewport */
 function ThreeDeeBox({ packet, onLog }) {
   const canvasRef = useRef(null);
   const compassRef = useRef(null);
@@ -389,19 +337,12 @@ function ThreeDeeBox({ packet, onLog }) {
     </section>`;
 }
 
-/* motor debug: direct-drive bench panel */
-// bench tool — labels stay english, not worth 6-language i18n keys.
-// every button sends "drv,<verb>,<pwm>,<ms>": firmware auto-halts when <ms> runs out, so dropped ble link never leaves wheels spinning.
-// 360s are timed spins (no IMU feedback) — "360 ms" knob is calibration. knobs persist in localStorage.
-// the A/B-only row drives one side at a time via "drv,tank" — the four verbs are all the
-// same two lines of firmware, so "back half-works but fwd is dead" is never a code fault.
-// these four say which motor and which direction is actually dead: enable, in-pin, or wire.
 function MotorDebug({ onCmd, enabled }) {
   const knob = (key, def) => {
     const [v, setV] = useState(+localStorage.getItem(key) || def);
     return [v, (x) => { setV(x); localStorage.setItem(key, x); }];
   };
-  const [pwm, setPwm]       = knob("dbgPwm", 180);     // 60 floor: below ~60 the L298N stalls
+  const [pwm, setPwm]       = knob("dbgPwm", 180);
   const [ms, setMs]         = knob("dbgMs", 800);
   const [spinMs, setSpinMs] = knob("dbgSpinMs", 1200);
   const drv = (verb, dur) => onCmd(`drv,${verb},${pwm},${dur}`);
@@ -440,45 +381,23 @@ function MotorDebug({ onCmd, enabled }) {
     </div>`;
 }
 
-/* blk workflow control: pick a saved .blk program, run/stop it from here */
-// programs are authored in the popup editor (blk.html) and saved server-side.
-// a workflow runs in one of two places, and the first that fits wins:
-//   on the board — compiled to instructions and uploaded over ble before it starts,
-//     so `forward until dist < 15` is checked in one loop() pass instead of a ~400ms
-//     round trip, and a link drop mid-run doesn't strand it. the steps only the pc
-//     can do (sage, tts, the headlamp) come back here as events and the board waits.
-//   in the browser — the tree interpreter below, unchanged, for everything the
-//     compiler can't express. same language, slower conditions.
-/* ---- blk runner ----
-   board first, browser as fallback. lifted out of BlkCtl because sage's suggested
-   moves take the same path: a move she proposes *is* a short blk program, and the
-   whole reason it is blk and not a drive command is that `forward until dist < 5`
-   compiles onto the board's vm and stops in one loop() pass instead of a ble round
-   trip — the difference between stopping at 5cm and hitting the wall. */
-
-// the board's blk vm answers on the notify channel; onBleNotify re-broadcasts those
-// lines as a window event. one program runs at a time (there is one rover), so one
-// handler slot is all this needs.
+// ---- blk runner ----
+// the board plays the program; the browser only services the say/log/ask events it sends back.
 let blkEvt = null;
 window.addEventListener("blk:evt", (e) => blkEvt?.(e.detail));
-// bumping the token ends whichever runner is live — its stopped() goes true next tick.
+
 let blkToken = 0;
 const blkCancel = () => { blkToken++; };
 
-// park a one-shot handler on the board's event channel; null on timeout.
 const blkWaitFor = (pred, ms, kick) => new Promise((res) => {
   const to = setTimeout(() => { blkEvt = null; res(null); }, ms);
   blkEvt = (line) => { if (!pred(line)) return; clearTimeout(to); blkEvt = null; res(line); };
   kick?.();
 });
 
-// every step a workflow can take that the board cannot: the camera, sage, tts, the
-// http headlamp. shared by both runners — on-board these are the events the program
-// parks on, in the browser the tree interpreter calls them directly.
 function blkIo(deps, stopped, sleep) {
   const { onCmd, onAnalyze, busyRef, packetRef, onNote, onProgress } = deps;
-  // a yes/no call the program can branch on. the server does the thinking;
-  // a failed request reads as "no" so a dead link can't send the rover on.
+
   const decide = async (path, body) => {
     try {
       const r = await fetch(path, {
@@ -492,7 +411,7 @@ function blkIo(deps, stopped, sleep) {
   return {
     stopped, sleep,
     drive: async (verb, pwm, ms) => { onCmd(`drv,${verb},${pwm},${ms}`); await sleep(ms + 150); },
-    analyze: async (focus) => { // fire the agent, wait until it's done (30s cap)
+    analyze: async (focus) => {
       onAnalyze(null, focus);
       await sleep(500);
       const t0 = Date.now();
@@ -509,15 +428,10 @@ function blkIo(deps, stopped, sleep) {
   };
 }
 
-// upload the compiled program and let the board play it, servicing the steps it
-// parks on. false = the board never answered (firmware without the vm, or the ble
-// link is held by another browser and we're relaying over the socket), so the
-// caller falls back to interpreting up here.
 async function blkOnBoard({ code, nodes, slots }, io, deps, stopped) {
   const { onCmd, onProgress } = deps;
   if (!await blkWaitFor(l => l.startsWith("E:blkrdy"), 2000, () => onCmd(`blk,n,${code.length}`))) return false;
-  // one write per instruction: a lost write leaves the upload short, which the
-  // board refuses to run, rather than leaving a corrupt program to drive on.
+
   for (let i = 0; i < code.length; i++) {
     if (stopped()) return true;
     await onCmd(blkInsLine(i, code[i]));
@@ -528,13 +442,13 @@ async function blkOnBoard({ code, nodes, slots }, io, deps, stopped) {
     const poll = setInterval(() => { if (stopped()) finish(true); }, 200);
     blkEvt = async (line) => {
       if (line.startsWith("E:blkend")) return finish(true);
-      if (line.startsWith("E:blkerr")) return finish(false); // short upload — run it here instead
+      if (line.startsWith("E:blkerr")) return finish(false);
       if (!line.startsWith("E:blk,")) return;
       const f = line.slice(6).split(",");
       const node = nodes[+f[0]];
       const kind = +f[1];
       if (!node) return void onCmd("blk,res,0");
-      // the board ships its variables with every event, so {name} still interpolates
+
       const vars = {};
       for (const [name, i] of Object.entries(slots)) vars[name] = +f[2 + i] || 0;
       onProgress?.({ n: ++n, label: node.op.replace("_", " "), vars, board: true });
@@ -549,15 +463,12 @@ async function blkOnBoard({ code, nodes, slots }, io, deps, stopped) {
         case "ask": val = (await io.ask(txt())) ? 1 : 0; break;
         case "find": val = (await io.find(txt())) ? 1 : 0; break;
       }
-      if (kind) await onCmd(`blk,res,${val}`); // kind 0 is fire-and-forget, board didn't wait
+      if (kind) await onCmd(`blk,res,${val}`);
     };
     onCmd("blk,go");
   });
 }
 
-// run a parsed program. board first — anything the compiler refuses (live-value
-// arguments, and/or conditions, too many variables) throws and runs in the browser
-// interpreter, which walks the tree live against the latest telemetry packet.
 async function playBlk(program, deps) {
   const my = ++blkToken;
   const stopped = () => blkToken !== my;
@@ -576,28 +487,26 @@ async function playBlk(program, deps) {
 function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
   const [files, setFiles] = useState([]);
   const [sel, setSel] = useState(() => localStorage.getItem("blkSel") || "");
-  const [run, setRun] = useState(null); // {n, label, vars} while executing
+  const [run, setRun] = useState(null);
   const [err, setErr] = useState(null);
-  const [note, setNote] = useState(null); // last log/ask/find line from the program
-  const [preview, setPreview] = useState(null); // what the picked workflow does, before it runs
-  const [editorOpen, setEditorOpen] = useState(false); // false | "open" | "closing"
-  const runRef = useRef(false); // mirrors run for unmount cleanup
+  const [note, setNote] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const runRef = useRef(false);
   runRef.current = !!run;
 
-  // play the exit animation, then unmount
   const closeEditor = useCallback(() => {
     setEditorOpen(o => o === "open" ? "closing" : o);
     setTimeout(() => setEditorOpen(false), 240);
   }, []);
 
-  // editor iframe talks back: esc asks to close, "save & run" hands us a workflow
   useEffect(() => {
     const fn = (e) => {
       if (e.data === "blk:close") return closeEditor();
       if (e.data?.type === "blk:run" && e.data.name) {
         pick(e.data.name);
         closeEditor();
-        setTimeout(() => startRef.current(e.data.name), 320); // let the editor finish closing
+        setTimeout(() => startRef.current(e.data.name), 320);
       }
     };
     window.addEventListener("message", fn);
@@ -607,7 +516,7 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
   const loadFiles = useCallback(() => {
     fetch("/api/blk").then(r => r.json()).then(d => setFiles(d.files || [])).catch(() => {});
   }, []);
-  // refresh on mount, on editor saves (broadcastchannel), and on tab refocus
+
   useEffect(() => {
     loadFiles();
     const bc = new BroadcastChannel("blk");
@@ -615,8 +524,7 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     window.addEventListener("focus", loadFiles);
     return () => { bc.close(); window.removeEventListener("focus", loadFiles); };
   }, [loadFiles]);
-  // read the picked workflow ahead of time: the operator gets its text, its
-  // rough runtime and any lint warnings before anything moves.
+
   useEffect(() => {
     if (!sel) { setPreview(null); return; }
     let live = true;
@@ -625,8 +533,7 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
       .then(text => {
         if (!live) return;
         const { program, errors } = blkParse(text);
-        // compile it now too — the operator should know before pressing run whether
-        // the board will play it or the browser will, and why not if not.
+
         let board;
         try { board = blkCompile(program).code.length; } catch (e) { board = e.message; }
         setPreview({ text, warns: errors.length ? errors : blkLint(program), ms: fmtMs(blkEstimate(program)), board });
@@ -635,7 +542,6 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     return () => { live = false; };
   }, [sel]);
 
-  // leaving blk mode unmounts this panel — kill a live run and the motors with it
   useEffect(() => () => { blkCancel(); if (runRef.current) onCmd("stop"); }, [onCmd]);
 
   const start = async (name = sel) => {
@@ -659,8 +565,6 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     if (!cancelled) setRun(null);
   };
 
-  // the editor's "save & run" fires through a ref so the message listener above
-  // always calls the current start(), not the one from its first render
   const startRef = useRef(start);
   startRef.current = start;
 
@@ -714,32 +618,26 @@ function BlkCtl({ onCmd, onAnalyze, enabled, busyRef, packetRef }) {
     </div>`;
 }
 
-/* true while the first-run tour owns the screen. `inert` + the tour's own key capture
-   cover pointer and keyboard; the gamepad is polled, not evented, so it checks this. */
+// ---- drive ----
 let tourOpen = false;
 
-/* drive — manual control hub: on-screen pad (hold-to-drive), wasd/arrows, gamepad, routines, stop.
-   drive is sent as short timed bursts re-sent every 150ms while held: firmware auto-halts 300ms
-   after the last burst, so a dropped link or stuck ui never leaves wheels spinning.
-   autopilot on = all manual input ignored. control mode: remote + blk live; autonomous placeholder. */
 const MODES = [["remote", "REMOTE"], ["blk", "BLK"], ["auto", "AUTO"]];
 const KEYMAP = {
   w: "fwd", arrowup: "fwd", s: "back", arrowdown: "back",
   a: "left", arrowleft: "left", d: "right", arrowright: "right",
 };
-// each discrete verb as its per-side mix, so keys and the on-screen pad go down the
-// same tank path as the sticks. matches left()/right() in main.ino — pivots, not arcs.
+
 const VERB_MIX = { fwd: [1, 1], back: [-1, -1], left: [1, -1], right: [-1, 1] };
 function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
   const [mode, setMode] = useState("remote");
   const [padName, setPadName] = useState(null);
-  const bodyRef = useRef(null);   // .drive-body — the box that gets height-animated
-  const innerRef = useRef(null);  // .drive-inner — its natural height, read by the observer
-  const [verb, setVerb] = useState(null); // live verb for ui readout + pad highlight
+  const bodyRef = useRef(null);
+  const innerRef = useRef(null);
+  const [verb, setVerb] = useState(null);
   const armed = mode === "remote" && enabled;
   const armedRef = useRef(armed);
   armedRef.current = armed;
-  const heldRef = useRef(null);   // verb held via on-screen pad or keyboard
+  const heldRef = useRef(null);
   const keysRef = useRef(new Set());
   const moving = useRef(false);
   const sqWas = useRef(false);
@@ -754,7 +652,6 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
     return () => { window.removeEventListener("gamepadconnected", seen); window.removeEventListener("gamepaddisconnected", seen); };
   }, []);
 
-  // wasd / arrows — same held-verb path as the on-screen pad. space = stop.
   useEffect(() => {
     const typing = (e) => { const t = e.target; return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable); };
     const down = (e) => {
@@ -764,7 +661,7 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
       if (!KEYMAP[k]) return;
       e.preventDefault();
       keysRef.current.add(k);
-      heldRef.current = KEYMAP[k]; // last key pressed wins
+      heldRef.current = KEYMAP[k];
     };
     const up = (e) => {
       const k = e.key.toLowerCase();
@@ -780,21 +677,10 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur); };
   }, [onCmd]);
 
-  /* one drive loop for every input source, and every source ends up as the same thing:
-     a signed pwm per side ("drv,tank,l,r"). that's what lets the left stick throttle and
-     steer at once — the four verbs can only do one or the other.
-       left stick   — arcade: y throttles, x steers, mixed, so it arcs while driving
-       right stick x — pivot on the spot at a fraction of the band, for lining up
-       R2            — turbo (pad-only, no key binding)
-       □/X           — analyze
-     the d-pad is *not* drive any more: it roams the ui (padnav.mjs). on-screen pad and
-     wasd still send discrete verbs, and only when the sticks are idle. */
-  const MANUAL_PWM = 110; // manual is precision, not speed
+  const MANUAL_PWM = 110;
   const TURBO_PWM = 200;
-  const SPIN_SCALE = 0.45; // right stick uses under half the band — that's the "slow" in slow spin
-  // IMPORTANT NOTE: bench knobs, both. DEADZONE covers a worn stick's drift at rest;
-  // MIN_PWM is where this l298n + these motors stop buzzing and start turning. stick
-  // travel is mapped into [MIN_PWM, cap] so the first millimetre of throw already moves.
+  const SPIN_SCALE = 0.45;
+
   const DEADZONE = 0.15;
   const MIN_PWM = 55;
   useEffect(() => {
@@ -804,26 +690,23 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
     const verbOf = (l, r) => (!l && !r ? null
       : Math.abs(l - r) > Math.abs(l + r) ? (l > r ? "left" : "right") : l + r > 0 ? "fwd" : "back");
     const id = setInterval(() => {
-      // cursor mode has the sticks aiming a pointer — they must not also be wheels.
       if (!armedRef.current || tourOpen || cursorOn()) { if (moving.current) { moving.current = false; setVerb(null); onCmd("stop"); } return; }
       const pad = [...navigator.getGamepads()].find(Boolean);
-      // R2 = button 7. analog on ds4/xbox, so read .value too — .pressed only trips past the deadzone.
+
       const turbo = !!pad && (pad.buttons[7]?.pressed || (pad.buttons[7]?.value ?? 0) > 0.35);
       const cap = turbo ? TURBO_PWM : MANUAL_PWM;
-      let l = 0, r = 0; // normalised -1..1 per side until the duty map at the end
+      let l = 0, r = 0;
       if (pad) {
-        // square (x on xbox) = button 2. press edge only, so holding doesn't queue analyses.
         const sq = !!pad.buttons[2]?.pressed;
         if (sq && !sqWas.current) analyzeRef.current?.();
         sqWas.current = sq;
-        const y = -dz(pad.axes[1] ?? 0), x = dz(pad.axes[0] ?? 0); // axis 1 is +down
+        const y = -dz(pad.axes[1] ?? 0), x = dz(pad.axes[0] ?? 0);
         l = y - x; r = y + x;
         const rx = dz(pad.axes[2] ?? 0);
         l -= rx * SPIN_SCALE; r += rx * SPIN_SCALE;
       }
       if (!l && !r && heldRef.current) [l, r] = VERB_MIX[heldRef.current];
-      // full throttle plus full steering overshoots — scale both back together, or the
-      // clip would eat the steering and turn an arc into a straight line.
+
       const peak = Math.max(Math.abs(l), Math.abs(r));
       if (peak > 1) { l /= peak; r /= peak; }
       l = duty(l, cap); r = duty(r, cap);
@@ -837,19 +720,12 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
     return () => clearInterval(id);
   }, [onCmd]);
 
-  // switching away from remote parks everything: stop any live drive, no burst leaks through.
   const pick = (m) => {
     if (m === mode) return;
     if (mode === "remote") { heldRef.current = null; moving.current = false; setVerb(null); onCmd("stop"); }
     setMode(m);
   };
 
-  /* the body is a different height per mode (pad / blk panel / bare) and sage takes the
-     slack, so a raw swap jump-cuts both boxes. animate the real height — not a view
-     transition: that snapshots the whole page and freezes the cam feed and 3d view.
-     the observer watches .drive-inner (natural height) and animates .drive-body, so a
-     late arrival — blk's workflow list and preview each land a fetch after the switch —
-     retargets the running tween from wherever it is instead of queueing a second resize. */
   useLayoutEffect(() => {
     const el = bodyRef.current, inner = innerRef.current;
     if (!el || !inner || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -857,15 +733,14 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
     const ro = new ResizeObserver(() => {
       const h = inner.offsetHeight;
       if (h === prev) return;
-      // start from the last natural height, not el's — by the time the observer runs, layout
-      // already moved. only mid-tween is el's own height the honest starting point.
+
       const from = anim?.playState === "running" ? el.offsetHeight : prev;
       prev = h;
       anim?.cancel();
-      el.style.overflow = "hidden"; // only while it moves, or the stop bar's hover glow gets clipped
+      el.style.overflow = "hidden";
       anim = el.animate([{ height: from + "px" }, { height: h + "px" }],
         { duration: 340, easing: "cubic-bezier(0.32, 0.72, 0, 1)" });
-      anim.finished.then(() => { el.style.overflow = ""; }, () => {}); // cancel rejects — ignore
+      anim.finished.then(() => { el.style.overflow = ""; }, () => {});
     });
     ro.observe(inner);
     return () => { ro.disconnect(); anim?.cancel(); };
@@ -933,28 +808,17 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
     </section>`;
 }
 
-/* enum camera settings, [var, [[value, label], ...]]. values are the ov2640's own,
-   not ours — see the /control handler in esp32-cam/main/main.ino.
-   wb_mode is the pink-cast knob: auto first, the fixed presets compensate when a
-   module with no ir-cut filter makes auto give up. framesize caps at SVGA(8)
-   because that's what sized the psram buffer at init; lower = less latency. */
+// ---- camera ----
 const CAM_PICKS = [
   ["wb_mode", [[0, "auto"], [1, "sunny"], [2, "cloudy"], [3, "office"], [4, "home"]]],
   ["framesize", [[8, "SVGA 800×600"], [6, "VGA 640×480"], [5, "CIF 400×296"], [4, "QVGA 320×240"]]],
 ];
 
-const STALL_MS = 5000; // no frame for this long, while connected = reconnect
-// object detection runs on its own timer rather than off the paint path, so a slow
-// machine drops boxes instead of frames. 100ms because that IS the feed — the cam
-// sends ~10fps at SVGA and one inference measured 25ms warm on webgl (47ms first,
-// 733ms model load), so every frame gets boxes with the gpu still mostly idle.
-// The busy flag is what makes it safe to lower: a machine that can't keep up (the
-// judges' tablet, webgl unavailable and it falls back to cpu at ~280ms) skips ticks
-// instead of queueing behind itself.
-const DET_MS = 100;
-const DET_MIN_SCORE = 0.5;  // bench knob: a real cam shot of a person came back at 0.52
+const STALL_MS = 5000;
 
-/* camera view (esp32-cam mjpeg) — lives inside the stage */
+const DET_MS = 100;
+const DET_MIN_SCORE = 0.5;
+
 function CamView() {
   const [state, setState] = useState("loading");
   const [nonce, setNonce] = useState(0);
@@ -962,18 +826,16 @@ function CamView() {
   const [host, setHost] = useState(camHost());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detect, setDetect] = useState(() => localStorage.getItem("camDetect") === "1");
-  const [detState, setDetState] = useState("off"); // off | loading | on | failed
-  // defaults mirror what the firmware sets at boot — the panel opens showing the
-  // real state, not zeroes. change one here only if you change it in main.ino too.
+  const [detState, setDetState] = useState("off");
+
   const [sliders, setSliders] = useState({ brightness: -1, contrast: -1, saturation: 0, ae_level: 0, led: 15 });
   const [picks, setPicks] = useState({ wb_mode: 0, framesize: 8 });
   const imgRef = useRef(null);
   const boxRef = useRef(null);
 
   useEffect(() => {
-    // hang up before unmounting. removeattribute aborts the fetch now — unlike src="", it doesn't re-request page url.
     const y = () => { imgRef.current?.removeAttribute("src"); setYielded(true); };
-    // back to "loading", not old state. a remounted <img> whose stream never starts fires neither onLoad nor onError.
+
     const r = () => { setYielded(false); setState("loading"); setNonce(n => n + 1); };
     window.addEventListener("cam:yield", y);
     window.addEventListener("cam:resume", r);
@@ -983,28 +845,18 @@ function CamView() {
   const fail = useCallback(() => setState("offline"), []);
   const lastFrame = useRef(0);
 
-  // MJPEG in an <img src> is decoded by the browser's own multipart parser, and that
-  // parser stalls: bytes keep arriving on the socket, the picture stops, and NOTHING
-  // fires — no load, no error — so the feed sits frozen until someone hits refresh.
-  // So read the stream ourselves. The cam sends Access-Control-Allow-Origin:* on
-  // /stream, so fetch can have the bytes; each part becomes one blob url, which is a
-  // plain single-jpeg decode the parser can't wedge on. It also makes "frozen" a
-  // thing we can SEE (a timestamp), which the <img> never told us.
-  // IMPORTANT NOTE: no canvas anywhere — the cam is a different origin, so a canvas
-  // drawn from it is tainted and can't be read back. Blob per frame is the way.
   useEffect(() => {
     if (yielded) return;
     const img = imgRef.current;
     if (!img) return;
     const ctl = new AbortController();
-    // the clock starts at the reconnect, not at the last frame of the dead socket —
-    // otherwise the watchdog is already expired and fires again a second later.
+
     lastFrame.current = Date.now();
     let alive = true, shown = null, first = true;
     const paint = (bytes) => {
       const url = URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }));
       img.src = url;
-      if (shown) URL.revokeObjectURL(shown); // already decoded and on screen
+      if (shown) URL.revokeObjectURL(shown);
       shown = url;
       lastFrame.current = Date.now();
       if (first) {
@@ -1038,9 +890,6 @@ function CamView() {
     return () => { alive = false; ctl.abort(); if (shown) URL.revokeObjectURL(shown); };
   }, [yielded, nonce, host]);
 
-  // object detection: read the <img> that's already on screen (its blob: url is
-  // same-origin, so the canvas isn't tainted) and paint boxes on the overlay canvas.
-  // sized to the frame, so it inherits the img's own css transform — see drawBoxes.
   useEffect(() => {
     if (!detect || yielded || state !== "live") { setDetState("off"); return; }
     let alive = true, model = null, busy = false;
@@ -1056,16 +905,12 @@ function CamView() {
         if (!alive) return;
         if (cv.width !== img.naturalWidth) { cv.width = img.naturalWidth; cv.height = img.naturalHeight; }
         drawBoxes(cv.getContext("2d"), boxes, cv.width, cv.height);
-      } catch { /* a frame swapped mid-read; next tick has a whole one */ }
+      } catch {  }
       finally { busy = false; }
     }, DET_MS);
     return () => { alive = false; clearInterval(id); };
   }, [detect, yielded, state]);
 
-  // the watchdog: connected, but no frame in STALL_MS. bumping the nonce tears the
-  // socket down and opens a new one — silent, because the last frame stays on screen
-  // (state is left at "live", so no placeholder flashes over it). only ever runs once
-  // the feed HAS been live: a cam that never connected is the offline retry's job.
   useEffect(() => {
     if (yielded || state !== "live") return;
     const id = setInterval(() => {
@@ -1080,14 +925,13 @@ function CamView() {
     return () => clearTimeout(id);
   }, [state, yielded, nonce, host, fail]);
 
-  // dropped feed (cam-yield, wifi hiccup) shouldn't strand operator behind manual retry — keep trying.
   useEffect(() => {
     if (yielded || state !== "offline") return;
     const id = setTimeout(() => { setState("loading"); setNonce(n => n + 1); }, 5000);
     return () => clearTimeout(id);
   }, [state, yielded]);
 
-  const base = camUrl(host); // shown in the offline card; the reader fetches it itself
+  const base = camUrl(host);
 
   const applyHost = (v) => {
     const h = v.trim() || CAM_HOST_DEFAULT;
@@ -1098,32 +942,22 @@ function CamView() {
   const ctrl = (varName, val) => {
     setSliders(p => ({ ...p, [varName]: val }));
     fetch(`http://${host}/control?var=${varName}&val=${val}`).catch(() => {});
-    // the lamp also goes through the server, so sage's remembered level tracks the
-    // slider — she skips a write when she thinks the lamp is already there, and the
-    // browser and the server do not agree on the cam's address by accident.
+
     if (varName === "led") fetch("/api/led", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: val }) }).catch(() => {});
   };
-  // the pink wash is white balance, and it comes back two ways: a board still on
-  // pre-awb firmware boots with frozen gains, and set_framesize re-runs the sensor
-  // init on *any* firmware, dropping the awb chain with it. so re-assert it whenever
-  // the stream goes live or the resolution changes, rather than trusting it to stick.
-  // all three matter — whitebal alone leaves the gains where the sensor left them.
+
   const forceAwb = () => {
     for (const [k, v] of [["whitebal", 1], ["awb_gain", 1], ["wb_mode", picks.wb_mode]])
       fetch(`http://${host}/control?var=${k}&val=${v}`).catch(() => {});
   };
-  // the reader effect is declared above forceAwb and must not re-run when picks
-  // change (that would drop the stream on every white-balance tweak) — so it calls
-  // the latest one through a ref instead of closing over it.
+
   const forceAwbRef = useRef(forceAwb);
   forceAwbRef.current = forceAwb;
-  // enum settings — same endpoint, but a slider can't label "cloudy" vs "office".
-  // framesize reallocates the frame buffer, so the stream stutters for a frame on
-  // change; it can't exceed the init size (SVGA=8) — see the control handler.
+
   const pick = (varName, val) => {
     setPicks(p => ({ ...p, [varName]: val }));
     fetch(`http://${host}/control?var=${varName}&val=${val}`)
-      .then(() => { if (varName === "framesize") forceAwb(); }) // reinit dropped it
+      .then(() => { if (varName === "framesize") forceAwb(); })
       .catch(() => {});
   };
 
@@ -1132,9 +966,7 @@ function CamView() {
       ${yielded
         ? html`<div class="viewport-fallback">${t("cam.scanning")}</div>`
         : state !== "offline"
-        // alt="" on purpose: there's no src until the first blob lands, and the
-        // broken-image alt renders rotated -90deg with the frame (vertical text).
-        // the section is already labelled by cam-h.
+
         ? html`<${React.Fragment}>
             <img ref=${imgRef} alt="" class="cam-feed" />
             ${detect ? html`<canvas ref=${boxRef} class="cam-feed cam-boxes" aria-hidden="true" />` : null}
@@ -1175,9 +1007,7 @@ function CamView() {
     </div>`;
 }
 
-/* fpv frame sizes, cycled by OPTIONS (or the hud button). "fill" crops the rotated frame to
-   the viewport — see .fpv-fill in the css — the rest scale the whole frame, letterboxed.
-   fill stays first so fpv still opens the way it always has. */
+// ---- fpv ----
 const FPV_ZOOMS = [
   { id: "fill", label: "FILL" },
   { id: "fit", label: "FIT", z: 1 },
@@ -1185,16 +1015,11 @@ const FPV_ZOOMS = [
   { id: "z160", label: "160%", z: 1.6 },
 ];
 
-/* ---- fpv hud ----
-   glass drawn over the fullscreen feed: corner brackets, reticle and an attitude
-   line driven by roll/pitch. all of it is pointer-events:none so it never eats a click meant for the feed underneath.
-   with no packet the numbers read 0 and the horizon sits level — a dead link
-   should look obviously dead, not frozen at the last good attitude. */
 function FpvOverlay({ packet }) {
   const roll = packet?.roll ?? 0;
   const pitch = packet?.pitch ?? 0;
   const dist = packet?.dist;
-  // close obstacle turns the reticle red — the one number that matters while driving blind
+
   const near = dist != null && !isNaN(dist) && dist > 0 && dist < 30;
 
   return html`
@@ -1218,13 +1043,6 @@ function FpvOverlay({ packet }) {
     </div>`;
 }
 
-/* fpv sage — the agent as one glass card over the feed: who is talking, what it
-   just said, and the four numbers that matter while driving blind. deliberately
-   the same panel as the marketing frame (docs/marketing/template.html #03-telemetry),
-   so what people are shown and what they get are the same object — stats down the
-   right instead of across, because it carries every sensor, not the headline four.
-   the rail agent (voice picker, verdict, history) stays behind in the cockpit —
-   fpv keeps the readout, the hud keeps the buttons. */
 const FPV_STATS = [
   { k: "sensor.dist",  u: "cm",  v: p => fmt(p?.dist, 0) },
   { k: "sensor.temp",  u: "°C",  v: p => fmt(p?.temp, 0) },
@@ -1251,31 +1069,24 @@ function FpvSage({ ai, packet, speaking, connected }) {
     </section>`;
 }
 
-/* ---- mission replay ----
-   a recorded run is telemetry stamped against cam stills (server-side grabs —
-   the cam is a different origin, so a canvas drawn from the mjpeg <img> is
-   tainted). playback is the FPV overlay over the recorded frame, so a replay
-   reads exactly like the live feed did. */
+// ---- replay ----
 const clock = (ms) => {
   const s = Math.max(0, Math.round(ms / 1000));
   return `${String((s / 60) | 0).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 };
-// last sample at or before t. IMPORTANT NOTE: linear scan each tick — a 15 min run
-// at 20 Hz is 18k samples, still microseconds. index it only if that stops being true.
+
 function at(list, t) {
   let hit = list[0];
   for (const x of list) { if (x.t > t) break; hit = x; }
   return hit;
 }
-// same, but nothing before the first one — an event hasn't happened yet at t=0.
+
 function before(list, t) {
   let hit = null;
   for (const x of list) { if (x.t > t) break; hit = x; }
   return hit;
 }
 
-// what the recorder marks, and how the timeline says it. a kind with no entry
-// here draws nothing — keep this in step with recorder.js's mark() callers.
 const EVENT_META = {
   finding:  { label: "FINDING DETECTED", glyph: "◆", cls: "k-find" },
   analysis: { label: "ANALYSIS",         glyph: "◎", cls: "k-analysis" },
@@ -1284,8 +1095,8 @@ const EVENT_META = {
   camlost:  { label: "CAMERA DEAD",      glyph: "◉", cls: "k-dead" },
   camback:  { label: "CAMERA BACK",      glyph: "◉", cls: "k-back" },
 };
-const SAID = ["sage", "analysis", "finding"]; // kinds that count as sage talking
-const BANNER_MS = 4000;                       // how long an event stays called out
+const SAID = ["sage", "analysis", "finding"];
+const BANNER_MS = 4000;
 
 function Replay({ run, onClose }) {
   const [t, setT] = useState(0);
@@ -1306,8 +1117,7 @@ function Replay({ run, onClose }) {
     return () => clearInterval(id);
   }, [play, run]);
   const seek = useCallback((ms) => { setPlay(false); setT(Math.max(0, Math.min(run.dur, ms))); }, [run.dur]);
-  // esc out, space to hold, arrows to jog. the scrubber keeps its own native
-  // arrow handling when it has focus, so don't fight it there.
+
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") return onClose();
@@ -1322,11 +1132,11 @@ function Replay({ run, onClose }) {
 
   const frame = at(run.frames, t);
   const packet = at(run.packets, t);
-  const now = before(events, t);                               // last thing that happened
-  const banner = now && t - now.t < BANNER_MS ? now : null;    // ...if it just happened
+  const now = before(events, t);
+  const banner = now && t - now.t < BANNER_MS ? now : null;
   const said = before(events.filter(e => SAID.includes(e.kind)), t);
   const dead = before(events.filter(e => e.kind === "camlost" || e.kind === "camback"), t)?.kind === "camlost";
-  // sage's card is the live one, fed the line she was on at this point in the run
+
   const ai = { text: said?.text || "—", status: null, analyzing: false };
 
   return html`
@@ -1388,7 +1198,7 @@ function ReplayList({ runs, onPick, onDelete, onClose }) {
     </div>`;
 }
 
-/* sensor strip — 5 live tiles + trend sparkline, one row under the stage */
+// ---- judge view ----
 function SensorStrip({ packet }) {
   return html`
     <${React.Fragment}>
@@ -1407,9 +1217,6 @@ function SensorStrip({ packet }) {
     <//>`;
 }
 
-/* judge view — a mirror the host switched to presentation. same telemetry, no controls
-   at all, big enough to read across a table. deliberately flat: verdict, camera, numbers.
-   it is a *layout*, not a permission level — the server still has it as telemetry-only. */
 function JudgeView({ packet, connected, ai }) {
   const v = assess(packet);
   return html`
@@ -1434,12 +1241,11 @@ function JudgeView({ packet, connected, ai }) {
           })}
         </div>
       </div>
-      ${/* only what sage actually said — the idle placeholder contradicts a live verdict */""}
+      ${""}
       ${ai.text && ai.text !== t("ai.awaiting") && html`<p class="judge-say">${ai.text}</p>`}
     </main>`;
 }
 
-/* analysis / mission memory (drawer tab) */
 function Memory({ chat }) {
   const findings = (chat?.findings || []).slice().reverse();
   const tag = !chat ? "—" : findings.length ? t("tag.found", { n: findings.length }) : t("tag.nominal");
@@ -1461,9 +1267,7 @@ function Memory({ chat }) {
     </section>`;
 }
 
-/* agent (ai)
-   mood derived from what it says + live sensor state. drives animated glyph so analysis reads as intent, not just text. */
-// label is i18n key, resolved at render via t(). key doubles as the SageFace mood.
+// ---- verdict + mood ----
 const INTENTS = {
   idle:     { key: "idle",     label: "intent.idle",     color: "var(--ink-3)" },
   scanning: { key: "scanning", label: "intent.scanning", color: "var(--ink-2)" },
@@ -1473,7 +1277,6 @@ const INTENTS = {
   alert:    { key: "alert",    label: "intent.alert",    color: "var(--accent)" },
 };
 
-// worst pill across all live readings: 0 go · 1 warn · 2 abort · null no data.
 function worstSensor(packet) {
   if (!packet) return null;
   let rank = -1;
@@ -1486,7 +1289,6 @@ function worstSensor(packet) {
   return rank < 0 ? null : rank;
 }
 
-// go/no-go verdict for operator: worst sensor decides, named so reason is visible.
 function assess(packet) {
   const rank = worstSensor(packet);
   if (rank == null) return { kind: "idle", label: t("verdict.awaiting"), cause: t("verdict.noTelemetry") };
@@ -1504,7 +1306,6 @@ function assess(packet) {
   return { kind: "go", label: t("verdict.safe"), cause };
 }
 
-// intent: analysis-in-flight wins, then keywords in agent text, then sensors.
 function deriveIntent(ai, packet, connected) {
   if (ai.analyzing) return INTENTS.thinking;
   const txt = (ai.text || "").toLowerCase();
@@ -1518,19 +1319,13 @@ function deriveIntent(ai, packet, connected) {
   return connected ? INTENTS.scanning : INTENTS.idle;
 }
 
-// live ticking elapsed counter (since a timestamp), ~10fps.
 function Stopwatch({ since }) {
   const [, tick] = useState(0);
   useEffect(() => { const id = setInterval(() => tick(n => n + 1), 90); return () => clearInterval(id); }, [since]);
   return html`${((Date.now() - since) / 1000).toFixed(1)}s`;
 }
 
-/* ---- transcript ----
-   the agent tab is a terminal, not a chat window: one line per move. the tool
-   lines are the point — sage decides to take a look, or to keep the last ten
-   seconds of readings, and the operator watches her do it instead of guessing
-   why the answer changed. server side that decision is the `tool` field in her
-   json and the loop in server.js that runs it (see agentLoop there). */
+// ---- agent feed ----
 const TOOLS = {
   camera:   { icon: "camera", label: "tool.camera",  of: "tool.lookAt" },
   sensors:  { icon: "timer",  label: "tool.sensors",  of: "tool.readingsOf" },
@@ -1541,11 +1336,6 @@ const TOOLS = {
   analysis: { icon: "camera", label: "tool.analysis" },
 };
 
-/* a move sage asked for. she never drives on her own — this is the ask, and the
-   rover only turns when the operator presses RUN. `board` is what the compiler said
-   at the time she proposed it: an instruction count means the program uploads and
-   runs on the giga's own vm (so `forward until dist < 5` stops in one loop() pass,
-   not after a ble round trip), a string is the reason it has to run up here. */
 function MoveCard({ e, onMove }) {
   const st = e.state || "pending";
   return html`<div class=${"fl fl-move is-" + st}>
@@ -1566,8 +1356,7 @@ function FeedLine({ e, onMove }) {
   if (e.kind === "move") return html`<${MoveCard} e=${e} onMove=${onMove} />`;
   if (e.kind === "tool") {
     const spec = TOOLS[e.name] || { icon: "gear", label: "tool.unknown" };
-    // `arg` is what she actually went looking for, in her words — "temperature
-    // readings" reads like a tool call, "sensors" reads like a field name.
+
     const what = e.arg ? t(spec.of || "tool.of", { what: e.arg }) : t(spec.label);
     return html`<div class="fl fl-tool">
       <span class="fl-mark">◆</span>
@@ -1591,8 +1380,6 @@ function FeedLine({ e, onMove }) {
     </div></div>`;
 }
 
-// the stream itself. sticks to the bottom — a working agent writes while you read,
-// and a transcript that holds its scroll hides the line you are waiting for.
 function Feed({ feed, ai, onAsk, onMove }) {
   const ref = useRef(null);
   useEffect(() => { const el = ref.current; if (el) el.scrollTop = el.scrollHeight; }, [feed.length, ai.analyzing, ai.text]);
@@ -1652,7 +1439,7 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
             ${hasDeepgram ? html`<option value="deepgram">${t("agent.voiceDg")}</option>` : null}
           </select>
         </div>
-        ${/* the big face, back where it was — the bar's 15px one read as an icon */""}
+        ${""}
         <div class=${"term-hero" + (speaking ? " is-speaking" : "")}><${SageFace} mood=${intent.key} /></div>
         <${Feed} feed=${feed} ai=${ai} onAsk=${onAsk} onMove=${onMove} />
         <form class="agent-foot term-prompt" onSubmit=${send}>
@@ -1660,8 +1447,7 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
             aria-label=${t("term.ph")} disabled=${ai.analyzing}
             onInput=${e => setDraft(e.target.value)} />
           <${Ask} onAsk=${onAsk} busy=${ai.analyzing} />
-          ${/* everything that isn't typing or talking lives in one menu — the foot
-               was four buttons wide in a rail that is 300px */""}
+          ${""}
           <details class="foot-menu" onBlur=${e => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.open = false; }}>
             <summary class="btn foot-icon" title=${t("agent.more")} aria-label=${t("agent.more")}>⋯</summary>
             <div class="foot-menu-pop" onClick=${e => { e.currentTarget.closest("details").open = false; }}>
@@ -1687,11 +1473,7 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
     </section>`;
 }
 
-/* ---- session report ----
-   one object holding everything the session knows: mission, link, verdict,
-   telemetry, findings, conversation, analysis, events. the modal renders it and
-   the same object is what downloads as .json — the document and the export can
-   never disagree because there is only one of them. */
+// ---- session report ----
 function buildReport({ chat, packet, logs, ai, connected, ping, packets, uptime }) {
   const v = assess(packet);
   return {
@@ -1712,8 +1494,6 @@ function buildReport({ chat, packet, logs, ai, connected, ping, packets, uptime 
       const [lblKey, kind] = ok ? s.st(value) : [null, null];
       return { key: s.key, label: t("sensor." + s.key), value: ok ? Number(value) : null, unit: s.unit, status: lblKey ? t(lblKey) : null, kind };
     }),
-    // raw packet too: attitude, co, bumps and anything the csv grows later that
-    // has no tile yet still lands in the export.
     telemetry: packet || null,
     findings: (chat?.findings || []).map(f => ({ time: f.time, kind: f.kind, text: f.text, hasImage: !!f.img })),
     conversation: (chat?.messages || []).map(m => ({ role: m.role, content: m.content })),
@@ -1725,7 +1505,7 @@ function buildReport({ chat, packet, logs, ai, connected, ping, packets, uptime 
 function downloadReport(rep) {
   const stamp = rep.generated.slice(0, 19).replace(/[:T]/g, "-");
   const slug = (rep.session.title || "session").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "session";
-  // desktop shell: native save sheet instead of a silent drop into ~/Downloads
+
   if (window.blackout) {
     window.blackout.saveFile({
       defaultName: `blackout-${slug}-${stamp}.json`,
@@ -1739,7 +1519,7 @@ function downloadReport(rep) {
   a.href = url;
   a.download = `blackout-${slug}-${stamp}.json`;
   a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000); // revoking in the same tick cancels the download
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function ReportRow({ k, v, kind, img }) {
@@ -1796,7 +1576,6 @@ function ReportModal({ report, closing, onClose }) {
     </div>`;
 }
 
-/* chat sessions (in agent box) */
 function ChatSelect({ chats, onNew, onSelect, onDelete }) {
   return html`
     <div class="chat-select">
@@ -1817,24 +1596,18 @@ function ChatSelect({ chats, onNew, onSelect, onDelete }) {
     </div>`;
 }
 
+// ---- mic ----
 const canMic = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
-const MIC_MAX_MS = 15000; // hard cap — a mic left open is an open upload
-// auto-send after this much quiet, counted from the moment the mic opens, so
-// pressing it by accident costs 2s and not a 15s wait. bench knobs: RMS is
-// mic-and-room dependent, raise it if a noisy venue never goes "quiet".
+const MIC_MAX_MS = 15000;
+
 const SIL_MS = 2000, SIL_RMS = 0.02;
 
-// shared speech-to-text. onText gets the recognized transcript.
-// IMPORTANT NOTE: records here, transcribes on the server (/api/stt -> deepgram).
-// window.SpeechRecognition is a google cloud call chromium ships no api key for:
-// it fails `network` the instant you press the button, in electron and anywhere
-// that build lacks the key. push to talk, push again (or 15s) to send.
 function useMic(onText) {
   const [listening, setListening] = useState(false);
   const recRef = useRef(null);
   const toggle = useCallback(async () => {
     if (recRef.current) { recRef.current.stop(); return; }
-    stopSpeech(); // operator is talking — cut agent off so it doesn't talk over them
+    stopSpeech();
     let stream;
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
     catch (e) { console.warn("[mic]", e.name, e.message); return; }
@@ -1847,7 +1620,7 @@ function useMic(onText) {
       stream.getTracks().forEach((tr) => tr.stop());
       recRef.current = null; setListening(false);
       const blob = new Blob(parts, { type: rec.mimeType });
-      if (blob.size < 2000) return; // nothing said
+      if (blob.size < 2000) return;
       try {
         const r = await fetch(`/api/stt?lang=${speechLang()}`, {
           method: "POST", headers: { "Content-Type": blob.type }, body: blob,
@@ -1856,7 +1629,7 @@ function useMic(onText) {
         if (j.text) onText(j.text); else console.warn("[mic]", j.error || "no speech");
       } catch (e) { console.warn("[mic]", e.message); }
     };
-    // silence watchdog: rms off an analyser node, no dep, no decoding.
+
     const ac = new (window.AudioContext || window.webkitAudioContext)();
     const an = ac.createAnalyser(); an.fftSize = 512;
     ac.createMediaStreamSource(stream).connect(an);
@@ -1877,7 +1650,7 @@ function useMic(onText) {
   return { listening, toggle, supported: canMic };
 }
 
-// briefing step copy resolved through i18n at render. `clip` maps each step to its pre-generated onboarding audio key.
+// ---- briefing ----
 const BRIEF_STEPS = [
   { key: "objective",   clip: "q0", label: "brief.objLabel",   q: "brief.objQ",   ph: "brief.objPh" },
   { key: "environment", clip: "q1", label: "brief.envLabel",   q: "brief.envQ",   ph: "brief.envPh" },
@@ -1898,8 +1671,6 @@ function Briefing({ onBrief, onBack, onSpeak, busy }) {
   const next = () => { if (curVal.trim()) setStep(s => s + 1); };
   const start = () => onBrief(BRIEF_STEPS.map(s => `${t(s.label)}: ${answers[s.key] || "—"}`).join("\n"));
 
-  // speak each onboarding step out loud (pre-rendered clips, no synth wait).
-  // step 0 plays the intro greeting first, then its question.
   useEffect(() => {
     if (review) {
       onSpeak?.([{ clip: "rundown", text: ONBOARDING[getLang()].rundown }]);
@@ -1908,7 +1679,7 @@ function Briefing({ onBrief, onBack, onSpeak, busy }) {
     const s = BRIEF_STEPS[step];
     const q = { clip: s.clip, text: t(s.q) };
     onSpeak?.(step === 0 ? [{ clip: "intro", text: ONBOARDING[getLang()].intro }, q] : [q]);
-  }, [step]); // eslint-disable-line — re-speak only on step change, not keystrokes
+  }, [step]);
 
   const dots = html`<div class="brief-dots" aria-hidden="true">
     ${BRIEF_STEPS.map((s, i) => html`<span key=${s.key}
@@ -1963,9 +1734,6 @@ function Briefing({ onBrief, onBack, onSpeak, busy }) {
     </div>`;
 }
 
-/* ask sage (voice, in agent box) */
-// predetermined prompts — give operator ideas and keep questions on-telemetry.
-// they live in the ⋯ menu; only the mic gets a permanent button.
 const ASK_SUGGESTIONS = ["ask.s0", "ask.s1", "ask.s2", "ask.s3", "ask.s4"];
 function Ask({ onAsk, busy }) {
   const mic = useMic(onAsk);
@@ -1975,7 +1743,7 @@ function Ask({ onAsk, busy }) {
     ${mic.listening ? "●" : html`<${Icon} n="mic" />`}</button>`;
 }
 
-/* logs */
+// ---- logs ----
 function Logs({ logs }) {
   const [f, setF] = useState("all");
   const tabs = [["all", t("log.tabAll")], ["system", t("log.tabSystem")], ["alerts", t("log.tabAlerts")], ["ai", t("log.tabAi")]];
@@ -1996,11 +1764,10 @@ function Logs({ logs }) {
     </section>`;
 }
 
-/* serial monitor (drawer tab) */
 function SerialMonitor({ lines, onClear }) {
   const [paused, setPaused] = useState(false);
   const streamRef = useRef(null);
-  // stick to bottom on new lines unless user paused to read.
+
   useEffect(() => {
     if (paused) return;
     const el = streamRef.current; if (el) el.scrollTop = el.scrollHeight;
@@ -2024,12 +1791,12 @@ function SerialMonitor({ lines, onClear }) {
     </section>`;
 }
 
-/* topbar — slim command strip: identity, link, connection, vitals, lang, console */
+// ---- topbar + drawer ----
 function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lanUrl, lanIp, lang, onLang, onConsole, consoleOpen, clients, onDevices, granted, cloud, onSettings }) {
   return html`
     <header class="topbar">
       <div class="brand">
-        ${/* htm has no void-element rule — an unclosed <img> swallows the rest of the header */""}
+        ${""}
         <img src="brand.svg" alt="" width="24" height="24" />
       </div>
       <p class="lamp visually-hidden" role="status" aria-live="polite">
@@ -2039,8 +1806,7 @@ function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lan
         ◉ ${t(granted ? "mast.control" : "mast.mirror")}</span>` : html`
       <div class="top-conn">
         <div class="bridge-ctl">
-          ${/* linked but silent is its own state: the gatt link survives a hung sketch,
-               so "LINKED" with no telemetry behind it is the lie this catches */""}
+          ${""}
           <button type="button" class=${"bridge-btn " + (bridge.running ? (stale ? "is-stale" : "is-on") : "")}
             disabled=${bridge.busy} onClick=${() => onBridge("toggle")}>
             <span class=${"lamp-dot " + (bridge.running && !stale ? "is-go" : "is-abort")}></span>
@@ -2051,7 +1817,7 @@ function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lan
             disabled=${bridge.busy} onClick=${() => onBridge("reconnect")}>⟳</button>
         </div>
       </div>`}
-      ${/* the venue has no internet: these two die quietly, so say so out loud */""}
+      ${""}
       ${cloud && html`<span class="top-cloud">
         <span class=${"pill " + (cloud.sage ? "is-go" : "is-abort")} title=${t("cloud.title")}>${t("cloud.sage")}</span>
         <span class=${"pill " + (cloud.tts ? "is-go" : "is-abort")} title=${t("cloud.title")}>${t("cloud.tts")}</span>
@@ -2082,12 +1848,8 @@ function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lan
     </header>`;
 }
 
-/* the board's screensavers, in the order of the enum in main.ino — the index *is* the
-   wire value of "scr,<n>", and 0 is off. adding one is a case in each of startSaver/
-   stepSaver/drawSaver there, an entry here, and a "drawer.<key>" string in i18n.js. */
 const SAVERS = ["saverOff", "matrix", "saverBounce", "saverStars", "saverTetris"];
 
-/* console drawer — logs, findings, serial, motor bench. slides over the cockpit */
 function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, enabled, onTutorial, saver, onSaver, moves, onMoves, buzz, onBuzz }) {
   if (!open) return null;
   const tabs = [["logs", t("zone.logs")], ["findings", t("zone.analysis")], ["serial", t("zone.serial")], ["motor", t("colo.motor")]];
@@ -2099,18 +1861,17 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
             class=${"drawer-tab" + (tab === k ? " is-active" : "")} onClick=${() => onTab(k)}>${lbl}</button>`)}
         </div>
         <button type="button" class="serial-btn drawer-tour" onClick=${onTutorial}>${t("tour.restart")}</button>
-        ${/* sage proposes moves as cards in the transcript; nothing turns until the
-             operator presses RUN on one. off tells her the drive is locked. */""}
+        ${""}
         <button type="button" class=${"serial-btn drawer-moves" + (moves ? " is-on" : "")}
           aria-pressed=${!!moves} onClick=${onMoves} title=${t("drawer.movesTitle")}>
           ${t("drawer.moves")}: ${t(moves ? "drawer.on" : "drawer.off")}
         </button>
-        ${/* the buzzer follows the hud level on the board — this is the mute, not a trigger */""}
+        ${""}
         <button type="button" class=${"serial-btn drawer-buzz" + (buzz ? " is-on" : "")}
           aria-pressed=${!!buzz} onClick=${onBuzz} title=${t("drawer.buzzTitle")}>
           ${t("drawer.buzz")}: ${t(buzz ? "drawer.on" : "drawer.off")}
         </button>
-        ${/* the screensavers run on the board itself — this is only the picker */""}
+        ${""}
         <select class="serial-btn drawer-saver" disabled=${!enabled} value=${saver}
           onChange=${(e) => onSaver(Number(e.target.value))} title=${t("drawer.saverTitle")}
           aria-label=${t("drawer.saver")}>
@@ -2127,8 +1888,6 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
     </div>`;
 }
 
-/* flash.sh draws a braille spinner with \r — treat CR as "rewind to start of
-   line" so the log pane shows one live line instead of thousands of frames. */
 function appendLog(log, chunk) {
   return chunk.split(/(\r\n|\n|\r)/).reduce((acc, tok) => {
     if (tok === "\r") return acc.slice(0, acc.lastIndexOf("\n") + 1);
@@ -2137,13 +1896,10 @@ function appendLog(log, chunk) {
   }, log);
 }
 
-// which rover is on the wire. the giga is V3, the uno r4 is V2 — flash.sh builds
-// V2 straight out of git history, so both are flashable from here.
+// ---- firmware update ----
 const roverModel = (b) => b.giga ? "Blackout V3" : b.unor4 ? "Blackout V2" : "Blackout";
 const anyBoard = (b) => !!(b.giga || b.unor4 || b.esp32cam);
 
-/* usb board plugged in = someone is setting the rover up. that's the only thing
-   that surfaces the updater — there's no permanent button for it. */
 function UpdateBar({ boards, onUpdate }) {
   const stale = boards.status !== "current";
   return html`
@@ -2156,9 +1912,6 @@ function UpdateBar({ boards, onUpdate }) {
     </div>`;
 }
 
-// flash.sh's stdout is the only progress signal there is — arduino-cli's own
-// percentages go to its temp log, not the stream. what does come through is one
-// "▸" per board and one "✔" per finished compile/upload: two ticks per board.
 const FLASH_TICKS_PER_BOARD = 2;
 function flashProgress(log, boards, phase) {
   const heads = [...log.matchAll(/^▸ (.+?) @ /gm)].map(m => m[1]);
@@ -2167,12 +1920,10 @@ function flashProgress(log, boards, phase) {
   const total = Math.max(planned, heads.length, 1) * FLASH_TICKS_PER_BOARD;
   const board = heads[heads.length - 1] || null;
   const step = !board ? "prep" : ticks % 2 === 0 ? "compile" : "upload";
-  // never show a full bar until the script actually exits — 99 is "nearly", not "done"
+
   return { pct: phase === "done" ? 100 : Math.min(99, Math.round((ticks / total) * 100)), board, step };
 }
 
-/* sage's face + bar. the eyes scan while work is happening and settle into
-   ^_^ / x_x the moment the script exits — the bar is the actual read-out. */
 const FLASH_MOOD = { work: "work", ok: "clear", error: "alert" };
 function FlashProgress({ log, boards, phase, code }) {
   const { pct, board, step } = flashProgress(log, boards, phase);
@@ -2193,11 +1944,10 @@ function FlashProgress({ log, boards, phase, code }) {
     </div>`;
 }
 
-/* update blackout — self-serve firmware flash over usb. detect → flashing → done */
 function UpdateModal({ open, phase, boards, log, code, onFlash, onClose }) {
   const logRef = useRef(null);
   useEffect(() => { const el = logRef.current; if (el) el.scrollTop = el.scrollHeight; }, [log]);
-  const locked = phase === "flashing"; // no way out mid-flash — pulling the rug corrupts the board
+  const locked = phase === "flashing";
   const board = (label, ok, note) => html`
     <div class=${"flash-board " + (ok ? "is-ok" : "is-missing")}>
       ${label}<small>${ok ? (note || t("update.detected")) : t("update.notDetected")}</small>
@@ -2233,20 +1983,14 @@ function UpdateModal({ open, phase, boards, log, code, onFlash, onClose }) {
     </div>`;
 }
 
-/* toasts */
+// ---- modals ----
 function Toasts({ items }) {
   return html`<div class="toasts">${items.map(t => html`<div key=${t.id} class=${"toast k-" + t.kind + (t.leaving ? " is-leaving" : "")}>${t.msg}</div>`)}</div>`;
 }
 
-/* what the host can set a device to. "mirror" and "judge" are both telemetry-only —
-   they differ in layout, not in what they can do — so only "full" needs the confirm. */
 const DEV_MODES = [["mirror", "devices.view"], ["judge", "devices.judge"], ["full", "devices.full"]];
 
-/* connected devices — the host's roster of every dashboard on the lan, with the
-   mode picker for each. the server decides who's host (loopback) and enforces it. */
 function DevicesModal({ open, clients, selfId, onMode, onClose }) {
-  // granting is one-way dangerous, so it goes through a confirm with a 3s arm timer.
-  // revoking never asks. { c, closing } — `closing` keeps it mounted for the exit animation.
   const [ask, setAsk] = useState(null);
   const [count, setCount] = useState(3);
   useEffect(() => {
@@ -2278,8 +2022,7 @@ function DevicesModal({ open, clients, selfId, onMode, onClose }) {
                     value=${c.mode || "mirror"} aria-label=${t("devices.modeLabel")}
                     onChange=${(e) => {
                       const m = e.target.value;
-                      // full control is the one-way dangerous pick: bounce the select back
-                      // and let the confirm apply it, so a stray tap can't hand over the robot.
+
                       if (m === "full") { e.target.value = c.mode || "mirror"; setAsk({ c }); }
                       else onMode(c.id, m);
                     }}>
@@ -2306,9 +2049,6 @@ function DevicesModal({ open, clients, selfId, onMode, onClose }) {
     </div>`;
 }
 
-/* operator settings — desktop shell only. Reads/writes <userData>/blackout.env
-   through main.js; the server only picks up changes on relaunch since it's
-   forked once at launch. */
 function SettingsModal({ open, onClose }) {
   const [values, setValues] = useState({ GEMINI_API_KEY: "", GEMINI_MODEL: "", CEREBRAS_API_KEY: "", DEEPGRAM_API_KEY: "", CEREBRAS_MODEL: "", TTS_VOICE: "" });
   const [saved, setSaved] = useState(false);
@@ -2346,23 +2086,14 @@ function SettingsModal({ open, onClose }) {
     </div>`;
 }
 
-/* in-app BLE pairing — desktop shell only. Chrome's native chooser can't be
-   styled, so in Electron the main process holds the requestDevice() callback and
-   streams discovered devices here; a tap routes the pick back. Browser tabs
-   never render this — they keep the native chooser. */
 function BlePickerModal({ open, devices, onPick, onCancel }) {
-  // IMPORTANT NOTE: electron gives deviceId + deviceName only (no RSSI), and the
-  // giga may advertise every robot as "arduino" (untested — see toggleBridge).
-  // A name renders bare only when non-empty and unique; otherwise it's tagged
-  // with the id tail so three robots never show as three identical rows.
   const names = devices.map((d) => d.deviceName);
   const label = (d) => {
     const name = d.deviceName || t("ble.unnamed");
     const dup = !d.deviceName || names.filter((n) => n === d.deviceName).length > 1;
     return dup ? `${name} · ${d.deviceId.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase()}` : name;
   };
-  // IMPORTANT NOTE: guess only — the advertised name is all we get. Widen the map
-  // if a board ever advertises something more specific than "arduino".
+
   const assumed = (d) => {
     const n = (d.deviceName || "").toLowerCase();
     if (n.includes("blackout")) return "Blackout V3";
@@ -2399,13 +2130,7 @@ function BlePickerModal({ open, devices, onPick, onCancel }) {
     </div>`;
 }
 
-/* first-run onboard flow — hero → choose model → pair, so first launch reads as
-   a real app opening rather than a webpage that starts poking at itself.
-   full-screen (not a modal over the dashboard): the dashboard hasn't earned its
-   look yet on a first run. viewers (mirror tablets) never see model/pair —
-   pairing is the host's bridge, not theirs — App skips them straight through.
-   each step is its own component keyed by id in ONBOARD_VIEWS below — adding a
-   step means writing a component and adding one line there, nothing else. */
+// ---- onboarding ----
 const ONBOARD_CURRENT = { key: "v3", label: "Blackout V3", descKey: "onboard.v3Desc", photo: "onboard/rover-cave.jpg" };
 const ONBOARD_LEGACY = [{ key: "v2", label: "Blackout V2", descKey: "onboard.v2Desc" }];
 const ONBOARD_MODELS = [ONBOARD_CURRENT, ...ONBOARD_LEGACY];
@@ -2429,11 +2154,9 @@ function OnboardHero({ onStart }) {
     </div>`;
 }
 
-/* legacy pick is gated behind its own confirm popup (reuses the debug-warning's
-   3s countdown pattern) since V2 is a retired board, not a peer option to V3. */
 function OnboardModel({ onBack, onPickModel }) {
   const [legacyOpen, setLegacyOpen] = useState(false);
-  const [confirm, setConfirm] = useState(false); // false | "open" | "closing"
+  const [confirm, setConfirm] = useState(false);
   const [count, setCount] = useState(3);
   useEffect(() => {
     if (confirm !== "open") return;
@@ -2523,19 +2246,18 @@ function Onboard({ step, closing, model, bridge, onStart, onPickModel, onBack, o
     </div>`;
 }
 
-/* first-run tour — one spotlight box + a card, walked with Next. anchors that
-   aren't on the page (mirror mode has no link/drive zone) drop out of the walk. */
+// ---- tour ----
 const TOUR = [
   [".brand", "brand"],
   [".bridge-ctl, .top-mirror", "link"],
-  [".bridge-ctl", "pair", () => !!window.blackout], // desktop shell only — in-app robot picker
+  [".bridge-ctl", "pair", () => !!window.blackout],
   [".stage-3d", "stage"],
   [".stage-cam", "cam"],
   [".strip", "strip"],
   [".agent", "agent"],
   [".drive", "drive"],
   [".console-btn:last-of-type", "console"],
-  [".topbar .console-btn", "mirrorShare"], // hand the judges' tablet the mirror view
+  [".topbar .console-btn", "mirrorShare"],
 ];
 
 function Tour({ closing, onDone }) {
@@ -2547,8 +2269,7 @@ function Tour({ closing, onDone }) {
 
   useLayoutEffect(() => {
     if (!step) { onDone(); return; }
-    // IMPORTANT NOTE: re-measure on a timer — panels animate in, telemetry resizes
-    // them, and the spotlight has to stay glued. cheap enough for a 30s walkthrough.
+
     const measure = () => {
       const el = document.querySelector(step[0]);
       if (!el) return setBox(null);
@@ -2562,10 +2283,6 @@ function Tour({ closing, onDone }) {
     return () => { clearInterval(id); window.removeEventListener("resize", measure); };
   }, [i, step, onDone]);
 
-  // lock the app behind the walkthrough. `inert` takes clicks and tab-focus away from
-  // everything under #root (the tour is portaled outside it), and a capture-phase key
-  // listener swallows the window-level shortcuts inert can't touch — wasd drive, ` for
-  // the console, esc out of fpv. buttons still activate on Enter: that's a native click.
   useEffect(() => {
     const root = document.getElementById("root");
     root.inert = true;
@@ -2607,20 +2324,20 @@ function Tour({ closing, onDone }) {
     </div>`;
 }
 
-/* root */
+// ---- app ----
 function App() {
   const [connected, setConnected] = useState(false);
   const [packet, setPacket] = useState(null);
-  const [fresh, setFresh] = useState(false); // a packet arrived within PKT_STALE_MS
+  const [fresh, setFresh] = useState(false);
   const lastPkt = useRef(0);
   const [ping, setPing] = useState("—");
   const [packets, setPackets] = useState(0);
   const [logs, setLogs] = useState([]);
   const [ai, setAi] = useState({ text: t("ai.awaiting"), badge: "badge.standby", analyzing: false, history: [], phase: null, since: 0, llm: null, tts: null, status: null });
-  // mirrors ai.analyzing for callers with no render to gate on (gamepad poll, routine e:analyze). re-synced every render.
+
   const analyzingRef = useRef(false);
   analyzingRef.current = ai.analyzing;
-  const presentingRef = useRef(false); // last routine started was presentation
+  const presentingRef = useRef(false);
   const [tts, setTts] = useState(() => localStorage.getItem("tts") !== "false");
   const [ttsProv, setTtsProv] = useState(() => localStorage.getItem("ttsProvider") || "edge");
   const [hasDeepgram, setHasDeepgram] = useState(false);
@@ -2628,78 +2345,72 @@ function App() {
   const [bridge, setBridge] = useState({ running: false, busy: false });
   const [toasts, setToasts] = useState([]);
   const [uptime, setUptime] = useState("00:00:00");
-  const [lanUrl, setLanUrl] = useState(null); // blackout.local — what the judges' tablet types
-  const [lanIp, setLanIp] = useState(null);   // raw ip, tooltip fallback if mdns is blocked
+  const [lanUrl, setLanUrl] = useState(null);
+  const [lanIp, setLanIp] = useState(null);
   const [serialLines, setSerialLines] = useState([]);
-  const [tour, setTour] = useState(false);     // false | "open" | "closing" — first-run walkthrough (once per browser)
-  const [drawer, setDrawer] = useState(false); // false | "open" | "closing"
+  const [tour, setTour] = useState(false);
+  const [drawer, setDrawer] = useState(false);
   const [drawerTab, setDrawerTab] = useState("logs");
-  const [warn, setWarn] = useState(false);     // false | "open" | "closing" — first-open debug warning gate
+  const [warn, setWarn] = useState(false);
   const [warnCount, setWarnCount] = useState(3);
-  const [updateOpen, setUpdateOpen] = useState(false); // false | "open" | "closing"
+  const [updateOpen, setUpdateOpen] = useState(false);
   const [flashPhase, setFlashPhase] = useState("choose");
   const [flashBoards, setFlashBoards] = useState({ giga: false, esp32cam: false, unor4: false, status: "none" });
   const [flashLog, setFlashLog] = useState("");
   const [flashCode, setFlashCode] = useState(null);
   const [speaking, setSpeaking] = useState(false);
-  const [fpv, setFpv] = useState(false);      // △/Y — fullscreen camera + hud overlay
-  const [fpvZoom, setFpvZoom] = useState(0);  // index into FPV_ZOOMS — OPTIONS cycles it
-  const [rec, setRec] = useState(null);       // run being recorded server-side, or null
-  const [runs, setRuns] = useState(null);     // saved runs while the picker is open, else null
-  const [replay, setReplay] = useState(null); // loaded run being played back
-  const [recErr, setRecErr] = useState(null); // why the last record attempt was refused
-  const [report, setReport] = useState(null); // frozen session report, or null when closed
-  const [reportClosing, setReportClosing] = useState(false); // true while the exit transition plays
-  const [clients, setClients] = useState([]); // every dashboard on the lan (host's roster)
+  const [fpv, setFpv] = useState(false);
+  const [fpvZoom, setFpvZoom] = useState(0);
+  const [rec, setRec] = useState(null);
+  const [runs, setRuns] = useState(null);
+  const [replay, setReplay] = useState(null);
+  const [recErr, setRecErr] = useState(null);
+  const [report, setReport] = useState(null);
+  const [reportClosing, setReportClosing] = useState(false);
+  const [clients, setClients] = useState([]);
   const [devicesOpen, setDevicesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detect, setDetect] = useState(() => localStorage.getItem("camDetect") === "1");
-  const [detState, setDetState] = useState("off"); // off | loading | on | failed // false | "open" | "closing"
-  const [onboardStep, setOnboardStep] = useState(false); // false | "hero" | "model" | "pair" — first-run, ahead of the spotlight tour
-  const [onboardModel, setOnboardModel] = useState(null); // "v2" | "v3" | null — cosmetic, picked in the onboard flow
-  const [onboardClosing, setOnboardClosing] = useState(false); // true while the exit transition plays
-  // a mirror drives only while the host has granted it; the host is always granted.
+  const [detState, setDetState] = useState("off");
+  const [onboardStep, setOnboardStep] = useState(false);
+  const [onboardModel, setOnboardModel] = useState(null);
+  const [onboardClosing, setOnboardClosing] = useState(false);
+
   const [granted, setGranted] = useState(!VIEWER);
-  // "judge" is the same telemetry-only client in a presentation layout, set by the host
-  // from the devices roster. purely cosmetic — drive stays gated on `granted` either way.
+
   const [judge, setJudge] = useState(false);
-  const [cloud, setCloud] = useState(null); // { sage, tts } — null until the first probe
+  const [cloud, setCloud] = useState(null);
   const grantedRef = useRef(!VIEWER);
   grantedRef.current = granted;
   const canDrive = granted && !!bridge.running;
-  // outlives `granted` by one animation so a revoke can play out instead of vanishing
+
   const [driveMounted, setDriveMounted] = useState(!VIEWER);
   useEffect(() => {
     if (granted) { setDriveMounted(true); return; }
     const id = setTimeout(() => setDriveMounted(false), 260);
     return () => clearTimeout(id);
   }, [granted]);
-  // chats = briefed recon sessions. each holds its own mission + conversation.
+
   const [chats, setChats] = useState(() => { try { return JSON.parse(localStorage.getItem("chats") || "[]"); } catch { return []; } });
   const [activeId, setActiveId] = useState(() => localStorage.getItem("activeChat") || "");
   const activeChat = chats.find(c => c.id === activeId) || null;
   const activeRef = useRef(null);
   useEffect(() => { activeRef.current = activeChat; }, [activeChat]);
-  /* the transcript lives on the chat, so it survives a reload with the rest of the
-     session. one line per move — operator turn, tool sage reached for, sage
-     answering — and it is display only: the model's own context is `messages`
-     above, which stays 12 turns of plain text. capped, because chats go to
-     localstorage whole on every change. */
+
   const pushFeed = useCallback((e) => {
     const chat = activeRef.current;
     if (!chat) return;
     const item = { id: Date.now() + Math.random(), time: new Date().toLocaleTimeString(), ...e };
     setChats(cs => cs.map(c => c.id === chat.id ? { ...c, feed: [...(c.feed || []), item].slice(-80) } : c));
   }, []);
-  // one feed entry changes after it was pushed: a move card goes pending -> running -> done.
+
   const patchFeed = useCallback((id, patch) => {
     const chat = activeRef.current;
     if (!chat) return;
     setChats(cs => cs.map(c => c.id === chat.id
       ? { ...c, feed: (c.feed || []).map(f => f.id === id ? { ...f, ...patch } : f) } : c));
   }, []);
-  // "sage can suggest moves". off = the server tells her the drive is locked, so she
-  // stops offering rather than writing cards nobody wants.
+
   const [moves, setMoves] = useState(() => localStorage.getItem("sageMoves") !== "false");
   const movesRef = useRef(moves);
   movesRef.current = moves;
@@ -2718,14 +2429,11 @@ function App() {
   const ttsRef = useRef(localStorage.getItem("tts") !== "false");
   const lastObstacle = useRef(0);
   const lastDist = useRef(0);
-  const lastBands = useRef({}); // per-metric severity, to detect when something newly worsens
-  useEffect(() => { lastBands.current = {}; }, [activeId]); // fresh findings per session
+  const lastBands = useRef({});
+  useEffect(() => { lastBands.current = {}; }, [activeId]);
 
-  // blk + the report read telemetry outside react's render (a ref, not state,
-  // so an interpreter tick sees the latest packet without re-subscribing)
   const packetRef = useRef(null);
-  // stale telemetry is worse than none: it reads as live. one 1s tick decides freshness
-  // for the whole app — everything downstream sees null, not the last good numbers.
+
   useEffect(() => {
     const id = setInterval(() => setFresh(Date.now() - lastPkt.current < PKT_STALE_MS), 1000);
     return () => clearInterval(id);
@@ -2744,7 +2452,6 @@ function App() {
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 3820);
   }, []);
 
-  // speak with timing: clock starts now, stops when first audio plays (tts ms).
   const speakTimed = useCallback((text) => {
     const t = Date.now();
     setAi(p => ({ ...p, phase: "speaking", since: t, tts: null }));
@@ -2754,14 +2461,11 @@ function App() {
     });
   }, []);
 
-  // socket
+  // ---- socket ----
   useEffect(() => {
-    // same origin: this page is served by that server. hardcoding localhost:3000 pointed
-    // a tablet at its own machine, and broke every test that runs the server off 3000.
     const socket = window.io();
     socketRef.current = socket;
 
-    // log a discovery to active session whenever a metric newly worsens.
     function recordFindings(d) {
       const chat = activeRef.current;
       if (!chat || !chat.mission) return;
@@ -2779,14 +2483,11 @@ function App() {
 
     socket.on("connect", () => {
       setConnected(true); addLog(t("log.linkEstablished"), "system");
-      socket.emit("set-language", getLang());                          // sync ai language
-      socket.emit("set-mission", activeRef.current?.mission || ""); // sync server to active session
+      socket.emit("set-language", getLang());
+      socket.emit("set-mission", activeRef.current?.mission || "");
     });
     socket.on("disconnect", () => { setConnected(false); setFresh(false); setPing("—"); addLog(t("log.linkLost"), "danger"); });
     socket.on("clients", list => {
-      // the host logs every control change on the roster, not just its own: who was
-      // driving when is the first thing asked after a bad run, and log.events is what
-      // the session report exports.
       setClients(prev => {
         if (!VIEWER) for (const c of list || []) {
           if (c.host) continue;
@@ -2820,7 +2521,7 @@ function App() {
       }
       recordFindings(d);
     });
-    // sage spotted something herself (relic fragments, a drawing) and logged it with the still she saw. same shape as sensor finding, plus img.
+
     socket.on("sage-finding", d => {
       if (!d?.text) return;
       const chat = activeRef.current;
@@ -2829,28 +2530,23 @@ function App() {
         time: new Date(d.timestamp || Date.now()).toLocaleTimeString() };
       setChats(cs => cs.map(c => c.id === chat.id
         ? { ...c, findings: [...(c.findings || []), entry].slice(-40) } : c));
-      // both arrive as findings, but they are two different moves: one is her
-      // logging what she saw, the other is her keeping the numbers she doubted.
+
       const snap = d.text.startsWith("SNAPSHOT:");
       pushFeed({ kind: "tool", name: snap ? "snapshot" : "finding", detail: d.text.replace(/^SNAPSHOT:\s*/, ""), img: d.img || null });
     });
-    // sage reached for a tool mid-turn (the loop in server.js ran it). the step
-    // arrives while she is still working — that is the point of it being a socket
-    // event and not part of the reply.
+
     socket.on("sage-step", d => {
       if (!d?.name) return;
       if (d.say) pushFeed({ kind: "sage", text: d.say });
       pushFeed({ kind: "tool", name: d.name, arg: d.arg || null, detail: d.detail || "", img: d.img || null });
       addLog(t("log.tool", { name: d.name, detail: d.detail || "" }), "ai");
     });
-    // the server walked the headlamp on its own because the passage went dark.
-    // only fires when it actually moved the lamp, so it's not a per-frame spam.
+
     socket.on("lamp-auto", d => {
       addLog(`headlamp ${d.from} → ${d.led}${d.mean != null ? ` (view ${d.mean}/255)` : ""}`, "ai");
       pushFeed({ kind: "tool", name: "lamp", detail: `${d.from} → ${d.led}` });
     });
-    // a running blk workflow asked sage a yes/no (ask/find) — log the call so the
-    // operator can see why the program branched the way it did.
+
     socket.on("blk-decision", d => {
       if (!d?.question) return;
       addLog(`${d.kind === "find" ? "find" : "ask"} "${d.question}" → ${d.yes ? "YES" : "no"}${d.text ? " · " + d.text : ""}`, d.yes ? "ai" : "system");
@@ -2866,7 +2562,7 @@ function App() {
         id: Date.now() + Math.random(),
       }].slice(-300));
     });
-    // agent says something on its own (analysis, instant reaction, or mission ack).
+
     const sayAgent = (text, ts, logMsg, logKind, status = null) => {
       addLog(logMsg, logKind);
       setAi(p => ({
@@ -2877,10 +2573,10 @@ function App() {
       pushFeed({ kind: "sage", text, status });
       if (ttsRef.current) speakTimed(text);
     };
-    // auto analysis + instant reactions only fire when a briefed session is open — otherwise dashboard talks to itself on boot with no chat active.
+
     socket.on("ai-analysis", d => {
       if (!d) return;
-      // no briefed session: don't display/voice result, but always release spinner — routine's e:analyze at bench sets analyzing, and a swallowed reply here locked briefing ui behind "busy" forever.
+
       if (!activeRef.current?.mission) {
         setAi(p => ({ ...p, analyzing: false, phase: null, badge: "badge.standby" }));
         return;
@@ -2889,28 +2585,24 @@ function App() {
       else if (d.error) sayAgent(d.error, d.timestamp, t("log.aiReceived"), "warn", null);
     });
     socket.on("agent-blurt", d => { if (d?.text && activeRef.current?.mission) sayAgent(d.text, d.timestamp, t("log.blurt", { text: d.text }), "warn"); });
-    // server-driven camera yield: runaianalysis grabs a still from /capture, which fights the live /stream for cam's starved ram.
+
     socket.on("cam-yield", () => window.dispatchEvent(new Event("cam:yield")));
     socket.on("cam-resume", () => window.dispatchEvent(new Event("cam:resume")));
     socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, t("log.missionAck"), "ai", d.status); });
-    // drive command relayed from a client with no ble. only the link holder acts, so it can't bounce.
+
     socket.on("cmd", w => { if (bleRef.current.device?.gatt?.connected) sendCmdRef.current?.(w); });
     addLog(t("log.booted"), "system");
     return () => socket.close();
   }, [addLog, speakTimed, pushFeed]);
 
-  // keep document language + skip-link (static html outside react) in sync.
   useEffect(() => {
     document.documentElement.lang = lang;
     const sk = document.querySelector(".skip-link");
     if (sk) sk.textContent = t("skip");
   }, [lang]);
 
-  // prefer the mdns name: it survives dhcp, the raw ip doesn't. `url` (the ip)
-  // stays as the button's tooltip so a network with multicast blocked isn't a dead end.
   useEffect(() => { fetch("/api/lan").then(r => r.json()).then(d => { setLanUrl(d.host || d.url); setLanIp(d.url); }).catch(() => {}); }, []);
 
-  // uptime
   useEffect(() => {
     const t0 = Date.now();
     const id = setInterval(() => {
@@ -2920,47 +2612,38 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
-  // bluetooth bridge: r4 advertises ble (no classic spp), so browser's web bluetooth talks to it directly — no server-side native bt library needed.
+  // ---- ble ----
+  // same uuids the sketch advertises
   const BLE_SERVICE = "19b10000-e8f2-537e-4f6c-d104768a1214";
   const BLE_CHAR = "19b10001-e8f2-537e-4f6c-d104768a1214";
-  const BLE_CMD = "19b10002-e8f2-537e-4f6c-d104768a1214"; // write = motion routine verbs
+  const BLE_CMD = "19b10002-e8f2-537e-4f6c-d104768a1214";
   const bleRef = useRef({ device: null, char: null, cmd: null });
-  const bleWriteRef = useRef(Promise.resolve()); // serializes every gatt write, see bleWrite
-  // web bluetooth runs one gatt op at a time — a hud push landing mid-write throws
-  // "GATT operation already in progress" and that command is just lost. every write on
-  // the link goes through this one chain.
+  const bleWriteRef = useRef(Promise.resolve());
+
   const bleWrite = useCallback((fn) => {
     const w = bleWriteRef.current.then(fn);
-    bleWriteRef.current = w.catch(() => {}); // a failed write must not poison the chain
+    bleWriteRef.current = w.catch(() => {});
     return w;
   }, []);
 
-  // defined above onblenotify because that handler calls it — deps are evaluated during render, so later `const` would be in temporal dead zone.
-  // `focus` comes from a workflow's `analyze <what to look at>` step — it steers
-  // this one read only.
   const analyze = useCallback((mode, focus) => {
     if (analyzingRef.current) return;
-    analyzingRef.current = true; // set now, not on re-render — two calls in one tick must not both emit
+    analyzingRef.current = true;
     setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
     socketRef.current?.emit("request-analysis", { mode: mode || null, prompt: focus || null });
   }, []);
 
-  // board notifies two kinds of line: "s:" telemetry, and "e:" events a routine raises as it runs (an analyze step asking for an ai read).
-  // events are ours to act on and aren't telemetry, so they don't go to /api/mega/sensor.
   const onBleNotify = useCallback((e) => {
     const line = new TextDecoder().decode(e.target.value);
     console.log("BLE notify:", line);
-    // presentation's single closing analyze is a greeting to judges, not a cave read.
-    // the board can't say which routine raised the event, so we go by the last "go," we sent.
+
     if (line.startsWith("E:analyze")) {
       addLog(t("log.routineAnalyze"), "ai");
       analyze(presentingRef.current ? "present" : null);
       presentingRef.current = false;
       return;
     }
-    // an uploaded blk workflow talks back on this channel too: it parks on the steps
-    // only the pc can do (sage, tts, the headlamp) and waits for an answer. blkctl owns
-    // that conversation, so hand the line over and stay out of it.
+
     if (line.startsWith("E:blk")) { window.dispatchEvent(new CustomEvent("blk:evt", { detail: line })); return; }
     fetch("/api/mega/sensor", { method: "POST", headers: { "Content-Type": "text/plain" }, body: line })
       .then((r) => { if (!r.ok) console.error("BLE forward failed:", r.status); })
@@ -2974,34 +2657,27 @@ function App() {
     bleRef.current = { device: null, char: null, cmd: null };
   }, [onBleNotify]);
 
-  // one verb to firmware over ble cmd char: "go,<name>" starts a motion routine, "stop" cuts motors.
-  // routines run standalone on board — this only fires starting gun, so dropped link mid-run doesn't strand robot.
   const sendCmd = useCallback(async (word) => {
     if (!grantedRef.current && word !== "stop") { toast(t("toast.mirrorOnly"), "warn"); return false; }
     if (word.startsWith("go,")) presentingRef.current = word === "go,presentation";
     const { device, cmd } = bleRef.current;
-    // no local ble (judges' tablet, second browser): hand off over the socket to the client that holds the link.
+
     if (!device?.gatt?.connected) {
       if (socketRef.current?.connected) { socketRef.current.emit("cmd", word); return true; }
       toast(t("toast.cmdNoLink"), "danger"); return false;
     }
-    if (!cmd) { toast(t("toast.cmdNoChar"), "danger"); return false; } // linked but firmware lacks cmd char
+    if (!cmd) { toast(t("toast.cmdNoChar"), "danger"); return false; }
     try {
       await bleWrite(() => cmd.writeValue(new TextEncoder().encode(word)));
-      // a blk upload is one write per instruction — logging each would bury the console
+
       if (!word.startsWith("blk,i,")) addLog(t("log.cmdSent", { cmd: word }), "system");
       return true;
     } catch (e) { addLog(t("log.error", { msg: e.message }), "danger"); return false; }
   }, [addLog, toast, bleWrite]);
-  // the socket effect above relays commands through this — sendCmd is defined below it, so it can't reference it directly
+
   const sendCmdRef = useRef(sendCmd);
   sendCmdRef.current = sendCmd;
 
-  /* panic stop, anywhere. Drive has its own space handler, but it only listens while the
-     drive zone is armed — a rover running a routine or a blk program with the console open
-     had no key at all. stop is never gated (not by mirror mode, not by the server), so this
-     is bound for every client. buttons and links keep space for activation, and typing keeps
-     it for spaces. */
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== " " || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -3009,15 +2685,13 @@ function App() {
       if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(el.tagName) ||
         el.getAttribute?.("role") === "button")) return;
       e.preventDefault();
-      blkCancel(); // a running program would otherwise send the next burst right after
+      blkCancel();
       sendCmdRef.current("stop");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  /* cloud reachability for the topbar pills. the venue has no internet and both Sage and
-     Deepgram fail silently when it's gone — better to know before the demo than during it. */
   useEffect(() => {
     let live = true;
     const probe = () => fetch("/api/cloud").then(r => r.json())
@@ -3027,20 +2701,13 @@ function App() {
     return () => { live = false; clearInterval(id); };
   }, []);
 
-  /* screensavers on the robot's panel. the board owns the animation (it has to — the
-     link can't carry frames), so this is only the picker: the value *is* the wire value
-     ("scr,<n>"), so SAVERS must stay in the order of the enum in main.ino. state lives up
-     here because the console drawer unmounts when it's closed and the panel doesn't. */
   const [saver, setSaver] = useState(0);
   const pickSaver = useCallback(async (n) => {
     if (await sendCmd("scr," + n)) setSaver(n);
   }, [sendCmd]);
-  // firmware drops the screensaver when the link does, so the picker can't stay set through it.
+
   useEffect(() => { if (!bridge.running) setSaver(0); }, [bridge.running]);
 
-  /* buzzer mute. the board already sounds off the same hud level the panel face wears —
-     this only says whether it may. re-pushed on every (re)connect because the flag lives
-     on the board and a reset brings it back on. */
   const [buzz, setBuzz] = useState(() => localStorage.getItem("buzzer") !== "false");
   const toggleBuzz = useCallback(() => setBuzz(b => {
     localStorage.setItem("buzzer", String(!b));
@@ -3051,13 +2718,10 @@ function App() {
 
   const loadBridge = useCallback(async () => {
     try { const r = await fetch("/api/bridge"); const d = await r.json();
-      setBridge(b => ({ ...b, running: d.running })); } catch { /* offline */ }
+      setBridge(b => ({ ...b, running: d.running })); } catch {  }
   }, []);
   useEffect(() => { loadBridge(); const id = setInterval(loadBridge, 5000); return () => clearInterval(id); }, [loadBridge]);
 
-  // in-app ble picker (desktop shell only) — electron's main process holds the
-  // pending requestDevice() callback and streams discovered devices over ipc;
-  // picking a row (or cancelling) resolves it. browsers keep the native chooser.
   const [blePicker, setBlePicker] = useState(false);
   const [bleDevs, setBleDevs] = useState([]);
   const closeBlePicker = useCallback(() => {
@@ -3068,13 +2732,13 @@ function App() {
     if (!window.blackout) return;
     const offDevs = window.blackout.onBleDevices((list) => {
       setBleDevs(list);
-      setBlePicker(o => o || "open"); // a scan can start without us (chooser re-fired) — surface it
+      setBlePicker(o => o || "open");
     });
     const offClosed = window.blackout.onBleClosed(closeBlePicker);
     return () => { offDevs(); offClosed(); };
   }, [closeBlePicker]);
 
-  // mode: "toggle" (connect↔disconnect) or "reconnect" (re-pick device while running).
+  // bridge is the browser's own web-bluetooth link; electron hands us its picker instead
   const toggleBridge = useCallback(async (mode = "toggle") => {
     const stopping = mode === "toggle" && bridge.running;
     setBridge(b => ({ ...b, busy: true }));
@@ -3087,8 +2751,8 @@ function App() {
       } else {
         if (mode === "reconnect") disconnectBle();
         if (!navigator.bluetooth) throw new Error("Web Bluetooth unsupported — use Chrome/Edge");
-        if (window.blackout) setBlePicker("open"); // desktop shell: our picker instead of chrome's chooser
-        // filter by service uuid, not name — arduinoble on r4 wifi always advertises name as "arduino" (known upstream bug), so name filter never matches.
+        if (window.blackout) setBlePicker("open");
+
         const device = await navigator.bluetooth.requestDevice({
           filters: [{ services: [BLE_SERVICE] }],
           optionalServices: [BLE_SERVICE],
@@ -3096,7 +2760,7 @@ function App() {
         const server = await device.gatt.connect();
         const service = await server.getPrimaryService(BLE_SERVICE);
         const char = await service.getCharacteristic(BLE_CHAR);
-        const cmd = await service.getCharacteristic(BLE_CMD).catch(() => null); // older firmware lacks it
+        const cmd = await service.getCharacteristic(BLE_CMD).catch(() => null);
         await char.startNotifications();
         char.addEventListener("characteristicvaluechanged", onBleNotify);
         device.addEventListener("gattserverdisconnected", () => {
@@ -3118,8 +2782,7 @@ function App() {
     setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
     socketRef.current?.emit("mock-data");
   }, []);
-  // ask sage: reply lands in agent's speech bubble + spoken. each chat keeps its own rolling message history so follow-ups have context.
-  // render a sage json reply {text,status,action}: bubble + status tint + history + tts. only text field is shown or voiced — never raw json.
+
   const showSage = useCallback((sage, t0, speak = true) => {
     const textv = (sage && sage.text) || "No response.";
     setAi(p => ({
@@ -3130,14 +2793,10 @@ function App() {
     }));
     pushFeed({ kind: "sage", text: textv, status: (sage && sage.status) || null,
       timing: t0 ? `LLM ${((Date.now() - t0) / 1000).toFixed(1)}s` : null });
-    // she asked to move: parse it now so a typo never becomes a button, and compile it
-    // now so the card can say up front whether the board or the browser will play it.
+
     if (sage && sage.move && movesRef.current) {
       const { program, errors } = blkParse(sage.move);
       if (!errors.length && program.length) {
-        // never propose a forward that isn't watching the wall. she is told to write the
-        // guard herself; this is the belt, and the card shows the guarded text so what
-        // the operator reads is exactly what runs.
         const { program: safe, added } = blkGuard(program);
         let board;
         try { board = blkCompile(safe).code.length; } catch (e) { board = e.message; }
@@ -3147,13 +2806,14 @@ function App() {
     if (speak && ttsRef.current) speakTimed(textv);
   }, [speakTimed, pushFeed]);
 
+  // one ask can take several visible steps — she calls her own tools server-side
   const ask = useCallback(async (text) => {
     text = (text || "").trim();
     const chat = activeRef.current;
     if (!text || !chat) return;
     addLog(t("log.operator", { text }), "system");
     pushFeed({ kind: "user", text });
-    // routine or drive phrase ("present yourself", "go forward for 2 seconds") — fire straight over ble, no llm round trip.
+
     const trigger = matchCmd(norm(text));
     if (trigger) {
       const ms = driveMs(norm(text));
@@ -3182,11 +2842,7 @@ function App() {
     }
   }, [addLog, showSage, pushFeed, sendCmd]);
 
-  /* the operator answered a move card. YES compiles it and hands it to the board —
-     the same path a saved workflow takes, and the reason sage answers in blk at all:
-     `forward until dist < 5` checked on the giga's own loop() stops at 5cm, while the
-     same check up here is a ~400ms round trip and a dented rover. NO just marks the
-     card; nothing was ever sent. */
+  // a move card only ever runs when the operator presses RUN
   const onMove = useCallback(async (item, yes) => {
     if (!yes) return patchFeed(item.id, { state: "declined" });
     const { program, errors } = blkParse(item.text);
@@ -3200,18 +2856,12 @@ function App() {
     patchFeed(item.id, { state: cancelled ? "stopped" : "done", note: where });
   }, [patchFeed, addLog, sendCmd, analyze]);
 
-  /* fpv — camera fullscreen, stats + agent become edge huds. △/Y toggles, ○/B talks to sage.
-     own poll (not drive's) because drive's loop bails unless remote mode is armed, and fpv
-     has to work from any mode. edge-detected so holding a button fires once. */
   const fpvMic = useMic(ask);
   const fpvMicRef = useRef(fpvMic);
   fpvMicRef.current = fpvMic;
   const fpvRef = useRef(fpv);
   fpvRef.current = fpv;
-  /* the transition is the browser's, not ours: view transitions snapshot the cam tile
-     before and its fullscreen self after, then morph between them — no keyframes to keep
-     in sync with the layout. flushSync so react has committed before the "after" snapshot.
-     no support (safari < 18) = the old instant swap, which is still a working fpv mode. */
+
   const toggleFpv = useCallback((on) => {
     const go = () => flushSync(() => setFpv(p => (typeof on === "boolean" ? on : !p)));
     if (document.startViewTransition) document.startViewTransition(go); else go();
@@ -3220,17 +2870,14 @@ function App() {
   toggleFpvRef.current = toggleFpv;
   const cycleZoomRef = useRef(null);
   cycleZoomRef.current = () => setFpvZoom(i => (i + 1) % FPV_ZOOMS.length);
-  // recorder controls live on the pad too, but only while fpv is up — the hud is
-  // where they're labelled, and a stray ✕ on the cockpit shouldn't start a run.
+
   const recActRef = useRef(null);
   useEffect(() => {
     let was = [false, false, false, false, false];
     const id = setInterval(() => {
       const pad = [...navigator.getGamepads()].find(Boolean);
       if (!pad || tourOpen) return;
-      // △ = 3, ○ = 1, OPTIONS/start = 9, ✕ = 0, SHARE/select = 8.
-      // everything but △ is fpv-only: off the hud those four are padnav's (press,
-      // back, menu), and one button can't mean both without a mode nobody can see.
+
       const now = [!!pad.buttons[3]?.pressed, !!pad.buttons[1]?.pressed, !!pad.buttons[9]?.pressed,
         !!pad.buttons[0]?.pressed, !!pad.buttons[8]?.pressed];
       if (now[0] && !was[0]) toggleFpvRef.current();
@@ -3242,8 +2889,7 @@ function App() {
     }, 80);
     return () => clearInterval(id);
   }, []);
-  // esc is the way out without a controller — never trap the operator in fpv.
-  // with a replay up, esc belongs to the player: one press per layer, not both.
+
   useEffect(() => {
     if (!fpv || replay) return;
     const onKey = (e) => { if (e.key === "Escape") toggleFpv(false); };
@@ -3257,7 +2903,7 @@ function App() {
     return n;
   }), []);
   const toggleTtsProvider = useCallback(() => setTtsProv(p => p === "edge" ? "deepgram" : "edge"), []);
-  // play a sequence of pre-rendered onboarding clips (intro + step questions).
+
   const speakBrief = useCallback((items) => {
     if (!ttsRef.current) return;
     const play = (i) => { if (i < items.length) playOnboard(items[i].clip, items[i].text, { onEnd: () => play(i + 1) }); };
@@ -3265,14 +2911,13 @@ function App() {
   }, []);
   const changeLang = useCallback((code) => {
     setLang(code); setLangState(code);
-    socketRef.current?.emit("set-language", code); // ai replies in new language
+    socketRef.current?.emit("set-language", code);
   }, []);
   const newChat = useCallback(() => {
     const id = "c" + Date.now();
     setChats(cs => [...cs, { id, title: t("chat.newTitle"), mission: "", messages: [], created: Date.now() }]);
     setActiveId(id);
-    socketRef.current?.emit("set-mission", ""); // no mission until briefed
-    // briefing's step-0 effect speaks the intro + first question out loud.
+    socketRef.current?.emit("set-mission", "");
   }, []);
   const selectChat = useCallback((id) => {
     setActiveId(id);
@@ -3282,7 +2927,7 @@ function App() {
     setChats(cs => cs.filter(c => c.id !== id));
     setActiveId(a => {
       if (a !== id) return a;
-      // deleting the active session: clear server's mission too, or it keeps firing auto-analysis llm calls nobody will ever see.
+
       socketRef.current?.emit("set-mission", "");
       return "";
     });
@@ -3297,12 +2942,12 @@ function App() {
     socketRef.current?.emit("set-mission", text);
   }, [addLog]);
   const clearSerial = useCallback(() => setSerialLines([]), []);
-  // play the exit animation, then unmount
+
   const closeDrawer = useCallback(() => {
     setDrawer(o => o === "open" ? "closing" : o);
     setTimeout(() => setDrawer(false), 240);
   }, []);
-  // first open ever shows the debug warning instead; ack is remembered
+
   const openDrawer = useCallback(() => {
     if (localStorage.getItem("debugAck")) setDrawer("open");
     else setWarn("open");
@@ -3319,10 +2964,6 @@ function App() {
     if (drawerRef.current === "open") closeDrawer(); else openDrawer();
   }, [closeDrawer, openDrawer]);
 
-  /* the pad owns the ui too, not just the wheels: d-pad roams focus, ✕ presses,
-     ○/SHARE backs out of whatever is on top, OPTIONS is the menu (the console).
-     fpv and the tour take the pad back while they're up — both have their own
-     bindings for the same buttons. mounted once; the refs keep it current. */
   const toggleDrawerRef = useRef(toggleDrawer);
   toggleDrawerRef.current = toggleDrawer;
   useEffect(() => {
@@ -3333,11 +2974,9 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
-  // tutorial runs once per browser; the console's restart button clears the flag.
-  // first run leads with the onboard flow (hero → model → pair), then the spotlight tour.
   useEffect(() => {
     if (localStorage.getItem("tourDone")) return;
-    const id = setTimeout(() => setOnboardStep("hero"), 900); // let the zones finish revealing
+    const id = setTimeout(() => setOnboardStep("hero"), 900);
     return () => clearTimeout(id);
   }, []);
   const endTour = useCallback(() => {
@@ -3345,28 +2984,27 @@ function App() {
     setTour(s => s === "open" ? "closing" : s);
     setTimeout(() => setTour(false), 240);
   }, []);
-  // fades/pops the onboard overlay out, then swaps it for whatever comes next —
-  // the dashboard is already mounted underneath, so this reads as a crossfade.
+
   const closeOnboard = useCallback((next) => {
-    if (window.blackout && blePicker) window.blackout.selectBleDevice(""); // don't leave a scan running behind us
+    if (window.blackout && blePicker) window.blackout.selectBleDevice("");
     setOnboardClosing(true);
     setTimeout(() => { setOnboardStep(false); setOnboardClosing(false); next?.(); }, 300);
   }, [blePicker]);
   const finishOnboard = useCallback(() => closeOnboard(() => setTour("open")), [closeOnboard]);
   const skipOnboard = useCallback(() => { localStorage.setItem("tourDone", "1"); closeOnboard(); }, [closeOnboard]);
-  // pairing is host-only (viewers never own the bridge) — start walks straight into the tour for them.
+
   const onboardStart = useCallback(() => { if (VIEWER) finishOnboard(); else setOnboardStep("model"); }, [finishOnboard]);
   const onboardPickModel = useCallback((m) => { setOnboardModel(m); setOnboardStep("pair"); }, []);
   const restartTour = useCallback(() => {
     localStorage.removeItem("tourDone");
     setOnboardModel(null);
     closeDrawer();
-    setTimeout(() => setOnboardStep("hero"), 260); // after the drawer slides out — full replay, hero first
+    setTimeout(() => setOnboardStep("hero"), 260);
   }, [closeDrawer]);
-  // a successful pair mid-flow walks straight into the dashboard + tutorial
+
   useEffect(() => {
     if (onboardStep !== "pair" || !bridge.running) return;
-    const id = setTimeout(finishOnboard, 700); // a beat to read "connected"
+    const id = setTimeout(finishOnboard, 700);
     return () => clearTimeout(id);
   }, [onboardStep, bridge.running, finishOnboard]);
 
@@ -3379,7 +3017,6 @@ function App() {
     return window.blackout.onSettingsOpen(() => setSettingsOpen("open"));
   }, []);
 
-  // warning's 3s cooldown before PROCEED unlocks
   useEffect(() => {
     if (warn !== "open") return;
     setWarnCount(3);
@@ -3387,8 +3024,9 @@ function App() {
     return () => clearInterval(id);
   }, [warn]);
 
+  // firmware update: the server owns arduino-cli, we just poll it
   const openUpdate = useCallback(() => {
-    setFlashPhase("detect"); // model is already known from the poll — nothing to pick
+    setFlashPhase("detect");
     setFlashLog(""); setFlashCode(null);
     setUpdateOpen("open");
   }, []);
@@ -3409,9 +3047,6 @@ function App() {
     });
   }, []);
 
-  // watch usb for a board the whole time the dashboard is up — plugging one in is
-  // what reveals the updater. tightens up while the modal is open, and backs off
-  // entirely mid-flash so board list doesn't poke the port arduino-cli is using.
   useEffect(() => {
     if (VIEWER || flashPhase === "flashing") return;
     const poll = () => fetch("/api/flash/boards").then(r => r.json()).then(setFlashBoards).catch(() => {});
@@ -3420,7 +3055,6 @@ function App() {
     return () => clearInterval(id);
   }, [updateOpen, flashPhase]);
 
-  // backtick jumps to the serial tab of the console drawer (ignored while typing in a field).
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== "`" || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -3434,25 +3068,24 @@ function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [closeDrawer, openDrawer]);
-  // recording lives on the server (it grabs the cam stills), so the button only
-  // reflects it — a reload mid-run picks the state back up.
+
   useEffect(() => { fetch("/api/rec").then(r => r.json()).then(d => setRec(d.now)).catch(() => {}); }, []);
   const recRef = useRef(rec); recRef.current = rec;
   const toggleRec = useCallback(() => {
     const on = !!recRef.current;
     fetch(on ? "/api/rec/stop" : "/api/rec/start", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: activeRef.current?.title || "" }), // title, not the whole brief
+      body: JSON.stringify({ name: activeRef.current?.title || "" }),
     }).then(async r => {
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.error || "server said " + r.status); // cam offline => 503
+      if (!r.ok) throw new Error(d.error || "server said " + r.status);
       setRec(on ? null : d.now);
       setRecErr(null);
       addLog(on ? "recording saved" : "recording started", "system");
     }).catch(err => {
       addLog("recorder: " + err.message, "danger");
       toast(err.message, "danger");
-      setRecErr(err.message); // sticks on the hud until the next attempt works
+      setRecErr(err.message);
     });
   }, [addLog, toast]);
   const openReplays = useCallback(() => {
@@ -3461,14 +3094,12 @@ function App() {
   const pickReplay = useCallback((id) => {
     fetch("/api/rec/" + id).then(r => r.json()).then(run => { setRuns(null); setReplay(run); }).catch(() => {});
   }, []);
-  recActRef.current = { rec: toggleRec, replays: openReplays }; // what ✕ / SHARE hit while fpv is up
+  recActRef.current = { rec: toggleRec, replays: openReplays };
   const deleteReplay = useCallback((id) => {
     fetch("/api/rec/" + id, { method: "DELETE" })
       .then(() => setRuns(rs => (rs || []).filter(r => r.id !== id))).catch(() => {});
   }, []);
 
-  // snapshot on open, so the document you read is exactly the json you export —
-  // telemetry keeps arriving behind it either way.
   const openReport = useCallback(() => {
     setReport(buildReport({ chat: activeRef.current, packet: packetRef.current, logs, ai, connected: live, ping, packets, uptime }));
   }, [logs, ai, live, ping, packets, uptime]);
@@ -3478,6 +3109,7 @@ function App() {
   const drawerRef = useRef(drawer);
   drawerRef.current = drawer;
 
+  // ---- render ----
   return html`
     <${React.Fragment}>
       <div class=${"shell" + (fpv ? " is-fpv" : "") + (FPV_ZOOMS[fpvZoom].z ? "" : " fpv-fill")}
@@ -3531,8 +3163,7 @@ function App() {
               onDeleteChat=${deleteChat} onBrief=${briefMission} onSpeak=${speakBrief}
               onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onMock=${mockData} onAsk=${ask}
               onReport=${openReport} onMove=${onMove} />
-            ${/* mirror sees no drive zone at all until the host grants it — .reveal animates the
-                 mount, and driveMounted holds it one beat past a revoke so it can animate out */
+            ${
               driveMounted && html`
               <${Drive} onCmd=${sendCmd} onAnalyze=${analyze} enabled=${canDrive} leaving=${!granted}
                 busyRef=${analyzingRef} packetRef=${packetRef} />`}

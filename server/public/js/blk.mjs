@@ -1,41 +1,17 @@
-// blk (blackout language) — scratch-style step language for operator workflows.
-// text IS the file format (.blk); the block editor is just another view of the
-// same tree, so blocks<->text switching is lossless by construction (comments
-// and disabled blocks included).
-//
-// grammar (one op per line, case-insensitive except say/log/ask text):
-//   motion   forward|back|left|right <expr>            ms burst
-//            forward|back|left|right until <cond> [timeout <ms>]
-//            speed <expr>                              pwm for later moves
-//   control  wait <expr> · wait until <cond> [timeout <ms>] · stop
-//            repeat <expr> … end · repeat until <cond> … end
-//            repeat while <cond> … end · forever … end
-//            if <cond> … [else …] end · break · continue
-//   data     set <var> <expr> · change <var> <expr>
-//   proc     def <name> … end · call <name>
-//   looks    say <text> · log <text> · led <expr>
-//   ai       analyze [<what to look at>] · ask <question> · find <thing>
-//   misc     # comment          (kept as a node, survives roundtrip)
-//            ~<any op>          (disabled: kept, skipped at run)
-//
-// exprs:  numbers, sensors, vars, + - * / %, parens, min/max/abs/round/random/clamp
-// conds:  <expr> <cmp> <expr>, and/or/not, parens, or a bare expr (non-zero = true)
-//
-// program = nested node tree. containers carry body[] (if also elseBody[]|null).
-
 export const DEFAULT_PWM = 140;
-// index is the wire value the firmware VM switches on (blkRead() in main.ino) — append only.
+
 export const SENSORS = ["dist", "temp", "humid", "smoke", "airq", "co", "pressure", "roll", "pitch", "yaw", "lux"];
-// read-only values the interpreter injects alongside sensors + user vars
+
 export const BUILTINS = ["time", "step", "speed", "answer", "found"];
 export const CMPS = ["<", ">", "<=", ">=", "=", "!="];
-// 1/0 answers written by `ask` and `find` — only ever worth comparing to 0 or 1
+
 export const FLAGS = ["answer", "found"];
 export const FUNCS = { random: 2, min: 2, max: 2, abs: 1, round: 1, clamp: 3 };
 export const LIMITS = { ms: [50, 10000], pwm: [60, 255], count: [1, 1000], led: [0, 255] };
 export const RESERVED = new Set([...SENSORS, ...BUILTINS, ...Object.keys(FUNCS), "and", "or", "not", "until", "while", "timeout", "end", "else"]);
 
-// editor metadata: category drives block color, the rest drives inputs
+// one entry per block the editor can place. adding an op means touching this,
+// parse/serialize, the interpreter, compile(), and prompts/blk.md.
 export const NODE_META = {
   forward:      { cat: "motion",  arg: "ms",  label: "move forward", canUntil: true },
   back:         { cat: "motion",  arg: "ms",  label: "move back",    canUntil: true },
@@ -72,12 +48,10 @@ export function clampArg(kind, v) {
   return Math.min(hi, Math.max(lo, Math.round(+v) || lo));
 }
 
-/* ───────────────────────── lexer ───────────────────────── */
-
+// ---- expressions ----
 class BlkErr extends Error {}
 const RE_TOK = /^(?:(<=|>=|!=|=|<|>|\(|\)|,|\+|-|\*|\/|%)|([A-Za-z_][A-Za-z0-9_]*)|(\d+(?:\.\d+)?))/;
 
-// IMPORTANT NOTE: O(n²) on line length via slice — blk lines are short, fine.
 function lex(s) {
   const out = [];
   let i = 0;
@@ -90,11 +64,6 @@ function lex(s) {
   }
   return out;
 }
-
-/* ───────────────── expression + condition parser ─────────────────
-   expr AST : {n} number | {v} name | {b,l,r} binary | {u,e} negate | {f,a[]} call
-   cond AST : {k:"cmp",c,l,r} | {k:"and"|"or",l,r} | {k:"not",e} | {k:"truthy",e}
-*/
 
 function reader(toks) {
   let i = 0;
@@ -162,19 +131,17 @@ function pAnd(r) {
 }
 function pNot(r) {
   if (r.eat("not")) return { k: "not", e: pNot(r) };
-  // "(" may open either a grouped condition or a parenthesised expression —
-  // try the condition first and rewind if it doesn't fit.
+
   if (r.at("(")) {
     const p = r.save();
     try {
       r.next();
       const c = pCond(r);
       r.expect(")");
-      // "(a + b) < 3" is a parenthesised *expression*, not a grouped condition —
-      // an operator right after the ")" gives it away, so rewind and re-read it.
+
       const nxt = String(r.peek() || "").toLowerCase();
       if (c.k !== "truthy" && !CMPS.includes(nxt) && !PREC[nxt]) return c;
-    } catch { /* not a condition */ }
+    } catch {  }
     r.back(p);
   }
   const l = pExpr(r);
@@ -192,8 +159,6 @@ function parseAll(toks, fn) {
 export const parseExpr = (s) => parseAll(lex(s), pExpr);
 export const parseCond = (s) => parseAll(lex(s), pCond);
 
-/* ───────────────────────── writers ───────────────────────── */
-
 const PREC = { "+": 1, "-": 1, "*": 2, "/": 2, "%": 2 };
 export function exprStr(e, outer = 0) {
   if (e == null) return "";
@@ -208,24 +173,23 @@ export function exprStr(e, outer = 0) {
 }
 export function condStr(c, outer = 0) {
   if (!c) return "";
-  if (c.s && c.c) return `${c.s} ${c.c} ${c.v}`; // legacy {s,c,v}
+  if (c.s && c.c) return `${c.s} ${c.c} ${c.v}`;
   switch (c.k) {
     case "cmp": return wrap(`${exprStr(c.l)} ${c.c} ${exprStr(c.r)}`, 2, outer);
     case "and": return wrap(`${condStr(c.l, 1)} and ${condStr(c.r, 2)}`, 1, outer);
     case "or": return wrap(`${condStr(c.l, 0)} or ${condStr(c.r, 1)}`, 0, outer);
-    case "not": return `not ${condStr(c.e, 2)}`; // 2 = only comparisons stay bare
+    case "not": return `not ${condStr(c.e, 2)}`;
     case "truthy": return exprStr(c.e);
   }
   return "";
 }
 const wrap = (s, p, outer) => (p < outer ? `(${s})` : s);
 
-/* ───────────────────────── line parser ───────────────────────── */
-
 const TEXT_OPS = new Set(["say", "log", "ask", "find", "analyze"]);
 const isName = (s) => /^[a-z_][a-z0-9_]*$/.test(s || "");
 
-/* text -> { program, errors } */
+// ---- text format ----
+// text is the file format: parse and serialize have to round-trip
 export function parse(text) {
   const root = [], errors = [];
   const stack = [{ node: null, list: root }];
@@ -236,10 +200,8 @@ export function parse(text) {
     let raw = rawLine.trim();
     if (!raw) return;
 
-    // whole-line comment kept as a node so it survives a blocks roundtrip
     if (raw.startsWith("#")) return void top().list.push({ op: "comment", text: raw.slice(1).trim() });
 
-    // "~" disables a block: it still parses (and keeps its body) but never runs
     let off = false;
     if (raw.startsWith("~")) { off = true; raw = raw.slice(1).trim(); }
 
@@ -249,7 +211,6 @@ export function parse(text) {
     const head = (raw.match(/^[A-Za-z_]+/) || [""])[0].toLowerCase();
 
     try {
-      // ops whose payload is free text (keep original casing, strip trailing comment)
       if (TEXT_OPS.has(head)) {
         const msg = raw.slice(head.length).replace(/\s+#.*$/, "").trim();
         if (!msg && head !== "analyze") throw new BlkErr(`${head} needs text`);
@@ -259,9 +220,8 @@ export function parse(text) {
       const body = raw.replace(/\s+#.*$/, "").trim();
       const toks = lex(body);
       const r = reader(toks);
-      r.next(); // consume the head keyword
+      r.next();
 
-      // trailing "timeout <n>" on until-style lines
       let timeout = null;
       const takeTimeout = () => {
         const p = r.save();
@@ -305,7 +265,7 @@ export function parse(text) {
         }
         case "forever": finish(); return open({ op: "forever", body: [] });
         case "if": return open({ op: "if", cond: condTail(), body: [], elseBody: null });
-        case "while": return open({ op: "repeat_while", cond: condTail(), body: [] }); // alias
+        case "while": return open({ op: "repeat_while", cond: condTail(), body: [] });
         case "set": case "change": {
           const name = String(r.next() || "").toLowerCase();
           if (!isName(name)) throw new BlkErr(`${head} needs a variable name`);
@@ -346,8 +306,6 @@ export function parse(text) {
   return { program: root, errors };
 }
 
-/* ───────────────────────── serializer ───────────────────────── */
-
 const argStr = (a) => (typeof a === "number" ? String(a) : exprStr(a));
 
 export function serialize(program) {
@@ -387,8 +345,7 @@ export function serialize(program) {
   return out.join("\n");
 }
 
-/* ───────────────────────── evaluation ───────────────────────── */
-
+// ---- evaluation ----
 const num = (v) => (typeof v === "number" && !isNaN(v) ? v : NaN);
 
 export function evalExpr(e, ctx) {
@@ -420,7 +377,6 @@ export function evalExpr(e, ctx) {
   return NaN;
 }
 
-// vars shadow nothing: sensors win, then builtins, then user vars
 function lookup(name, ctx) {
   const st = ctx?.st;
   if (SENSORS.includes(name)) {
@@ -440,11 +396,11 @@ function lookup(name, ctx) {
 
 export function evalCond(c, ctxOrPkt) {
   if (!c) return false;
-  // callers may pass a raw telemetry packet (old signature) or a full context
+
   const ctx = ctxOrPkt && typeof ctxOrPkt.sensors === "function"
     ? ctxOrPkt
     : { sensors: () => ctxOrPkt, st: { vars: {} } };
-  if (c.s && c.c) return evalCond({ k: "cmp", c: c.c, l: { v: c.s }, r: { n: c.v } }, ctx); // legacy
+  if (c.s && c.c) return evalCond({ k: "cmp", c: c.c, l: { v: c.s }, r: { n: c.v } }, ctx);
   switch (c.k) {
     case "and": return evalCond(c.l, ctx) && evalCond(c.r, ctx);
     case "or": return evalCond(c.l, ctx) || evalCond(c.r, ctx);
@@ -452,7 +408,7 @@ export function evalCond(c, ctxOrPkt) {
     case "truthy": { const v = evalExpr(c.e, ctx); return !isNaN(v) && v !== 0; }
     case "cmp": {
       const l = evalExpr(c.l, ctx), r = evalExpr(c.r, ctx);
-      if (isNaN(l) || isNaN(r)) return false; // missing telemetry = never true
+      if (isNaN(l) || isNaN(r)) return false;
       switch (c.c) {
         case "<": return l < r;
         case ">": return l > r;
@@ -466,7 +422,6 @@ export function evalCond(c, ctxOrPkt) {
   return false;
 }
 
-/* text interpolation: "dist is {dist} cm" -> live values, 1 decimal */
 export function interp(text, ctx) {
   return String(text || "").replace(/\{([^{}]+)\}/g, (m, src) => {
     try {
@@ -476,9 +431,7 @@ export function interp(text, ctx) {
   });
 }
 
-/* ───────────────────────── static checks ───────────────────────── */
-
-// lint pass over a parsed tree: things the line parser can't see on its own.
+// ---- lint ----
 export function lint(program) {
   const warns = [];
   const defs = new Set(), calls = [], sets = new Set(), reads = [], flagWarns = [];
@@ -486,7 +439,7 @@ export function lint(program) {
     if (!c || typeof c !== "object") return;
     if (c.k === "cmp" && FLAGS.includes(c.l?.v) && c.r?.n != null && c.r.n !== 0 && c.r.n !== 1)
       flagWarns.push(`${c.l.v} is only ever 0 or 1 — "${condStr(c)}" doesn't test what you mean`);
-    // a live reading is a moving number; it rarely lands exactly on one
+
     if (c.k === "cmp" && (c.c === "=" || c.c === "!=") && SENSORS.includes(c.l?.v) && c.r?.n != null)
       flagWarns.push(`"${condStr(c)}" — a reading almost never hits a number exactly, use < or >`);
     for (const k of ["l", "r", "e"]) checkFlags(c[k]);
@@ -500,7 +453,7 @@ export function lint(program) {
       for (const c of [n.cond, n.until]) { collectCondVars(c, reads); checkFlags(c); }
       if ((n.op === "break" || n.op === "continue") && !loopDepth) warns.push(`${n.op} outside a loop does nothing`);
       if (n.op === "forever" && !n.body.length) warns.push("empty forever loop spins forever");
-      // the sonar is the only thing watching the wall — a timed forward isn't reading it
+
       if (n.op === "forward" && !n.until) warns.push(`"forward ${typeof n.arg === "number" ? n.arg : "…"}" drives blind — "forward until dist < ${GUARD_CM} timeout ${typeof n.arg === "number" ? n.arg : 1000}" stops at the wall`);
       const deeper = ["repeat", "repeat_until", "repeat_while", "forever"].includes(n.op);
       for (const sub of [n.body, n.elseBody]) if (sub) walk(sub, deeper ? loopDepth + 1 : loopDepth, inDef);
@@ -528,25 +481,10 @@ function collectCondVars(c, out) {
   for (const k of ["l", "r", "e"]) collectCondVars(c[k], out);
 }
 
-/* ── forward moves need the sonar ──
-   the ultrasonic is the only thing standing between the rover and a wall, so a bare
-   `forward 800` is 800ms of nothing watching. guard() rewrites one into
-   `forward until dist < 10 timeout 800` — the same burst, ended the moment something
-   is inside 10cm, which is exactly what the board's moveu op already does: short
-   bursts with the condition re-checked every loop() pass, so the stop happens on the
-   board and not a ble round trip away.
-   back/left/right are left alone on purpose — the sensor faces forward, so a dist
-   guard on a reverse fires on the wall the rover is driving *away* from, and the move
-   would never happen at all. A forward already guarded on dist is hers, untouched
-   (that is the "custom amount" case: `until dist < 25` is a wider berth, not a miss);
-   a forward guarded on something else is overwritten, because the board reads one
-   term per condition and there is no way to and them together.
-   IMPORTANT NOTE: this is applied to what SAGE proposes, never to a workflow the
-   operator wrote — rewriting someone's own file behind their back is worse than the
-   bench move they meant to make. Their unguarded forwards come back from lint() as a
-   warning instead, which the run panel already shows before RUN. */
+// a bare `forward 800` becomes `forward until dist < 10 timeout 800` — same burst,
+// ended the moment the sonar sees something. a guard the author wrote is left alone.
 export const GUARD_CM = 10;
-const GUARD_MS = 2000; // a forward whose length isn't a constant still gets a cap
+const GUARD_MS = 2000;
 const distGuard = (c) => !!c && c.k === "cmp" && c.l?.v === "dist" && (c.c === "<" || c.c === "<=");
 
 export function guard(program, cm = GUARD_CM) {
@@ -566,7 +504,6 @@ export function guard(program, cm = GUARD_CM) {
   return { program: walk(program), added };
 }
 
-/* rough runtime estimate in ms (Infinity for unbounded loops) — editor only */
 export function estimate(program) {
   const val = (a, d) => (typeof a === "number" ? a : d);
   const walk = (list) => {
@@ -599,17 +536,12 @@ export function fmtMs(ms) {
   return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 }
 
-/* ───────────────────────── interpreter ─────────────────────────
-   walks the tree live so conditions see current telemetry.
-   io: { stopped(), sleep(ms), drive(verb,pwm,ms), analyze(prompt), say(text),
-         log(text), led(v), ask(q)->bool, find(thing)->bool,
-         sensors() -> latest packet, halt(), onStep(node, n, st), gate(node, st) }
-   loops tick io.sleep(30) per pass so an empty body can't busy-spin. */
 export const VERBS = { forward: "fwd", back: "back", left: "left", right: "right" };
-const UNTIL_BURST = 250;      // drive-until moves in short bursts, re-checking between
-const UNTIL_CAP = 30000;      // and never runs longer than this without a timeout
+const UNTIL_BURST = 250;
+const UNTIL_CAP = 30000;
 const CALL_DEPTH = 20;
 
+// ---- interpreter ----
 export async function run(program, io) {
   const st = { pwm: DEFAULT_PWM, n: 0, vars: {}, t0: Date.now(), depth: 0, defs: {} };
   const ctx = { st, sensors: () => io.sensors?.() };
@@ -624,7 +556,6 @@ function collectDefs(list, defs) {
   }
 }
 
-// returns undefined | "stopped" | "break" | "continue"
 async function runList(list, io, st, ctx) {
   for (const node of list) {
     if (io.stopped()) return "stopped";
@@ -714,39 +645,27 @@ async function runList(list, io, st, ctx) {
   }
 }
 
-/* ───────────────────── on-board compiler ─────────────────────
-   compiles a program to a flat instruction list the giga runs by itself. why:
-   `forward until dist < 15` interpreted up here is a ~400ms round trip per burst
-   (write -> drive 250ms -> notify -> decide), so the rover overshoots before the
-   browser has seen the reading. on the board the same check is one loop() pass.
-   the pc stays in the loop only for what it alone can do — sage, tts, the camera,
-   the headlamp — which compile to `evt` instructions: the board halts, notifies,
-   and (kind 1/2) waits for the answer before moving on.
-
-   deliberately narrow: constant arguments and one-term comparisons only. anything
-   else throws Unsupported and the caller runs the program up here as before, so
-   the language never has to be cut down to fit the firmware. keep in step with the
-   blk vm in giga-r1/main/main.ino — the op numbers and the wire line are shared. */
-
+// ---- firmware vm ----
+// the board's instruction set is deliberately narrow: constant args, one-term comparisons.
+// anything else throws Unsupported and the program runs in the browser interpreter instead.
 export const BOPS = { end: 0, move: 1, moveu: 2, wait: 3, waitu: 4, speed: 5, set: 6, add: 7, jmp: 8, jmpf: 9, evt: 10, stop: 11 };
-export const BLK_VARS = 8;   // blkVar[] on the board
-export const BLK_MAX = 200;  // blkCode[] on the board
+export const BLK_VARS = 8;
+export const BLK_MAX = 200;
 const VERB_ID = { forward: 0, back: 1, left: 2, right: 3 };
-const LHS_SPEED = 50, LHS_VAR = 100; // lhs below 50 is an index into SENSORS
-const NEG = [3, 2, 1, 0, 5, 4];      // index into CMPS -> its opposite
-// 0 = fire and forget, 1 = board waits for "done", 2 = waits for a value back
+const LHS_SPEED = 50, LHS_VAR = 100;
+const NEG = [3, 2, 1, 0, 5, 4];
+
 const EVT_KIND = { say: 0, log: 0, led: 0, analyze: 1, ask: 2, find: 2 };
 
 export class Unsupported extends Error {}
 
-// a number the compiler can bake in, or null if it needs live values at run time
 function constNum(e) {
   if (e == null) return null;
   if (typeof e === "number") return e;
   let ok = true;
   (function walk(x) {
     if (!x || typeof x !== "object") return;
-    if (x.v != null || x.f === "random") ok = false; // a var/sensor read, or a value that must differ per pass
+    if (x.v != null || x.f === "random") ok = false;
     for (const k of ["l", "r", "e"]) walk(x[k]);
     (x.a || []).forEach(walk);
   })(e);
@@ -755,8 +674,6 @@ function constNum(e) {
   return isNaN(v) ? null : v;
 }
 
-// -> { code, nodes, slots }: instructions, the nodes evt refers back to, var->slot.
-// throws Unsupported with a human reason the ui can show.
 export function compile(program) {
   const code = [], nodes = [], slots = {}, defs = {}, loops = [];
   collectDefs(program, defs);
@@ -775,7 +692,7 @@ export function compile(program) {
     if (v == null) bail("an argument depends on a live value");
     return v;
   };
-  // the board reads one term: a sensor, its own speed, or a variable slot
+
   const term = (e) => {
     if (!e || !e.v) bail("a condition's left side isn't a sensor or a variable");
     const i = SENSORS.indexOf(e.v);
@@ -787,7 +704,7 @@ export function compile(program) {
   const cond = (c) => {
     if (!c) bail("missing condition");
     if (c.k === "truthy") return { ...term(c.e), cmp: CMPS.indexOf("!="), rhs: 0 };
-    if (c.k === "not") { const n = cond(c.e); return { ...n, cmp: NEG[n.cmp] }; } // one term, so negating is just the opposite test
+    if (c.k === "not") { const n = cond(c.e); return { ...n, cmp: NEG[n.cmp] }; }
     if (c.k !== "cmp") bail("and/or in a condition");
     const r = constNum(c.r);
     if (r == null) bail("a condition compares two live values");
@@ -800,7 +717,7 @@ export function compile(program) {
       switch (n.op) {
         case "speed": emit("speed", { b: clampArg("pwm", konst(n.arg, DEFAULT_PWM)) }); break;
         case "forward": case "back": case "left": case "right":
-          // pwm isn't baked in — the board applies whatever `speed` last set
+
           if (n.until) emit("moveu", { a: VERB_ID[n.op], c: n.timeout || 0, ...cond(n.until) });
           else emit("move", { a: VERB_ID[n.op], c: clampArg("ms", konst(n.arg, 500)) });
           break;
@@ -816,7 +733,6 @@ export function compile(program) {
           break;
         }
         case "call": {
-          // inlined, so the board needs no call stack. recursion is what the depth cap catches.
           if (!defs[n.name]) bail(`call ${n.name}: not defined`);
           if (depth >= 8) bail("procedure calls nested too deep");
           walk(defs[n.name], depth + 1);
@@ -833,10 +749,9 @@ export function compile(program) {
           break;
         }
         case "repeat": case "repeat_until": case "repeat_while": case "forever": {
-          // one shape for all four: [init] top: [guard] body [dec] jmp top
           let ctr = null, guard = null;
           if (n.op === "repeat") {
-            ctr = slot("#" + code.length); // hidden counter, can't collide with a user name
+            ctr = slot("#" + code.length);
             emit("set", { a: ctr, rhs: clampArg("count", konst(n.arg, 1)) });
           }
           const top = code.length;
@@ -869,6 +784,5 @@ export function compile(program) {
   return { code, nodes, slots };
 }
 
-// one instruction as the board's cmdchar line (stays under the 64-byte characteristic)
 export const insLine = (i, ins) =>
   `blk,i,${i},${ins.op},${ins.a},${ins.b},${ins.c},${ins.lhs},${ins.cmp},${Math.round(ins.rhs * 100) / 100}`;

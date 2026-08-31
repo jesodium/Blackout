@@ -1,9 +1,5 @@
-// mirror mode + the host's device roster. the dashboard served to the judges' tablet
-// (any non-loopback hostname) is telemetry only — no link controls, no updater, no drive —
-// until the host flips it to full control from CONNECTED DEVICES. the same picker also
-// has a judge view: still telemetry-only, but a bare presentation layout.
-// same CDP pattern as test-layout.mjs:
-//   PORT=3111 node server.js  +  chrome --headless=new --remote-debugging-port=9333
+// poses as the judges' tablet over the lan: mirror, judge and full all gated server-side
+
 import assert from "node:assert";
 import os from "node:os";
 import WebSocket from "ws";
@@ -15,7 +11,6 @@ const lan = Object.values(os.networkInterfaces()).flat()
 assert(lan, "no lan address to pose as the tablet");
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// one page, kept open — the grant has to be seen crossing from host to tablet live.
 async function open(origin, query = "") {
   const url = `http://${origin}:${PORT}/${query}`;
   const tgt = await (await fetch(CDP + "/json/new?" + encodeURIComponent(url), { method: "PUT" })).json();
@@ -26,9 +21,7 @@ async function open(origin, query = "") {
   const send = (method, params = {}) => new Promise(res => { const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });
   await send("Runtime.enable");
   await sleep(2000);
-  // ?operator is remembered per origin, so a previous run would poison this one.
-  // tourDone goes straight back in: the first-run tour makes the app inert, and an
-  // inert element swallows .click() — every check below would fail on a fresh profile.
+
   await send("Runtime.evaluate", { expression: `localStorage.clear(); localStorage.setItem("tourDone", "1"); location.reload()` });
   await sleep(2500);
   const ev = async (expr) => (await send("Runtime.evaluate", { expression: expr, returnByValue: true })).result.result.value;
@@ -50,7 +43,6 @@ async function open(origin, query = "") {
   };
 }
 
-// a page left open by an aborted run is still a client on the roster — start clean.
 for (const p of await (await fetch(CDP + "/json/list")).json()) {
   if (p.type === "page") await fetch(CDP + "/json/close/" + p.id);
 }
@@ -68,9 +60,6 @@ let s = await tab.state();
 assert(!s.conn && s.mirror && !s.control, "tablet still sees the link controls");
 assert(!s.drive, "tablet sees the drive zone before being granted");
 
-// host opens CONNECTED DEVICES and hands the tablet full control. only non-host rows
-// carry a switch — wait for the roster to settle on exactly one, or a socket still
-// closing from a reload would leave two rows for the same tablet and we'd click the ghost.
 const roster = () => host.ev(`[...document.querySelectorAll('.device-row')].map(r => r.textContent).join(' | ')`);
 const setMode = (m) => host.ev(`(() => {
   const s = document.querySelector('.device-row select');
@@ -81,7 +70,7 @@ const setMode = (m) => host.ev(`(() => {
   s.dispatchEvent(new Event('change', { bubbles: true }));
   return true;
 })()`);
-// full control goes through a confirm that arms after 3s; every other mode applies at once.
+
 const confirmGrant = () => host.ev(`(() => { const b = document.querySelector('.warn-go:not([disabled])'); if (!b) return false; b.click(); return true; })()`);
 await host.click(".topbar .console-btn");
 const settle = async () => {
@@ -97,10 +86,7 @@ assert(await host.ev(`document.querySelectorAll('.device-row select').length`) =
 await setMode("full");
 await sleep(600);
 assert(!(await tab.state()).control, "the grant confirm was skipped — one click handed over the robot");
-// the button arms on a 3s countdown, but this page is headless and in the
-// background — chrome throttles a hidden page's timers, so the countdown runs
-// slower than wall clock and a flat 3s sleep raced it. poll instead: the safety
-// property is that it can't be pressed *early*, asserted just above.
+
 let armed = false;
 for (let i = 0; i < 20 && !armed; i++) { await sleep(500); armed = await confirmGrant(); }
 assert(armed, `grant confirm never armed — ${await host.ev(`[...document.querySelectorAll('.warn-go')].map(b => b.textContent.trim() + (b.disabled ? " (disabled)" : "")).join(" ;; ")`)}`);
@@ -109,22 +95,19 @@ s = await tab.state();
 assert(s.control && s.drive, `tablet was granted control but never heard about it — ${await roster()}`);
 assert(s.pad && s.chips, "granted tablet drives with no ble link of its own");
 
-// a wifi blip reconnects the tablet as a brand new socket. the grant is held by ip,
-// so it comes back driving instead of silently dropping to view-only mid-run.
 await tab.ev("location.reload()");
 await sleep(3000);
 assert((await tab.state()).control, "the tablet lost its grant just by reconnecting");
-// wait for the dropped socket to fall off the roster, or setMode() drives the ghost row.
+
 await settle();
 
-// judge view: still telemetry-only, but the cockpit is replaced by the flat layout.
 await setMode("judge");
 await sleep(800);
 s = await tab.state();
 assert(s.judge && !s.cockpit, `judge view never replaced the cockpit — ${await roster()}`);
 assert(!s.control && !s.drive, "judge view kept control — it is a layout, not a permission");
 
-await setMode("mirror");                       // revoke
+await setMode("mirror");
 await sleep(800);
 s = await tab.state();
 assert(!s.control && !s.drive, `control was revoked but the tablet kept driving — ${await roster()}`);
@@ -136,5 +119,5 @@ assert(u.conn && !u.mirror, "?operator did not unlock a second machine");
 
 console.log("mirror ok — tablet read-only, host sets mirror/judge/full live, ?operator unlocks");
 } finally {
-  for (const p of pages) await p.close(); // a live page keeps polluting the next run's roster
+  for (const p of pages) await p.close();
 }
