@@ -1,17 +1,28 @@
-# WRO 2026 — Blackout V1
+# WRO 2026 — Blackout
 
 WRO 2026 robot project. Single Arduino Giga R1 WiFi (sensor hub, BLE) plus a
-Node.js PC server/dashboard.
+Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
+(`BOARD_NAME` in `main.ino`) — that string is what BLE pairing matches on.
 
 ## Layout
 
 - `giga-r1/` — Giga R1 WiFi (`main/`): sensor hub + motor driver + BLE
   command endpoint, one board. Reads sensors, broadcasts CSV over BLE notify;
-  DHT11 (temp/humidity, A6), BME280 (pressure, I2C on D20/D21 — its own
-  temp/humidity registers go unread) and RCWL-1601 (ultrasonic, TRIG D52 /
-  ECHO D50), plus GY-302/BH1750 (ambient light, 0x23 on
+  DHT11 (temp/humidity, A6), BME280 (pressure, 0x76 on **Wire1** — SDA1 D102 /
+  SCL1 D101; its own temp/humidity registers go unread) and RCWL-1601
+  (ultrasonic, TRIG D52 / ECHO D50), plus GY-302/BH1750 (ambient light, 0x23 on
   its own I2C bus, Wire2 — SDA2 D9 / SCL2 D8; CSV field 12, and `lux` in BLK) wired so far, rest of the CSV
   field set sends 0 until a sensor lands.
+  **The three I2C buses are separate objects and a sensor only answers on its own**
+  (`variants/GIGA/pins_arduino.h:228`): `Wire` = D20/D21, `Wire1` = **SDA1 D102 /
+  SCL1 D101**, `Wire2` = D9/D8. Nothing is on `Wire` any more. A device wired to
+  SDA1/SCL1 while the sketch calls plain `bme.begin(0x76)` reads exactly like a
+  dead sensor — pressure pinned at 0.00, the 5s re-probe never printing "BME280
+  back" — which cost a session on 2026-08-31; the bus is the second argument
+  (`bme.begin(0x76, &Wire1)`), and `Wire1.begin()` has to be called too.
+  **0x60 answers on Wire1 with nothing plugged in** — something onboard on that
+  pair, junk registers (WHO_AM_I inconsistent, only reg 0x00 reads). Not a device,
+  not the bme, ignore it. Only 0x76 there is real.
   **Reversed VCC/GND on an I2C module pins both its lines high, it does not just
   go dead** (2026-08-25, cost a day on the gy-302): the chip's ESD clamps conduct
   from its "GND" pin out through SDA and SCL, holding them at 3V3 harder than the
@@ -21,9 +32,14 @@ Node.js PC server/dashboard.
   something tries to pull a line down. The one test that finds it: `pinMode(pin,
   OUTPUT); digitalWrite(pin, LOW);` then read the pin back. A working line reads
   0; a line that reads 1 is tied to a rail, because nothing legal on an I2C bus
-  beats a 25mA push-pull driver. `giga-r1/i2c_scan/` is that check, and it runs
-  every probe on D20/D21 first as a positive control — "nothing" on the bus under
-  test means nothing until the same code has found the bme at 0x76.
+  beats a 25mA push-pull driver. `giga-r1/i2c_scan/` is that check. It sweeps
+  **all three buses** (D20/D21, D9/D8, D102/D101) bit-banged *and* over hardware
+  `Wire1`, and dumps chip-ID registers for anything it finds. The positive control
+  is the **bh1750 at 0x23 on D9/D8** — D20/D21 is empty now, so a silent bus there
+  proves nothing; "nothing" anywhere means nothing until the same run has printed
+  0x23. Identify by register, never by address alone: `reg 0xD0 = 0x60` is a real
+  BME280 (0x58 BMP280, 0x61 BME680), and a bare address that ACKs can be onboard
+  junk.
   **Every sensor runs off the 3V3 rail, not 5V** — the Giga's pins are 3.3V and
   not 5V tolerant, so the ultrasonic is an RCWL-1601 (3.3V-capable, HC-SR04
   drop-in) rather than an HC-SR04, and the dht11 is powered at 3V too. A 5V
@@ -45,9 +61,10 @@ Node.js PC server/dashboard.
     `pinMode(OUTPUT)` or the pin's default low turns everything on for a moment
     at boot.
   - **Buzzer on D75**, driven off the same `hud,<level>` the panel face already gets —
-    `tickBuzz()` in `main.ino`: `bad` holds a tone until the level clears, `warn` beeps
-    twice *on entry* and stops (a nuisance alarm gets tuned out), anything else is
-    silent, and a BLE drop clears `hudLevel` so a lost link silences it. `tone()` on the
+    `tickBuzz()` in `main.ino`: `bad` holds a continuous tone until the level clears, `warn`
+    beeps intermittently for as long as it holds (`BUZZ_BEEP_MS` 120 on,
+    `BUZZ_GAP_MS` 600 off), anything else is silent, and a BLE drop clears
+    `hudLevel` so a lost link silences it. `tone()` on the
     mbed core is ticker-driven, so it needs no pwm pin and never blocks; it is stepped
     from `panelDelay()` too or the beat stretches through the sonar's ring-down waits.
     Re-issuing `tone()` while it is already sounding leaks a `DigitalOut` each call
@@ -61,8 +78,11 @@ Node.js PC server/dashboard.
   - **Screensavers** (see "Screensavers" below): the console can put a
     screensaver on the panel instead of the HUD. The board animates it; the
     link only carries which one, and a BLE drop turns it off.
-  - **Servos hang off a PCA9685** (silkscreened **HW-170**), not off the board's
-    own pins — I2C, address 0x40, 16 channels, so more servos cost no pins.
+  - **Servos hang off a PCA9685** (silkscreened **HW-170**) — I2C, address 0x40,
+    16 channels, so more servos cost no pins. **This is bench-rig only and is not
+    on the Giga**: the arm runs off `OUTDATED/pca_test/` (Uno R4) and `giga-r1/main`
+    has zero PCA9685 code, so nothing at 0x40 on any Giga bus is expected, not a
+    fault. Everything below is the bench rig.
     **Its two power rails are not the same thing:** `VCC` is chip logic (5V from
     the board, ~10mA), `V+` is the servo rail and is **6V max** — the 12V pack
     goes through a buck to 5-6V before it ever reaches V+, or the servos and the
@@ -75,11 +95,14 @@ Node.js PC server/dashboard.
     opposite header are the *same nets*, there for daisy-chaining: feed V+ once,
     but do tie a GND to the board (common ground is what makes I2C work at all).
     `OE` is pulled low already; wire it only for a hardware all-channels-off kill.
-    - **It drives a 5-DOF arm**: ch15 base, ch12 shoulder, ch10 elbow, ch8 wrist
-      (all 360, continuous rotation) and ch4 gripper (SG90, positional 0-180).
-      Re-plugged and re-confirmed 2026-08-27, one channel at a time; the map
-      lives in three places that must agree or it half-works (`sv[]` in the
-      sketch, `J` in `servo.py`'s page, the constants at the top of `hand.py`).
+    - **It drives a 5-DOF arm**: ch15 base, ch12 shoulder, **ch4 elbow**, ch8
+      wrist, **ch11 gripper** — and **all five are 360s**, the gripper included
+      (stripped pot), so there is no positional channel left on the arm. The map
+      lives in three places that must agree or it half-works, and they do agree
+      today: `sv[]` in `pca_test.ino`, `J` at `servo.py:338`, the constants at the
+      top of `hand.py`. **`pca_test.ino`'s own header comment is stale** (it still
+      says ch0 base / ch6 elbow / ch15 gripper) — `sv[]` is the authority, not the
+      comment above it.
       **A channel reading back a healthy pulse proves nothing about the servo** —
       `d<ch>` dumps MODE1 plus that channel's own registers over I2C, and ch7
       reported a textbook 2197us all afternoon with nothing plugged into it.
@@ -108,10 +131,11 @@ Node.js PC server/dashboard.
       per-servo bench knob (the `sv[]` table in the test sketch), not 1500 by
       definition — which is why the wire format is `<ch>:<val>` and the value
       means speed or angle depending on the channel's type, never both.
-      **Neutral is measured per servo, never assumed** — ch0 (base) sits still
-      at **1490us**, found on the bench 2026-08-24; shoulder and elbow are
-      still on the nominal 1500 and will each want their own. The measured
-      values live in the `sv[]` table so a reflash keeps them. A too-small
+      **Neutral is measured per servo, never assumed** — the base (ch15) sits
+      still at **1490us**, found on the bench 2026-08-24 when it was still on ch0;
+      shoulder, elbow, wrist and gripper are all still on the nominal 1500 and
+      will each want their own. The measured values live in the `sv[]` table so a
+      reflash keeps them. A too-small
       swing around a wrong neutral is why a joint moves one way and not the
       other: the deadband is 100us+, so jog runs full-scale (1000-2000us).
       **Pulse width is speed and torque at once**, so a slow command is a weak
@@ -124,8 +148,10 @@ Node.js PC server/dashboard.
       which it talks to over http so the two never fight over the serial port.
       Three held poses calibrate it (rest, open, pinch) into `hand_cal.json`.
       **Hand position is a velocity, not a pose** — four joints are 360s with no
-      encoder, so "match my elbow" is unanswerable; the hand is a joystick, and
-      only the gripper (sg90) maps absolutely, off pinch distance. No hand in
+      encoder, so "match my elbow" is unanswerable; the hand is a joystick.
+      Nothing maps absolutely any more — the gripper was the one channel that did,
+      off pinch distance, and it is a 360 now (`GRIP_STEP` in `hand.py` is dead
+      code while ch11 stays continuous). No hand in
       frame = stop, because a frozen camera looks exactly like a hand held
       still. Needs **mediapipe 0.10.x**: 1.0.1's macOS arm64 build dies in
       DrishtiMetalHelper before the first frame, CPU delegate included.
@@ -229,11 +255,11 @@ Node.js PC server/dashboard.
     `npm run test:mirror` covers all three.
   - **A sensor sending a bare 0 is not wired** — the CSV pads unlanded fields with
     zeroes, and 0 ppm rendered as "normal/good" is a green lamp for hardware that
-    isn't on the robot, in the tile *and* in the go/no-go verdict. `reads()` in
-    `app.js` is the one gate: `zeroOk` on `dist` (nothing in range) and `alt` (level
-    with the start) marks the two that really can read zero; everything else shows
-    NOT READING. Add the flag when a sensor's zero becomes real, not when a tile
-    looks empty.
+    isn't on the robot, in the tile *and* in the go/no-go verdict. `reads()`
+    (`app.js:48`) is the one gate: `zeroOk` marks the three that really can read
+    zero — `dist` (nothing in range), `alt` (level with the start) and `lux` (a
+    genuinely dark room); everything else shows NOT READING. Add the flag when a
+    sensor's zero becomes real, not when a tile looks empty.
   - **Stale telemetry is treated as no telemetry** — `PKT_STALE_MS` (3s) in `app.js`.
     The board streams at 10Hz (2Hz behind a screensaver), so the sensor stream *is* the
     heartbeat and no ping command was added. Nothing for 3s and `view` goes null: every
@@ -528,6 +554,10 @@ conventions:
   600-800ms moves, 400ms turns) unless the user gives a duration or a turn
   amount (e.g. "360°") that implies one — flag when a spoken duration/angle
   needs bench tuning per the file's open-loop note.
+- `routines.h` holds five tables today — `TEST`, `PRESENTATION`, `MISSION`,
+  `TEST2` and `RUN` (`RUN` is an empty `{END, 0, 0}` placeholder). `MISSION` and
+  `TEST2` run on a measured pwm of 103, not `SPEED_SLOW`. All five are wired in
+  `startRoutine()` and matched by lowercase name (`"test2"`, `"mission"`, …).
 - Always close with `{END, 0, 0}`.
 - Add/update the table, then wire it into `startRoutine()` in `main.ino` and
   (if it's a new named routine, not an edit to `RUN`) a dashboard button, per

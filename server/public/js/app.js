@@ -34,7 +34,7 @@ const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
 
 // ---- sensor model ----
 // min/max is the meter's travel, st() picks the label and the colour band.
-// zeroOk marks the two sensors that can really read 0 — everything else sends 0 because nothing is wired yet.
+// zeroOk marks the three sensors that can really read 0 — everything else sends 0 because nothing is wired yet.
 const SENSORS = [
   { key: "temp",  unit: "°C",  d: 1, min: 0, max: 60,   st: v => v > 45 ? ["st.critical", "abort"] : v > 35 ? ["st.high", "warn"] : ["st.normal", "go"] },
   { key: "humid", unit: "%",   d: 1, min: 0, max: 100,  st: v => v > 75 ? ["st.humid", "warn"] : v < 20 ? ["st.dry", "warn"] : ["st.good", "go"] },
