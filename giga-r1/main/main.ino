@@ -1,11 +1,11 @@
 #include <ArduinoBLE.h>
 #include <Wire.h>
-#include <SPI.h>
 #include <Adafruit_BME280.h>
 #include <DHT11.h>
 #include <U8g2lib.h>
 #include "routines.h"
 #include "blkvm.h"
+#include "arm.h"
 
 // ---- pins ----
 // relays are active low, and they sit outside the d2-d13 pwm band on purpose:
@@ -13,7 +13,7 @@
 #define TRIG_PIN 52
 #define ECHO_PIN 50
 
-#define DHT_PIN A6
+#define DHT_PIN 71
 
 #define RELAY_CAM_LED 26
 #define RELAY_STRIP   28
@@ -22,51 +22,51 @@
 #define RELAY_OFF HIGH
 static const uint8_t RELAY_PINS[] = {RELAY_CAM_LED, RELAY_STRIP, RELAY_LED};
 
-#define BUZZ_PIN 75
+#define BUZZ_PIN 72
 #define BUZZ_SOUND LOW
 #define BUZZ_IDLE  HIGH
 #define BUZZ_HZ 2400
 #define BUZZ_BEEP_MS 120
 #define BUZZ_GAP_MS 600
 
-#define OLED_RST 24
-#define OLED_DC 22
-#define OLED_SPI_HZ 8000000
+#define OLED_ADDR   0x3C
+#define OLED_I2C_HZ 1000000   // ssd1306 is specced 400k; 1M is the usual overclock and is
+                              // what keeps a full frame near 9ms instead of 23ms. tearing
+                              // or a dark panel = drop it back to 400000.
 
 #define OLED_W 128
 #define OLED_H 64
-U8G2_SSD1306_128X64_NONAME_F_4W_HW_SPI oled(U8G2_R0,  U8X8_PIN_NONE,  OLED_DC,  OLED_RST);
+U8G2_SSD1306_128X64_NONAME_F_SW_I2C oled(U8G2_R0, U8X8_PIN_NONE, U8X8_PIN_NONE, U8X8_PIN_NONE);
 
-// u8g2's hw-spi constructors only know the SPI object, which on the giga is on the
-// high-density connector. this byte callback puts the panel on SPI1 (d13 sck, d11 copi).
-extern "C" uint8_t oledSpi1(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr) {
-  static uint8_t tx[256];
+// u8g2's HW_I2C constructor only knows the `Wire` object, and `Wire` is the arm's PCA9685
+// bus and nothing else on purpose (a stalled servo browns the chip out and it clamps SDA).
+// so the panel gets its own byte callback on Wire2 (d9 sda2 / d8 scl2), next to the bh1750.
+// the SW_I2C constructor above is only there for its gpio/delay callback -- byte_cb is
+// replaced in setup(), so no pin is ever bit-banged.
+// Wire2's txBuffer is 256B and a tile row is 1 control byte + 128 data, so it fits.
+
+extern "C" uint8_t oledI2c2(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr) {
   switch (msg) {
     case U8X8_MSG_BYTE_SEND:
-
-      memcpy(tx, arg_ptr, arg_int);
-      SPI1.transfer(tx, arg_int);
+      Wire2.write((const uint8_t *)arg_ptr, (int)arg_int);
       break;
     case U8X8_MSG_BYTE_INIT:
-      if (u8x8->bus_clock == 0) u8x8->bus_clock = u8x8->display_info->sck_clock_hz;
-      u8x8_gpio_SetCS(u8x8, u8x8->display_info->chip_disable_level);
-      SPI1.begin();
+      Wire2.begin();
       break;
     case U8X8_MSG_BYTE_SET_DC:
-      u8x8_gpio_SetDC(u8x8, arg_int);
-      break;
+      break;   // i2c carries d/c in the control byte, there is no pin
     case U8X8_MSG_BYTE_START_TRANSFER:
-      SPI1.beginTransaction(SPISettings(u8x8->bus_clock, MSBFIRST, SPI_MODE0));
-      u8x8_gpio_SetCS(u8x8, u8x8->display_info->chip_enable_level);
+      Wire2.setClock(u8x8->bus_clock);
+      Wire2.beginTransmission(u8x8_GetI2CAddress(u8x8) >> 1);
       break;
     case U8X8_MSG_BYTE_END_TRANSFER:
-      u8x8_gpio_SetCS(u8x8, u8x8->display_info->chip_disable_level);
-      SPI1.endTransaction();
+      Wire2.endTransmission();
       break;
     default: return 0;
   }
   return 1;
 }
+
 bool bleConnected = false;
 String camState = "not connected";
 String customMsg = "";
@@ -79,9 +79,15 @@ unsigned long connectAt = 0;
 uint8_t oledFrame = 0;
 unsigned long lastOledDraw = 0;
 unsigned long lastOledPhase = 0;
+unsigned long lastOledInit = 0;
 
-#define OLED_DRAW_INTERVAL 10
+#define OLED_DRAW_INTERVAL 25   // ~9ms of i2c a frame at 1MHz; 10ms would re-fire on itself
 #define OLED_PHASE_INTERVAL 120
+// the panel is a full-buffer device redrawn every tick, so a dark screen is never a lost
+// buffer -- it is the ssd1306's own config gone: begin() landing before the panel's rail
+// settled, or a glitch on a no-CS spi bus eating a command byte. re-sending the init
+// sequence (no reset pulse, ~25 bytes) puts it back; the next sendBuffer repaints.
+#define OLED_REINIT_INTERVAL 5000
 
 #define MTX_CW 6
 #define MTX_CH 8
@@ -95,17 +101,16 @@ char mtxCell[MTX_COLS][MTX_ROWS];
 
 #define BOARD_NAME "BLACKOUT-V3"
 
-#define ENA 3
-#define IN1 2
-#define IN2 7
-#define IN3 6
-#define IN4 4
+#define ENA 2
+#define IN1 3
+#define IN2 4
+#define IN3 5
+#define IN4 6
 
-#define ENB 5
+#define ENB 7
 static const uint8_t MOTOR_PINS[] = {IN1, IN2, IN3, IN4};
 #define SONAR_ITER 3
 #define SONAR_TIMEOUT_US 25000UL
-#define DIST_ALPHA 0.6
 
 enum { SCR_OFF, SCR_MATRIX, SCR_BOUNCE, SCR_STARS, SCR_TETRIS, SCR_N };
 uint8_t saver = SCR_OFF;
@@ -183,6 +188,9 @@ float readLux() {
 unsigned long lastSend = 0;
 unsigned long lastEnv = 0;
 float distF = -1;
+float sonarRing[SONAR_ITER];
+uint8_t sonarIdx = 0;
+
 
 // ---- drawing ----
 void oledCenter(const char* s, int y) {
@@ -582,6 +590,12 @@ void tickBuzz() {
 
 void tickPanel() {
   unsigned long now = millis();
+  if (now - lastOledInit >= OLED_REINIT_INTERVAL) {
+    lastOledInit = now;
+    oled.initDisplay();
+    oled.setPowerSave(0);
+    oled.setContrast(255);
+  }
   if (now - lastOledPhase >= OLED_PHASE_INTERVAL) { lastOledPhase = now; oledFrame++; }
   if (now - lastOledDraw >= OLED_DRAW_INTERVAL) {
     lastOledDraw = now;
@@ -590,16 +604,12 @@ void tickPanel() {
   }
 }
 
-void panelDelay(unsigned long ms) {
-  unsigned long until = millis() + ms;
-  while ((long)(millis() - until) < 0) { BLE.poll(); tickPanel(); tickBuzz(); }
-}
-
 // ---- setup ----
 void setup() {
   Serial.begin(9600);
   Serial.setTimeout(50);
   pinMode(TRIG_PIN, OUTPUT);
+  for (uint8_t i = 0; i < SONAR_ITER; i++) sonarRing[i] = -1;  // 0 would read as a wall at 0cm
 
   pinMode(ECHO_PIN, INPUT_PULLDOWN);
 
@@ -608,14 +618,20 @@ void setup() {
   bmeOk = bme.begin(0x76, &Wire1) || bme.begin(0x77, &Wire1);
   Serial.println(bmeOk ? "BME280 ok" : "BME280 not found");
 
+  armBegin();   // pca9685 on Wire (d20/d21); jogged by the ble arm, cmd
+
   Wire2.begin();
   Wire2.beginTransmission(BH1750_ADDR);
   Wire2.write(BH1750_CONT_HRES);
   luxOk = (Wire2.endTransmission() == 0);
   Serial.println(luxOk ? "BH1750 ok" : "BH1750 not found");
 
-  oled.getU8x8()->byte_cb = oledSpi1;
-  oled.setBusClock(OLED_SPI_HZ);
+  oled.getU8x8()->byte_cb = oledI2c2;
+  oled.setI2CAddress(OLED_ADDR << 1);
+  oled.setBusClock(OLED_I2C_HZ);
+
+  delay(100);   // panel's charge pump rail comes up slower than the h747; begin() into an
+                // unsettled rail is half the dark-at-boot cases.
   oled.begin();
   oled.setContrast(255);
   updateOled();
@@ -632,7 +648,9 @@ void setup() {
 
   BLE.setLocalName(BOARD_NAME);
 
-  BLE.setConnectionInterval(6, 12);
+  // 30-50ms: SEND_INTERVAL is 100ms, so a tighter interval buys no latency and
+  // leaves no slack when the venue's 2.4ghz gets busy.
+  BLE.setConnectionInterval(24, 40);
   BLE.setAdvertisedService(sensorService);
   sensorService.addCharacteristic(sensorChar);
   sensorService.addCharacteristic(cmdChar);
@@ -845,7 +863,7 @@ void handleBlk(const String& c) {
   }
 }
 
-void stopRoutine() { routine = nullptr; drvEnd = 0; blkHalt(); }
+void stopRoutine() { routine = nullptr; drvEnd = 0; blkHalt(); armStopAll(); }
 
 // ---- commands ----
 void startDrive(const String& c) {
@@ -908,6 +926,11 @@ void handleCmd(String c) {
   else if (c.startsWith("go,")) startRoutine(c.substring(3));
   else if (c.startsWith("drv,")) startDrive(c);
   else if (c.startsWith("blk,")) handleBlk(c);
+  else if (c.startsWith("arm,")) {
+    int a = c.indexOf(',', 4);
+    if (a < 0) armStopAll();                       // bare "arm," = all joints off
+    else armJog(c.substring(4, a).toInt(), c.substring(a + 1).toInt());
+  }
 
   else if (c.startsWith("hz,")) { tuneStep = PAIR_TUNE_N; buzzTone(c.substring(3).toInt()); }
 
@@ -946,14 +969,17 @@ float pingCm() {
   return us > 0 ? us / 58.0 : -1;
 }
 
+// one ping per call, median over the last SONAR_ITER of them. sends are already
+// SEND_INTERVAL apart, so the ring-down gap is free -- it used to be 3 pings back to
+// back with a 60ms panelDelay between, ~200ms of dead time every pass, which is both
+// the telemetry cadence and the command latency.
 float medianPingCm() {
+  sonarRing[sonarIdx] = pingCm();
+  sonarIdx = (sonarIdx + 1) % SONAR_ITER;
+
   float s[SONAR_ITER];
   uint8_t n = 0;
-  for (uint8_t i = 0; i < SONAR_ITER; i++) {
-    float v = pingCm();
-    if (v >= 0) s[n++] = v;
-    panelDelay(60);
-  }
+  for (uint8_t i = 0; i < SONAR_ITER; i++) if (sonarRing[i] >= 0) s[n++] = sonarRing[i];
   if (n == 0) return -1;
   for (uint8_t i = 1; i < n; i++) {
     float key = s[i];
@@ -987,6 +1013,7 @@ void loop() {
 
   tickPanel();
   tickBuzz();
+  armTick();
 
   unsigned long now = millis();
   bool busy = routine || blkPc >= 0 || blkLoading || drvEnd;
@@ -994,13 +1021,7 @@ void loop() {
   if (now - lastSend < (saver && !busy ? SAVER_SEND_INTERVAL : SEND_INTERVAL)) return;
   lastSend = now;
 
-  float raw = busy ? pingCm() : medianPingCm();
-  if (raw >= 0) {
-    distF = (distF < 0) ? raw : distF + DIST_ALPHA * (raw - distF);
-  } else {
-    distF = -1;
-  }
-
+  distF = medianPingCm();
   float dist = (distF < 0) ? 999 : distF;
   distCm = dist;
 

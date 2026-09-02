@@ -34,9 +34,9 @@ SERVER = "http://127.0.0.1:5005"
 
 # Joints, mirroring sv[] in pca_test.ino. Continuous ones take a signed speed,
 # the gripper takes an angle.
-BASE, SHOULDER, ELBOW, WRIST, GRIP = 15, 12, 4, 8, 11   # identified 2026-08-27
+BASE, SHOULDER, ELBOW, WRIST, GRIP = 6, 5, 4, 3, 1   # rewired 2026-08-31; ch2 unused
 # GRIP's servo is dead — the zones send, the claw does not move. Keep
-# ch11 clear of anything else while it is typed positional: an angle into a 360 runs away.
+# ch1 clear of anything else while it is typed positional: an angle into a 360 runs away.
 
 DEAD = 0.14          # half-width of the centre square, as a fraction of frame
 REFRESH = 0.30       # resend a live jog this often — the board's deadman is 0.8s
@@ -185,7 +185,7 @@ ZONES = [
 # burst that short before it builds any speed. DUTY_MS above is the same idea
 # applied continuously.
 PULSE_MS = 420       # 360s: burst length per press
-GRIP_STEP = 12       # sg90: degrees per press (unused while ch11 is a 360)
+GRIP_STEP = 12       # sg90: degrees per press (unused while ch1 is a 360)
 
 # The kill gesture: pinky alone, held. Long on purpose — it has to be
 # impossible to hit by accident, and a hand passing through odd shapes on its
@@ -805,7 +805,7 @@ def selftest():
     assert gap["sends"] == [(z[6], 0)], "the off half must actually stop it"
     assert gap["pressed"], "but the button stays lit, or it reads as a drop"
 
-    # the claw is a jog like the rest — ch11 has no position feedback, so there
+    # the claw is a jog like the rest — ch1 has no position feedback, so there
     # is no angle to step to and an angle command there never stops
     assert [z for z in ZONES if z[4] == "CLAW +"][0] in jogs
 

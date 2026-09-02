@@ -1,6 +1,9 @@
 // HW-170 / PCA9685 bench test — 5-DOF arm, on an Uno R4.
-//   ch0 base, ch4 shoulder, ch6 elbow : 360 (continuous rotation)
-//   ch15 gripper : SG90 (positional 0-180)
+//   ch6 base, ch5 shoulder, ch4 elbow, ch3 wrist, ch12 gripwrist, ch1 gripper
+//   ALL SIX ARE 360 (continuous rotation). ch2 is unused.
+//   ch12 is untested — it did not respond on ch2 either, so it may be the
+//   servo and not the channel. Type is a guess: cont, because cont gets the
+//   deadman and positional does not.
 //   WRONG cont FLAG = A JOINT THAT NEVER STOPS: an angle sent to a 360 is
 //   full speed, and only cont channels get the deadman. Check with t<ch>.
 //
@@ -67,11 +70,12 @@ struct Joint { uint8_t ch; bool cont; int neutral; const char* name; };
 // goes back on, and re-trim the neutral: no end stop means no clamp force, only
 // "run the jaws until you let go".
 Joint sv[] = {
-  { 15, true,  1490, "base"     },   // measured 2026-08-24, moved to ch15
-  { 12, true,  1500, "shoulder" },   // untrimmed
+  { 6,  true,  1490, "base"     },   // neutral measured 2026-08-24 on this servo
+  { 5,  true,  1500, "shoulder" },   // untrimmed
   { 4,  true,  1500, "elbow"    },   // untrimmed
-  { 8,  true,  1500, "wrist"    },   // untrimmed — 360, not an sg90
-  { 11, true,  1500, "gripper"  },   // 360/stripped pot, see above — untrimmed
+  { 3,  true,  1500, "wrist"    },   // untrimmed — 360, not an sg90
+  { 12, true,  1500, "gripwrist"},   // added 2026-08-31, unconfirmed — see above
+  { 1,  true,  1500, "gripper"  },   // 360/stripped pot, see above — untrimmed
 };
 const uint8_t NSV = sizeof(sv) / sizeof(sv[0]);
 

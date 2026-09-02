@@ -1,11 +1,11 @@
 // bench-only wiring and direction check, not part of the build
 
-#define ENA 3
-#define IN1 2
-#define IN2 7
-#define IN3 6
-#define IN4 4
-#define ENB 10
+#define ENA 2
+#define IN1 3
+#define IN2 4
+#define IN3 5
+#define IN4 6
+#define ENB 7
 #define SPEED 120
 
 void setup() {

@@ -8,14 +8,27 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
 
 - `giga-r1/` — Giga R1 WiFi (`main/`): sensor hub + motor driver + BLE
   command endpoint, one board. Reads sensors, broadcasts CSV over BLE notify;
-  DHT11 (temp/humidity, A6), BME280 (pressure, 0x76 on **Wire1** — SDA1 D102 /
+  DHT11 (temp/humidity, **D71**, A6 -> D74 -> D24 -> D71 all on 2026-09-01 — the lib
+  bit-bangs a one-wire protocol and never calls `analogRead`, so any digital pin does.
+  D71 is in the D54-D75 block, next to the buzzer on D72 — and it is one of the four
+  pins the spi panel drew nothing on (D69/D71/D73/D75, see below), so if temp/humidity
+  read 0 from boot that unexplained failure is the first suspect, not the sensor),
+  BME280 (pressure, 0x76 on **Wire1** — SDA1 D102 /
   SCL1 D101; its own temp/humidity registers go unread) and RCWL-1601
   (ultrasonic, TRIG D52 / ECHO D50), plus GY-302/BH1750 (ambient light, 0x23 on
   its own I2C bus, Wire2 — SDA2 D9 / SCL2 D8; CSV field 12, and `lux` in BLK) wired so far, rest of the CSV
   field set sends 0 until a sensor lands.
+  The GY-302's ADDR pin is tied to GND to hold 0x23 — on VCC it becomes 0x5C and
+  the sketch stops finding it.
+  **There is no I2C anywhere but the digital header**: every I2C-capable pin the
+  H747 breaks out is D0, D6, D8/D9, D20/D21 and SDA1/SCL1 — the analog header
+  (PC_4/PC_5/PB_0/PB_1/PC_3/PC_2/PC_0/PA_0) and the whole D22-D53 block have no I2C
+  alternate function at all, so "move a sensor to the other side" is a cable that
+  leaves the digital header, never a pin change.
   **The three I2C buses are separate objects and a sensor only answers on its own**
   (`variants/GIGA/pins_arduino.h:228`): `Wire` = D20/D21, `Wire1` = **SDA1 D102 /
-  SCL1 D101**, `Wire2` = D9/D8. Nothing is on `Wire` any more. A device wired to
+  SCL1 D101**, `Wire2` = D9/D8. `Wire` carries the arm's PCA9685 (0x40) and nothing
+  else, on purpose — see below. A device wired to
   SDA1/SCL1 while the sketch calls plain `bme.begin(0x76)` reads exactly like a
   dead sensor — pressure pinned at 0.00, the 5s re-probe never printing "BME280
   back" — which cost a session on 2026-08-31; the bus is the second argument
@@ -44,8 +57,9 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
   not 5V tolerant, so the ultrasonic is an RCWL-1601 (3.3V-capable, HC-SR04
   drop-in) rather than an HC-SR04, and the dht11 is powered at 3V too. A 5V
   sensor here means a 5V signal into a 3.3V pin. Also drives an
-  L298N (ENA D3, IN1 D2, IN2 D7, IN3 D6, IN4 D4, ENB D5 — pins follow the
-  loom's wire colours, not connector order; D8 is SCL2, kept free for Wire2)
+  L298N (ENA D2, IN1 D3, IN2 D4, IN3 D5, IN4 D6, ENB D7 — D2-D7 in the same
+  order as the L298N's own header, so the ribbon runs straight across with no
+  crossed wires; D8 is SCL2, kept free for Wire2)
   and runs on-board `Step` motion routines
   (`routines.h`, see "Dictated routines" below) or direct gamepad/dashboard
   drive commands over the same BLE `cmdChar` — routines run standalone on
@@ -60,13 +74,18 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     place (lights on at boot = flip it), and the level is written *before*
     `pinMode(OUTPUT)` or the pin's default low turns everything on for a moment
     at boot.
-  - **Buzzer on D75**, driven off the same `hud,<level>` the panel face already gets —
+  - **Buzzer on D72** (D75 -> A7 -> D72, all 2026-09-01; confirmed audible on D72).
+    `tone()` on the mbed core is ticker-driven, so it needs no pwm pin and any gpio does.
+    **Not A8-A11** — see below. A7 works too but also feeds the 3.5mm audio jack. **Not A8-A11**: those are
+    ADC-only die pads with no gpio, and the core makes it a *compile* error
+    (`__attribute__((error("Can't use pins A8-A11 as digital")))` in
+    `variants/GIGA/pure_analog_pins.h`) — `A9` is not even an int, it is a
+    `PureAnalogPin` object. Driven off the same `hud,<level>` the panel face already gets —
     `tickBuzz()` in `main.ino`: `bad` holds a continuous tone until the level clears, `warn`
     beeps intermittently for as long as it holds (`BUZZ_BEEP_MS` 120 on,
     `BUZZ_GAP_MS` 600 off), anything else is silent, and a BLE drop clears
     `hudLevel` so a lost link silences it. `tone()` on the
-    mbed core is ticker-driven, so it needs no pwm pin and never blocks; it is stepped
-    from `panelDelay()` too or the beat stretches through the sonar's ring-down waits.
+    mbed core is ticker-driven, so it needs no pwm pin and never blocks.
     Re-issuing `tone()` while it is already sounding leaks a `DigitalOut` each call
     (core bug), which is why `buzzSet()` only ever writes on a change. **`noTone()`
     does not silence an active module** — it detaches the ticker and drops the pin
@@ -79,10 +98,43 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     screensaver on the panel instead of the HUD. The board animates it; the
     link only carries which one, and a BLE drop turns it off.
   - **Servos hang off a PCA9685** (silkscreened **HW-170**) — I2C, address 0x40,
-    16 channels, so more servos cost no pins. **This is bench-rig only and is not
-    on the Giga**: the arm runs off `OUTDATED/pca_test/` (Uno R4) and `giga-r1/main`
-    has zero PCA9685 code, so nothing at 0x40 on any Giga bus is expected, not a
-    fault. Everything below is the bench rig.
+    16 channels, so more servos cost no pins. **It is on the Giga now**
+    (`giga-r1/main/arm.h`, ported off the bench rig 2026-09-01): `armBegin()` from
+    `setup()`, `armTick()` from `loop()`. The bench rig (`OUTDATED/pca_test/`, Uno
+    R4) still exists and is still where a channel gets identified; the two share a
+    joint table that must agree.
+    - **It is on `Wire` (D20/D21) alone, deliberately.** A stalled servo browns the
+      PCA9685 out and it clamps SDA — on a shared bus that takes the bme280 or the
+      bh1750 down with it, so the arm gets the bus with nothing else on it. That is
+      why "nothing is on `Wire`" is no longer true and why nothing else may move
+      there.
+    - **VCC is 3V3 on the Giga, 5V on the bench rig, and that is not a
+      contradiction.** The Giga drives 3.3V logic; a PCA9685 at VDD 5V wants
+      0.7*VDD = 3.5V to read a HIGH, which 3.3V never clears. Powering the chip at
+      3V3 moves its threshold down with it. On the 5V-logic Uno rig, VCC on 3V3 is
+      the failure below.
+    - **`OE` is wired to D32** on the Giga (active low: HIGH = all 16 channels off).
+      **Not D8** — that is SCL2. It is the only stop that still works with the I2C
+      bus dead, so `armStopAll()` raises OE *first* and writes the full-off bits
+      after; `armBegin()` sets the level before `pinMode(OUTPUT)`, or the pin's
+      default low enables every channel for a moment at boot.
+    - **Every `Wire` call is guarded on `armOk`.** A chip that never answered is
+      all no-ops, because a blocking transaction into a browned-out PCA9685 looks
+      exactly like a bricked board — silent from boot, USB still enumerated.
+      `armBegin()` prints `PCA9685 ok` / `PCA9685 not found`.
+    - **`armJog()` has exactly one call site: the BLE `arm,<joint>,<speed>` command.**
+      The dashboard's `Arm` pad (`app.js`) holds a button and re-sends every 300ms
+      against the board's 800ms deadman; releasing sends `arm,<joint>,0`, and a bare
+      `arm,` is all joints off. Don't wire it to a routine or anything unheld — a 360
+      with nobody on the button winds itself into the frame, which is what happened
+      on the bench. `npm run test:arm` (`server/test-arm.mjs`) re-runs the pulse
+      maths, the clamp, the 500-2500us bounds and the deadman in js against the
+      constants read out of `arm.h`, and **fails if a second call site appears**.
+    - `ARM_SPAN_US` is **700**, not the nominal 500: the base carries the whole arm
+      and had nothing left at 500. Buzzing at rest means saturated — go back down.
+      `ARM_JOG_MS` 800 is the same deadman the bench page refreshes every 300ms.
+
+    Everything below is the bench rig, and the hardware facts carry over.
     **Its two power rails are not the same thing:** `VCC` is chip logic (5V from
     the board, ~10mA), `V+` is the servo rail and is **6V max** — the 12V pack
     goes through a buck to 5-6V before it ever reaches V+, or the servos and the
@@ -94,15 +146,20 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     The duplicated `V+`/`GND` pins on the
     opposite header are the *same nets*, there for daisy-chaining: feed V+ once,
     but do tie a GND to the board (common ground is what makes I2C work at all).
-    `OE` is pulled low already; wire it only for a hardware all-channels-off kill.
-    - **It drives a 5-DOF arm**: ch15 base, ch12 shoulder, **ch4 elbow**, ch8
-      wrist, **ch11 gripper** — and **all five are 360s**, the gripper included
-      (stripped pot), so there is no positional channel left on the arm. The map
-      lives in three places that must agree or it half-works, and they do agree
-      today: `sv[]` in `pca_test.ino`, `J` at `servo.py:338`, the constants at the
-      top of `hand.py`. **`pca_test.ino`'s own header comment is stale** (it still
-      says ch0 base / ch6 elbow / ch15 gripper) — `sv[]` is the authority, not the
-      comment above it.
+    `OE` is pulled low already, and the Uno rig leaves it that way; only the Giga
+    wires it (D32, above) for a hardware all-channels-off kill.
+    - **It drives a 6-DOF arm** (**rewired 2026-08-31** — every channel moved, the
+      old ch15/12/4/8/11 map is dead): **ch6 base, ch5 shoulder, ch4 elbow, ch3
+      wrist, ch12 gripwrist, ch1 gripper**. ch2 is unused. **All six are 360s**,
+      the gripper included (stripped pot), so there is no positional channel left
+      on the arm. **ch12 (gripwrist) is unconfirmed** — it has never been seen to
+      move, and it did not respond on ch2 either, so suspect the servo before the
+      channel; it is typed `cont` because cont gets the deadman and positional does
+      not.
+      The map now lives in **four** places that must agree or it half-works:
+      `armSv[]` in `giga-r1/main/arm.h` (the robot), `sv[]` in `pca_test.ino`, `J`
+      in `servo.py`, and the constants at the top of `hand.py` (the bench rig).
+      **`pca_test.ino`'s header comment is the authority nowhere** — `sv[]` is.
       **A channel reading back a healthy pulse proves nothing about the servo** —
       `d<ch>` dumps MODE1 plus that channel's own registers over I2C, and ch7
       reported a textbook 2197us all afternoon with nothing plugged into it.
@@ -110,8 +167,8 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       servo rail. Nudge and watch; the registers only ever clear the board.
       **A joint typed positional that is really a 360 never stops** — an angle
       maps to 500-2500us, which a 360 reads as full speed, and only continuous
-      channels get the deadman. ch8 was mislabelled SG90 and ran away on the
-      bench 2026-08-25; `t<ch>` first, and if it keeps turning it's a 360. The bench rig is `OUTDATED/pca_test/` (Uno R4) plus its
+      channels get the deadman. The wrist was mislabelled SG90 and ran away on the
+      bench 2026-08-25 (it was ch8 then, ch3 now); `t<ch>` first, and if it keeps turning it's a 360. The bench rig is `OUTDATED/pca_test/` (Uno R4) plus its
       `servo.py`, a flask page that is nothing but a serial pipe to
       it. Joint-to-channel mapping is unconfirmed for the 360s — `t<ch>` nudges
       one joint so you can watch which moves, and `T` sweeps all 16 — including
@@ -121,8 +178,9 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       "nothing" until it was raised (2026-08-27).
       **A 360 in an arm joint has no position feedback and no end stop**, so
       there is no "go to 45deg", only "move while the button is held": the
-      continuous channels run on a 0.8s deadman (`JOG_MS`) that the browser
-      refreshes every 300ms while held. That is also why the sketch has no
+      continuous channels run on a 0.8s deadman (`JOG_MS` on the rig,
+      `ARM_JOG_MS` on the robot) that the browser refreshes every 300ms while
+      held. That is also why the sketch has no
       demo mode — an unattended joint winds itself into the frame, which is
       exactly what happened the first time it ran.
       A 360 takes a *speed*, not an angle: ~1500us is stop, below is one way,
@@ -131,10 +189,11 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       per-servo bench knob (the `sv[]` table in the test sketch), not 1500 by
       definition — which is why the wire format is `<ch>:<val>` and the value
       means speed or angle depending on the channel's type, never both.
-      **Neutral is measured per servo, never assumed** — the base (ch15) sits
-      still at **1490us**, found on the bench 2026-08-24 when it was still on ch0;
-      shoulder, elbow, wrist and gripper are all still on the nominal 1500 and
-      will each want their own. The measured values live in the `sv[]` table so a
+      **Neutral is measured per servo, never assumed** — the base sits still at
+      **1490us**, measured on the bench 2026-08-24 (it has been on three channels
+      since; the number belongs to the servo, not the channel). Shoulder, elbow,
+      wrist, gripwrist and gripper are all still on the nominal 1500 and will each
+      want their own. The measured values live in the `sv[]`/`armSv[]` tables so a
       reflash keeps them. A too-small
       swing around a wrong neutral is why a joint moves one way and not the
       other: the deadband is 100us+, so jog runs full-scale (1000-2000us).
@@ -147,11 +206,11 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       the arm off a webcam: `python3 hand.py` next to a running `servo.py`,
       which it talks to over http so the two never fight over the serial port.
       Three held poses calibrate it (rest, open, pinch) into `hand_cal.json`.
-      **Hand position is a velocity, not a pose** — four joints are 360s with no
+      **Hand position is a velocity, not a pose** — every joint is a 360 with no
       encoder, so "match my elbow" is unanswerable; the hand is a joystick.
       Nothing maps absolutely any more — the gripper was the one channel that did,
       off pinch distance, and it is a 360 now (`GRIP_STEP` in `hand.py` is dead
-      code while ch11 stays continuous). No hand in
+      code while the gripper stays continuous). No hand in
       frame = stop, because a frozen camera looks exactly like a hand held
       still. Needs **mediapipe 0.10.x**: 1.0.1's macOS arm64 build dies in
       DrishtiMetalHelper before the first frame, CPU delegate included.
@@ -225,14 +284,24 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     off that and animates it itself, self-clocked off `millis()` (`oledFrame` steps
     at 120ms, and a shake at 8fps reads as a stutter).
     **What capped the frame rate was never the draw interval** — a frame is ~1.3ms of
-    spi — it was the sonar's ring-down waits, ~180ms of `delay()` every send, ~18
-    dropped frames in a row. `panelDelay()` is that wait with the draw tick and
-    `BLE.poll()` inside it, so the ping keeps its timing and the panel keeps drawing
-    (an inbound `stop` stops waiting on it too, and a screensaver no longer has to
-    take the noisier single ping). The tick is 10ms now, and that is the floor worth
+    spi — it was the sonar's ring-down waits, ~180ms of blocking every send, ~18
+    dropped frames in a row. That wait is **gone** (2026-09-01): `medianPingCm()` fires
+    **one** ping per send and takes the median of the last `SONAR_ITER` of them out of a
+    ring buffer, because sends are already `SEND_INTERVAL` apart and the ring-down gap is
+    free. `panelDelay()` was that wait and is deleted with it — the sonar was its only
+    caller. The same ~180ms was also the **command latency**, because `handleCmd()` never
+    ran inside it: a `stop` or a drive command sat ~200ms before the board read it, and
+    idle telemetry ran at ~4Hz, not 10. **The ring must be seeded to -1 in `setup()`** —
+    a zero-initialised slot reads as a wall at 0cm and ends a `until dist < 5` on the
+    spot. The EMA on top (`DIST_ALPHA`) went too: the median already rejects the stray
+    corner echo, and stacking both put ~2 extra samples of lag on the one number
+    `until dist <` steers on. `npm run test:sonar` is the check.
+    The tick is 10ms, and that is the floor worth
     having: the ssd1306 refreshes itself at ~100Hz, so anything sent faster is never
-    displayed. Anything new that blocks in `loop()` has to draw through `panelDelay()`
-    or it is a freeze, and the dht11's own 30ms read is one already.
+    displayed. Anything new that blocks in `loop()` for longer than the draw tick is a
+    dropped frame and a command-latency hit both — the dht11's own 30ms read is one
+    already. There is no `panelDelay()` to hide behind any more: make it non-blocking,
+    the way the sonar now is.
     **Frame rate is not what makes it look animated** — travel is. A move of one pixel,
     or one that only ever lands on two positions, reads as two stills cutting between
     each other no matter how often it is drawn, which is what the first panel face did.
@@ -508,7 +577,7 @@ in `app.js` (**the index is the wire value** — same order as the enum), and a
 
 - **A screensaver drops the sensor cadence to 2Hz** while the rover is otherwise idle
   (`SAVER_SEND_INTERVAL` / `SAVER_ENV_INTERVAL`). Everything below the send gate in
-  `loop()` blocks the panel unless it draws through `panelDelay()`: one sonar ping is
+  `loop()` blocks the panel: one sonar ping is
   ~25ms of dead time and a dht11 read ~30ms, inside a 10ms draw tick — at 10Hz that's a
   visible run of dropped frames, which is exactly what reads as stutter. Anything moving (routine, blk, live drive) clears `busy` and puts the
   full 10Hz back, so this only ever costs telemetry resolution on a parked rover. If the
@@ -529,10 +598,47 @@ in `app.js` (**the index is the wire value** — same order as the enum), and a
 - It takes the panel over the HUD and the operator message both, and the **only**
   things that end it are `scr,0` and a BLE drop — the panel can never be left
   stuck on it with no console to switch it off.
-- The panel is on **SPI1** (d13 sck, d11 copi) via a custom u8g2 byte callback, not
-  bit-banged sw-spi: u8g2's `*_HW_SPI` constructors only know the `SPI` object, which
-  on the Giga is d89-d91 on the high-density connector. Don't "fix" that by going back
-  to sw-spi — it cost ~20ms a frame, which is the whole draw tick.
+- The panel is a **4-pin i2c ssd1306 at 0x3C on `Wire2` (d9 sda2 / d8 scl2)**, next to the
+  bh1750, via a custom u8g2 byte callback (`oledI2c2` in `main.ino`) — u8g2's `*_HW_I2C`
+  constructor only knows the `Wire` object, and `Wire` is the arm's PCA9685 bus alone. The
+  `SW_I2C` constructor it is built with is there only for its gpio/delay callback; `byte_cb`
+  is replaced in `setup()`, so nothing is bit-banged. **I2C is ~10x slower than the old spi
+  panel**: a full 1KB frame is ~9ms at `OLED_I2C_HZ` 1MHz (~23ms at the specced 400k), so
+  `OLED_DRAW_INTERVAL` is 25ms, not 10 — at 10 the draw re-fires the instant it returns and
+  starves `loop()`. Tearing or a dark panel = drop the clock to 400000 and the tick to 40.
+  Everything below is the **old 7-pin spi panel** (d13 sck, d11 copi, d10 dc, d12 rst on
+  `SPI1`), kept because the pin-map findings still hold if it ever goes back. **Tried to move it
+  off the digital header 2026-09-01 and reverted the same day**; what that cost bought:
+  - **D54-D75: the datasheet and the bench disagree, and the bench won.** The datasheet
+    lists D68-D75 under the display connector and D54-D67 under the camera one (§2), and
+    none of D54-D75 appear in its header tables (§14.2/14.3/14.5/14.6) — but **a buzzer
+    on D72 audibly beeps** (measured 2026-09-01). So that range *is* reachable on this
+    board; do not repeat the claim that it isn't.
+    **What is still unexplained:** the panel drew nothing on D69/D71/D73/D75 across both
+    dc/rst orderings on the same day. If D72 works, that failure had some other cause and
+    the block is worth retrying before it is written off.
+  - **The Arduino SPI object names are offset from the ST peripheral names.** `SPI` is
+    stm32 **SPI1**, and it is the **2x3 icsp header** (d89 cipo / d90 copi / d91 sck) —
+    *not* a high-density connector. `SPI1` is stm32 **SPI5** (d13/d11/d12), which is what
+    the panel actually uses. Nothing calls `SPI.begin()`, so stm32 SPI1 is free.
+  - **Where the panel could go instead**, if the digital header is ever needed:
+    **DAC0 dc / DAC1 sck / CANRX copi / CANTX rst** — the last four holes of the analog
+    header (positions 21-24, adjacent), on stm32 SPI1 via
+    `arduino::MbedSPI oledSPI(NC, PB_5, PA_5)`. Second choice is stm32 SPI2: sck CANTX
+    (PB_13), copi A4 (PC_3), miso A5 (PC_2) — same header, not adjacent. **Note DAC0,
+    DAC1 and A7 all also feed the 3.5mm audio jack**, so the jack's series parts hang off
+    sck there; drop `OLED_SPI_HZ` if it tears.
+  - **A0-A5 cannot host it at all** — A4 is SPI2_MOSI and A5 is SPI2_MISO, but there is
+    **no sck anywhere on A0-A7 or DAC0**.
+  - **The pin map is the authority and it is in no header** — it is `PinMap_SPI_SCLK` /
+    `_MOSI` / `_MISO` in `PeripheralPins.o` inside `variants/GIGA/libs/libmbed.a`
+    (`ar x`, then `objdump -s -j .rodata.PinMap_SPI_SCLK`). Entries are 12 bytes,
+    `{PinName, peripheral base, function}`, PinName = `port*16 + pin`; SPI1 =
+    0x40013000, SPI2 = 0x40003800, SPI5 = 0x40015000.
+  - **Never bit-banged sw-spi**, whatever pins it moves to: ~20ms a frame against a 10ms
+    draw tick means `tickPanel()` re-fires the instant it returns and the panel starves
+    `loop()` outright — `BLE.poll()` stops reading an inbound `stop`, and the blk vm's
+    `until dist <` check runs 20ms late every pass.
 - `npm run test:matrix` re-runs the fall/draw/bounce/star loops in js against the
   `MTX_*` / `ST_N` / `TET_*` constants (and the tetromino table) read out of
   `main.ino` — a drop that walks off `mtxCell[][]`, or a piece merged past the wall,

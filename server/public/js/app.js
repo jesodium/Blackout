@@ -628,6 +628,55 @@ const KEYMAP = {
 };
 
 const VERB_MIX = { fwd: [1, 1], back: [-1, -1], left: [1, -1], right: [-1, 1] };
+// ---- arm ----
+// Every joint is a 360 with no encoder or end stop, so there is no "go to 45deg":
+// a button held sends the same jog over and over and the board's deadman
+// (ARM_JOG_MS, 800ms) kills the pulse the moment the repeats stop — a closed tab
+// or a dropped link must not outlive the hand on the button.
+const ARM_REPEAT_MS = 300;
+const ARM_JOINTS = ["base", "shoulder", "elbow", "wrist", "gripwrist", "gripper"];
+
+function Arm({ onCmd, enabled }) {
+  const heldRef = useRef(null);
+  useEffect(() => {
+    if (!enabled) return;
+    const id = setInterval(() => {
+      const h = heldRef.current;
+      if (h) onCmd(`arm,${h[0]},${h[1]}`);
+    }, ARM_REPEAT_MS);
+    return () => { clearInterval(id); heldRef.current = null; };
+  }, [onCmd, enabled]);
+
+  const press = (i, dir) => (e) => {
+    e.preventDefault();
+    if (!enabled) return;
+    heldRef.current = [i, dir];
+    onCmd(`arm,${i},${dir}`);           // first one now, the interval only repeats it
+  };
+  // release stops the joint outright rather than waiting out the deadman
+  const release = (i) => () => {
+    if (heldRef.current?.[0] !== i) return;
+    heldRef.current = null;
+    onCmd(`arm,${i},0`);
+  };
+
+  return html`
+    <div class=${"arm-pad" + (enabled ? "" : " is-off")}>
+      ${ARM_JOINTS.map((name, i) => html`
+        <div class="arm-row" key=${name}>
+          <span class="arm-name">${name}</span>
+          ${[["◀", -100], ["▶", 100]].map(([glyph, dir]) => html`
+            <button type="button" key=${dir} class="pad-btn arm-btn" disabled=${!enabled}
+              aria-label=${`${name} ${dir < 0 ? "reverse" : "forward"}`}
+              onPointerDown=${press(i, dir)} onPointerUp=${release(i)}
+              onPointerLeave=${release(i)} onPointerCancel=${release(i)}
+              onContextMenu=${(e) => e.preventDefault()}>
+              <span class="pad-glyph" aria-hidden="true">${glyph}</span>
+            </button>`)}
+        </div>`)}
+    </div>`;
+}
+
 function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
   const [mode, setMode] = useState("remote");
   const [padName, setPadName] = useState(null);
@@ -783,7 +832,8 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
             <span></span>${padBtn("fwd", "▲", "W")}<span></span>
             ${padBtn("left", "◀", "A")}${padBtn("back", "▼", "S")}${padBtn("right", "▶", "D")}
           </div>
-          <small class="drive-hint">${hint}</small>`
+          <small class="drive-hint">${hint}</small>
+          <${Arm} onCmd=${onCmd} enabled=${armed} />`
         : mode === "blk" ? html`
           <${BlkCtl} onCmd=${onCmd} onAnalyze=${onAnalyze} enabled=${enabled} busyRef=${busyRef} packetRef=${packetRef} />`
         : html`

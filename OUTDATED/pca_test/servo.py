@@ -294,7 +294,7 @@ PAGE = r"""<!doctype html><title>arm</title>
   <tr><td>S</td><td>speed: <b>slow → half → full</b>, starting slow. Slow is short bursts at full power, not a weaker push — on these 360s a gentler pulse is just a weaker one</td></tr>
   <tr><td>SHOULDER / ELBOW / WRIST</td><td>+ and − along the top and bottom edges</td></tr>
   <tr><td>BASE &lt; &gt;</td><td>the two middle buttons turn the base</td></tr>
-  <tr><td>CLAW + / −</td><td>runs while engaged, same as every other joint — ch11 is typed 360, so there is no angle to step to</td></tr>
+  <tr><td>CLAW + / −</td><td>runs while engaged, same as every other joint — ch1 is typed 360, so there is no angle to step to</td></tr>
   <tr><td>STOP</td><td>everything off, same as the red button below</td></tr>
   <tr><td>hand out of frame</td><td>everything <b>stops</b></td></tr>
   <tr><td>pinky only, 3 seconds</td><td><b>switches hand control off</b> — camera and all. A bar along the bottom counts it down</td></tr>
@@ -328,15 +328,15 @@ PAGE = r"""<!doctype html><title>arm</title>
   <button id=editadd>+ step</button>
   <button id=editclose>close</button></div>
  <small>ms is time from the start of the take. cmd is the raw serial line —
-  <code>15:100</code> is ch15 at full speed, <code>15:0</code> stops it,
+  <code>6:100</code> is ch6 at full speed, <code>6:0</code> stops it,
   <code>s</code> stops everything. Rows re-sort by ms on save.</small>
  <table id=steps></table>
 </div>
 <div id=log></div>
 <script>
 // ch, name, is360, neutral-us — mirror of sv[] in pca_test.ino.
-const J=[[15,'base',1,1490],[12,'shoulder',1,1500],[4,'elbow',1,1500],[8,'wrist',1,1500],
-         [11,'gripper',1,1500]];
+const J=[[6,'base',1,1490],[5,'shoulder',1,1500],[4,'elbow',1,1500],[3,'wrist',1,1500],
+         [12,'gripwrist',1,1500],[1,'gripper',1,1500]];
 const NEU={}; J.forEach(([c,n,k,u])=>NEU[c]=u);
 // Where each sg90 was last told to sit. No readback on a servo, so this is the
 // only thing that knows; a reload assumes centre until you nudge it.
