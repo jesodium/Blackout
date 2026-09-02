@@ -26,7 +26,9 @@
     "test:elev": "node test-elev.mjs",
     "test:auto": "node test-auto.js",
     "test:mjpeg": "node test-mjpeg.mjs",
-    "test:detect": "node test-detect.mjs"
+    "test:detect": "node test-detect.mjs",
+    "test:arm": "node test-arm.mjs",
+    "test:sonar": "node test-sonar.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

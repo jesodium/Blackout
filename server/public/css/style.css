@@ -798,6 +798,17 @@ input[type="range"]:focus { box-shadow: none; }
 .pad-btn.is-live { box-shadow: 0 0 0 3px rgba(236, 229, 214, 0.12); }
 .pad-btn:disabled { cursor: not-allowed; }
 .pad-glyph { font-size: 18px; line-height: 1; }
+
+/* ---- arm ---- */
+.arm-pad {
+  display: flex; flex-direction: column; gap: 6px; margin-top: 4px;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+  transition: opacity 0.2s;
+}
+.arm-pad.is-off { opacity: 0.45; }
+.arm-row { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; }
+.arm-name { font: 600 10px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+.arm-btn { min-height: 44px; width: 56px; }   /* 44px: the editor's touch target, same reason */
 .pad-btn kbd {
   position: absolute; top: 5px; right: 7px;
   font: 600 8.5px/1 var(--mono); color: currentColor; opacity: 0.45;
