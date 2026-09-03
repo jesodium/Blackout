@@ -28,6 +28,7 @@
     "test:mjpeg": "node test-mjpeg.mjs",
     "test:detect": "node test-detect.mjs",
     "test:arm": "node test-arm.mjs",
+    "test:armrec": "python3 armrec.py --selftest",
     "test:sonar": "node test-sonar.mjs"
   },
   "dependencies": {

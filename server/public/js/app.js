@@ -217,11 +217,13 @@ function Trends({ packet }) {
       const spec = SENSORS.find(x => x.key === s.key) || {};
       const vals = H.map(d => d[s.key]).filter(v => reads(spec, v));
       if (vals.length < 2) return;
-      const min = Math.min(...vals), max = Math.max(...vals), rng = (max - min) || 1;
+      const min = Math.min(...vals), max = Math.max(...vals), rng = max - min;
+      const pad = 8 * devicePixelRatio;   // flat series draws mid-canvas, not on the floor
       ctx.beginPath(); let n = 0;
       H.forEach((d, i) => {
         const v = d[s.key]; if (!reads(spec, v)) return;
-        const x = (i / (H.length - 1)) * w, y = h - ((v - min) / rng) * (h - 16) - 8;
+        const x = (i / (H.length - 1)) * w;
+        const y = rng ? h - ((v - min) / rng) * (h - 2 * pad) - pad : h / 2;
         n++ ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
       });
       ctx.strokeStyle = s.color; ctx.lineWidth = 1.6 * devicePixelRatio;
@@ -635,29 +637,110 @@ const VERB_MIX = { fwd: [1, 1], back: [-1, -1], left: [1, -1], right: [-1, 1] };
 // or a dropped link must not outlive the hand on the button.
 const ARM_REPEAT_MS = 300;
 const ARM_JOINTS = ["base", "shoulder", "elbow", "wrist", "gripwrist", "gripper"];
+// A released 360 free-wheels, so a loaded joint sags. HOLD is the bias it is left
+// driving at: turn it until the sag stops, then copy the number into armSv[] in
+// arm.h — the board keeps it in RAM only. ARM_HOLD_MAX matches the firmware clamp.
+const ARM_HOLD_MAX = 35;
+// Starting hold per joint — the same numbers armSv[] in arm.h boots with, and
+// test-arm.mjs fails if the two drift. Only gravity-loaded joints have one.
+const ARM_HOLD_INIT = {};
+// A 360 has no encoder, so "do not overdrive this joint" can only ever be a
+// RUN-TIME budget: milliseconds at full speed, counted either way from the last
+// re-home, which makes a joint's range 2x this wide. The board keeps the same
+// count (armTravel[] in arm.h) and it is the authority — this copy exists so the
+// operator watches the stop coming and the arrow greys out, instead of a joint
+// silently refusing to move. Both are dead reckoning and both DRIFT (a stall, a
+// sag, a hand moving the arm), which is why RE-HOME is a button and not a
+// maintenance task. ?armlimits=off turns off this copy AND the board's — bench
+// only, and it is the whole reason arml, exists.
+const ARM_TRAVEL_MS = 2500;
+const ARM_LIMIT = { gripper: 1200 };   // joints whose budget is not the default
+const armLimit = (name) => ARM_LIMIT[name] ?? ARM_TRAVEL_MS;
+const ARM_LIMITS_ON = !/[?&]armlimits=off/i.test(location.search);
 
 function Arm({ onCmd, enabled }) {
   const heldRef = useRef(null);
+  const [hold, setHold] = useState(() => ARM_JOINTS.map((n) => ARM_HOLD_INIT[n] ?? 0));
+  const [moves, setMoves] = useState({});
+  const [travel, setTravel] = useState(() => ARM_JOINTS.map(() => 0));
+  const travelRef = useRef(travel);
+  const speedRef = useRef(ARM_JOINTS.map(() => 0));
+  const clockRef = useRef(0);
+  const playRef = useRef([]);
+
+  // The one choke point every arm command goes through, so a tapped move counts
+  // against the same budget a held button does — integrate first at the OLD
+  // speed, then adopt the new one. Sends are never more than ARM_REPEAT_MS
+  // apart while a joint is moving, so the integral has nothing to miss.
+  const send = (cmd) => {
+    const now = performance.now();
+    const dt = clockRef.current ? now - clockRef.current : 0;
+    clockRef.current = now;
+    const t = travelRef.current.map((v, k) => v + (speedRef.current[k] * dt) / 100);
+    const m = /^arm,(\d+),(-?\d+)$/.exec(cmd);
+    if (m) speedRef.current[+m[1]] = +m[2];
+    else speedRef.current = ARM_JOINTS.map(() => 0);   // "arm," / "stop" / anything else
+    travelRef.current = t;
+    setTravel(t);
+    onCmd(cmd);
+  };
+  const atLimit = (i, dir) => ARM_LIMITS_ON &&
+    (dir > 0 ? travelRef.current[i] >= armLimit(ARM_JOINTS[i])
+             : travelRef.current[i] <= -armLimit(ARM_JOINTS[i]));
+
+  const stopPlay = () => { playRef.current.forEach(clearTimeout); playRef.current = []; };
   useEffect(() => {
-    if (!enabled) return;
+    fetch("/api/arm-moves").then((r) => r.json()).then(setMoves).catch(() => {});
+    // A queued step firing after the panic key restarts the arm the instant it
+    // was stopped, so the tape has to die with it. The root binding already
+    // sends the stop itself.
+    const panic = (e) => { if (e.code === "Space" || e.key === "Escape") stopPlay(); };
+    addEventListener("keydown", panic);
+    return () => { removeEventListener("keydown", panic); stopPlay(); };
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) { stopPlay(); return; }
+    // The board boots with its stops ON, so the debug flag is re-pushed on every
+    // connect — same as the buzzer mute. A reset brings the stops back.
+    if (!ARM_LIMITS_ON) onCmd("arml,0");
     const id = setInterval(() => {
       const h = heldRef.current;
-      if (h) onCmd(`arm,${h[0]},${h[1]}`);
+      if (!h) return;
+      if (atLimit(h[0], h[1])) { heldRef.current = null; send(`arm,${h[0]},0`); return; }
+      send(`arm,${h[0]},${h[1]}`);
     }, ARM_REPEAT_MS);
     return () => { clearInterval(id); heldRef.current = null; };
   }, [onCmd, enabled]);
 
   const press = (i, dir) => (e) => {
     e.preventDefault();
-    if (!enabled) return;
+    if (!enabled || atLimit(i, dir)) return;
     heldRef.current = [i, dir];
-    onCmd(`arm,${i},${dir}`);           // first one now, the interval only repeats it
+    send(`arm,${i},${dir}`);            // first one now, the interval only repeats it
   };
   // release stops the joint outright rather than waiting out the deadman
   const release = (i) => () => {
     if (heldRef.current?.[0] !== i) return;
     heldRef.current = null;
-    onCmd(`arm,${i},0`);
+    send(`arm,${i},0`);
+  };
+
+  // Recorded on the bench by armrec.py: a flat list of {ms, cmd} replayed with
+  // its original gaps. The gaps are the take — the board's deadman lives on
+  // them — so this is timeouts off one clock, never a loop with waits.
+  const playMove = (name) => {
+    stopPlay();
+    const steps = moves[name] || [];
+    playRef.current = steps.map((st) => setTimeout(() => send(st.cmd), st.ms));
+    playRef.current.push(setTimeout(() => send("arm,"),
+      (steps.length ? steps[steps.length - 1].ms : 0) + ARM_REPEAT_MS));
+  };
+
+  const rehome = () => {
+    travelRef.current = ARM_JOINTS.map(() => 0);
+    setTravel(travelRef.current);
+    send("armz,");
   };
 
   return html`
@@ -666,19 +749,43 @@ function Arm({ onCmd, enabled }) {
         <div class="arm-row" key=${name}>
           <span class="arm-name">${name}</span>
           ${[["◀", -100], ["▶", 100]].map(([glyph, dir]) => html`
-            <button type="button" key=${dir} class="pad-btn arm-btn" disabled=${!enabled}
+            <button type="button" key=${dir} class="pad-btn arm-btn"
+              disabled=${!enabled || atLimit(i, dir)}
               aria-label=${`${name} ${dir < 0 ? "reverse" : "forward"}`}
               onPointerDown=${press(i, dir)} onPointerUp=${release(i)}
               onPointerLeave=${release(i)} onPointerCancel=${release(i)}
               onContextMenu=${(e) => e.preventDefault()}>
               <span class="pad-glyph" aria-hidden="true">${glyph}</span>
             </button>`)}
+          <meter class="arm-travel" min="0" max="100" high="80" optimum="0"
+            value=${Math.min(100, Math.round((Math.abs(travel[i]) / armLimit(name)) * 100))}
+            title=${`${name}: travel used since the last re-home`}
+            aria-label=${`${name} travel used`}></meter>
+          <input type="range" class="arm-hold" disabled=${!enabled}
+            min=${-ARM_HOLD_MAX} max=${ARM_HOLD_MAX} step="1" value=${hold[i]}
+            aria-label=${`${name} hold bias`} title="hold bias — stops the joint sagging"
+            onInput=${(e) => {
+              if (!enabled) return;
+              const v = +e.target.value;
+              setHold((h) => h.map((x, k) => (k === i ? v : x)));
+              onCmd(`armh,${i},${v}`);
+            }} />
+          <span class="arm-hold-v" aria-hidden="true">${hold[i]}</span>
         </div>`)}
+      <div class="arm-moves">
+        ${Object.keys(moves).map((name) => html`
+          <button type="button" key=${name} class="pad-btn arm-move" disabled=${!enabled}
+            onClick=${() => enabled && playMove(name)}>${name}</button>`)}
+        <button type="button" class="pad-btn arm-move" disabled=${!enabled}
+          title="the travel count is dead reckoning — tell it the arm is home"
+          onClick=${() => enabled && rehome()}>RE-HOME</button>
+      </div>
     </div>`;
 }
 
 function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
   const [mode, setMode] = useState("remote");
+  const [sub, setSub] = useState("motors");   // remote splits in two screens: drive pad / arm
   const [padName, setPadName] = useState(null);
   const bodyRef = useRef(null);
   const innerRef = useRef(null);
@@ -828,12 +935,20 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
               class=${mode === m ? "is-active" : ""} onClick=${() => pick(m)}>${label}</button>`)}
         </div>
         ${mode === "remote" ? html`
-          <div class=${"pad" + (armed ? "" : " is-off")}>
-            <span></span>${padBtn("fwd", "▲", "W")}<span></span>
-            ${padBtn("left", "◀", "A")}${padBtn("back", "▼", "S")}${padBtn("right", "▶", "D")}
-          </div>
-          <small class="drive-hint">${hint}</small>
-          <${Arm} onCmd=${onCmd} enabled=${armed} />`
+          ${sub === "motors" ? html`
+            <div class=${"pad" + (armed ? "" : " is-off")}>
+              <span></span>${padBtn("fwd", "▲", "W")}<span></span>
+              ${padBtn("left", "◀", "A")}${padBtn("back", "▼", "S")}${padBtn("right", "▶", "D")}
+            </div>
+            <small class="drive-hint">${hint}</small>`
+          : html`<${Arm} onCmd=${onCmd} enabled=${armed} />`}
+          <div class="conn-seg sub-seg" data-sub=${sub} role="tablist">
+            <span class="conn-seg-thumb"></span>
+            ${[["motors", "MOTORS"], ["arm", "ARM"]].map(([m, label]) => html`
+              <button type="button" key=${m} role="tab" aria-selected=${sub === m}
+                class=${sub === m ? "is-active" : ""}
+                onClick=${() => { if (m !== sub) { if (sub === "arm") onCmd("arm,"); setSub(m); } }}>${label}</button>`)}
+          </div>`
         : mode === "blk" ? html`
           <${BlkCtl} onCmd=${onCmd} onAnalyze=${onAnalyze} enabled=${enabled} busyRef=${busyRef} packetRef=${packetRef} />`
         : html`

@@ -13,7 +13,7 @@
 #define TRIG_PIN 52
 #define ECHO_PIN 50
 
-#define DHT_PIN 71
+#define DHT_PIN A5
 
 #define RELAY_CAM_LED 26
 #define RELAY_STRIP   28
@@ -30,9 +30,10 @@ static const uint8_t RELAY_PINS[] = {RELAY_CAM_LED, RELAY_STRIP, RELAY_LED};
 #define BUZZ_GAP_MS 600
 
 #define OLED_ADDR   0x3C
-#define OLED_I2C_HZ 1000000   // ssd1306 is specced 400k; 1M is the usual overclock and is
-                              // what keeps a full frame near 9ms instead of 23ms. tearing
-                              // or a dark panel = drop it back to 400000.
+#define OLED_I2C_HZ 400000    // the specced clock. 1M is the usual overclock but the panel came
+                              // up dark on it here (2026-09-02) -- it acks at 0x3C either way,
+                              // so raise it again only with the panel in front of you.
+
 
 #define OLED_W 128
 #define OLED_H 64
@@ -40,27 +41,27 @@ U8G2_SSD1306_128X64_NONAME_F_SW_I2C oled(U8G2_R0, U8X8_PIN_NONE, U8X8_PIN_NONE, 
 
 // u8g2's HW_I2C constructor only knows the `Wire` object, and `Wire` is the arm's PCA9685
 // bus and nothing else on purpose (a stalled servo browns the chip out and it clamps SDA).
-// so the panel gets its own byte callback on Wire2 (d9 sda2 / d8 scl2), next to the bh1750.
+// so the panel gets its own byte callback on Wire1 (sda1 d102 / scl1 d101), next to the bme280.
 // the SW_I2C constructor above is only there for its gpio/delay callback -- byte_cb is
 // replaced in setup(), so no pin is ever bit-banged.
-// Wire2's txBuffer is 256B and a tile row is 1 control byte + 128 data, so it fits.
+// Wire1's txBuffer is 256B and a tile row is 1 control byte + 128 data, so it fits.
 
-extern "C" uint8_t oledI2c2(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr) {
+extern "C" uint8_t oledI2c1(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr) {
   switch (msg) {
     case U8X8_MSG_BYTE_SEND:
-      Wire2.write((const uint8_t *)arg_ptr, (int)arg_int);
+      Wire1.write((const uint8_t *)arg_ptr, (int)arg_int);
       break;
     case U8X8_MSG_BYTE_INIT:
-      Wire2.begin();
+      Wire1.begin();
       break;
     case U8X8_MSG_BYTE_SET_DC:
       break;   // i2c carries d/c in the control byte, there is no pin
     case U8X8_MSG_BYTE_START_TRANSFER:
-      Wire2.setClock(u8x8->bus_clock);
-      Wire2.beginTransmission(u8x8_GetI2CAddress(u8x8) >> 1);
+      Wire1.setClock(u8x8->bus_clock);
+      Wire1.beginTransmission(u8x8_GetI2CAddress(u8x8) >> 1);
       break;
     case U8X8_MSG_BYTE_END_TRANSFER:
-      Wire2.endTransmission();
+      Wire1.endTransmission();
       break;
     default: return 0;
   }
@@ -81,7 +82,7 @@ unsigned long lastOledDraw = 0;
 unsigned long lastOledPhase = 0;
 unsigned long lastOledInit = 0;
 
-#define OLED_DRAW_INTERVAL 25   // ~9ms of i2c a frame at 1MHz; 10ms would re-fire on itself
+#define OLED_DRAW_INTERVAL 40   // ~23ms of i2c a frame at 400k; a shorter tick re-fires on itself
 #define OLED_PHASE_INTERVAL 120
 // the panel is a full-buffer device redrawn every tick, so a dark screen is never a lost
 // buffer -- it is the ssd1306's own config gone: begin() landing before the panel's rail
@@ -626,7 +627,7 @@ void setup() {
   luxOk = (Wire2.endTransmission() == 0);
   Serial.println(luxOk ? "BH1750 ok" : "BH1750 not found");
 
-  oled.getU8x8()->byte_cb = oledI2c2;
+  oled.getU8x8()->byte_cb = oledI2c1;
   oled.setI2CAddress(OLED_ADDR << 1);
   oled.setBusClock(OLED_I2C_HZ);
 
@@ -926,6 +927,19 @@ void handleCmd(String c) {
   else if (c.startsWith("go,")) startRoutine(c.substring(3));
   else if (c.startsWith("drv,")) startDrive(c);
   else if (c.startsWith("blk,")) handleBlk(c);
+  else if (c.startsWith("armh,")) {                // bench trim for the hold bias
+    int a = c.indexOf(',', 5);
+    if (a > 0) armSetHold(c.substring(5, a).toInt(), c.substring(a + 1).toInt());
+  }
+  else if (c.startsWith("armz,")) {               // "this is home" — the travel
+    String j = c.substring(5);                     // budget is dead reckoning and
+    armZero(j.length() ? j.toInt() : -1);          // drifts; bare armz, = all joints
+    Serial.println("arm travel zeroed");
+  }
+  else if (c.startsWith("arml,")) {                // bench only: the stops off
+    armLimits = c.substring(5).toInt() != 0;
+    Serial.print("arm limits "); Serial.println(armLimits ? "on" : "OFF");
+  }
   else if (c.startsWith("arm,")) {
     int a = c.indexOf(',', 4);
     if (a < 0) armStopAll();                       // bare "arm," = all joints off
