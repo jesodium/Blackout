@@ -317,6 +317,19 @@ app.post("/api/bridge/stop", (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- arm moves ----
+// Recorded on the bench by armrec.py (python3 server/armrec.py) and replayed by
+// the dashboard as one tap per move — the arrows and hold sliders are the thing
+// that overdrives a joint, so the overdriving happens once, here, off-line.
+// Read-only: recording needs the usb cable, which the dashboard does not have.
+app.get("/api/arm-moves", (req, res) => {
+  try {
+    res.json(JSON.parse(fs.readFileSync(path.join(__dirname, "arm_moves.json"), "utf8")));
+  } catch {
+    res.json({});                    // no file yet = no moves, not a 500
+  }
+});
+
 // ---- workflows ----
 const BLK_DIR = path.join(__dirname, "workflows");
 fs.mkdirSync(BLK_DIR, { recursive: true });

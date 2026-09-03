@@ -8,11 +8,11 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
 
 - `giga-r1/` — Giga R1 WiFi (`main/`): sensor hub + motor driver + BLE
   command endpoint, one board. Reads sensors, broadcasts CSV over BLE notify;
-  DHT11 (temp/humidity, **D71**, A6 -> D74 -> D24 -> D71 all on 2026-09-01 — the lib
-  bit-bangs a one-wire protocol and never calls `analogRead`, so any digital pin does.
-  D71 is in the D54-D75 block, next to the buzzer on D72 — and it is one of the four
-  pins the spi panel drew nothing on (D69/D71/D73/D75, see below), so if temp/humidity
-  read 0 from boot that unexplained failure is the first suspect, not the sensor),
+  DHT11 (temp/humidity, **A5**, A6 -> D74 -> D24 -> D71 -> A5, last move 2026-09-02 — the lib
+  bit-bangs a one-wire protocol and never calls `analogRead`, so any digital-capable pin
+  does; A0-A7 qualify, A8-A11 do not. A5 is SPI2_MISO on the pin map and nothing calls
+  `SPI2`, so it is free — but if the panel ever moves to the stm32 SPI2 fallback below,
+  these two collide),
   BME280 (pressure, 0x76 on **Wire1** — SDA1 D102 /
   SCL1 D101; its own temp/humidity registers go unread) and RCWL-1601
   (ultrasonic, TRIG D52 / ECHO D50), plus GY-302/BH1750 (ambient light, 0x23 on
@@ -122,6 +122,58 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       all no-ops, because a blocking transaction into a browned-out PCA9685 looks
       exactly like a bricked board — silent from boot, USB still enumerated.
       `armBegin()` prints `PCA9685 ok` / `PCA9685 not found`.
+    - **Travel limits are the only stop a 360 can have.** No joint on this arm has
+      an encoder, so a limit cannot be an angle — it is a *run-time budget*:
+      `armTravel[]` integrates `speed x ms` and `limit` in `armSv[]` caps it in
+      **ms at full speed**, signed either way from the last re-home, so a joint's
+      range is 2x that number wide. `ARM_TRAVEL_MS` is 2500 and every row is a
+      **guess until it is measured** — jog a joint to its mechanical end and take
+      the seconds. At the stop that direction becomes a park and **the other one
+      still works**, or the arm traps itself at its own limit with nothing to
+      retrieve it. It is dead reckoning and it **DRIFTS** (a stall, a sag, a hand
+      moving the arm), which is why `armz,<joint>` (bare = all) re-homes the count
+      and why RE-HOME is a button in the arm pad, not a maintenance task.
+      **The hold bias is deliberately not counted** — `armPark()` zeroes
+      `armSpeed[]`, because a hold that balances gravity moves nothing and
+      counting it would drain the budget off a parked arm overnight.
+      The dashboard keeps its own copy of the same count (`ARM_TRAVEL_MS` /
+      `ARM_LIMIT` in `app.js`, and a `<meter>` per row) so the operator watches
+      the stop coming instead of a joint silently refusing; **the board is the
+      authority**, this one is UX. Every arm command in the pad goes through
+      `send()` — one choke point — or a tapped move spends budget the meter never
+      sees. **`?armlimits=off` is the debug arg**: it turns off the browser's
+      stops *and* pushes `arml,0` to the board, re-pushed on every connect because
+      the board boots with them on. `npm run test:arm` checks the integral, the
+      one-directional stop, and that the two copies of the table agree.
+    - **Canned moves are recorded on the bench and replayed as one tap** — the
+      arrows and hold sliders are a live control surface, and a live control
+      surface is how a joint gets overdriven, so the overdriving happens once,
+      off-line. `./cmds/arm-configurator.sh` (:5006, bumps on a busy port) is a
+      flask serial pipe to the
+      **Giga**, not to the Uno bench rig: `main.ino` reads the same command
+      strings off USB that it reads off BLE (`Serial.readStringUntil` in
+      `loop()`), so every line it writes is what the dashboard would have sent.
+      **It speaks either transport, operator's pick** (the USB/BLE buttons on the
+      page, or `--ble` to start there): USB is the bench cable and is instant,
+      BLE is the link the rover actually runs on and a with-response write is
+      round-trip bound at the ~15ms connection interval — so a take recorded over
+      BLE has comp-day timing baked into its gaps. **Only one central can hold
+      the peripheral**, so the dashboard has to drop the link first. The one
+      thing the two transports do differently is the terminator (`wire()`): USB
+      needs the `\n` `readStringUntil` waits for, BLE must not carry one or it
+      rides into the command string. bleak is async and flask is not, so one
+      event loop lives in a daemon thread and `LOCK` keeps writes from
+      interleaving on a link that is round-trip bound.
+      A take is saved to `server/arm_moves.json` as flat `{ms, cmd}` and the
+      dashboard's arm pad turns each one into a button (`/api/arm-moves`).
+      **It records commands, not positions** — same reason as everything else
+      here — so a take replays from wherever the arm is sitting and drifts a
+      little each time; start it from the same pose. **The gaps are the take**:
+      the board's deadman lives on them, so playback is timeouts off one clock,
+      never a loop with waits. A queued step must die on the panic key or space
+      stops the arm and the next step restarts it — that is a `keydown` listener
+      in `Arm`, and the test asserts it. `npm run test:armrec` covers the
+      recorder maths without a board.
     - **`armJog()` has exactly one call site: the BLE `arm,<joint>,<speed>` command.**
       The dashboard's `Arm` pad (`app.js`) holds a button and re-sends every 300ms
       against the board's 800ms deadman; releasing sends `arm,<joint>,0`, and a bare
@@ -130,8 +182,37 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       on the bench. `npm run test:arm` (`server/test-arm.mjs`) re-runs the pulse
       maths, the clamp, the 500-2500us bounds and the deadman in js against the
       constants read out of `arm.h`, and **fails if a second call site appears**.
-    - `ARM_SPAN_US` is **700**, not the nominal 500: the base carries the whole arm
-      and had nothing left at 500. Buzzing at rest means saturated — go back down.
+    - **Swing is per joint** (`span` in `armSv[]`), because pulse width is speed and
+      torque at once and the six joints carry very different loads. The default
+      `ARM_SPAN_US` is **700**, not the nominal 500: the base carries the whole arm
+      and had nothing left at 500. **gripwrist is on 1000** — it moved but fell short
+      of full travel at 700 (2026-09-02), and 1000 is the ceiling on a 1500 neutral
+      before the pulse leaves the 500-2500us bounds. Buzzing at rest means saturated —
+      go back down. Don't raise the default to fix one joint: the base is already near
+      its limit. `npm run test:arm` re-checks the bounds for every row.
+    - **A released joint sags, and neither stopping method prevents it** — a 360
+      outputs zero drive at its neutral and free-wheels with the pulse cut, so a
+      gravity-loaded joint falls either way. The only thing that holds it is a small
+      pulse pushing back up: `hold` in `armSv[]`, in the same -100..100 the pad sends,
+      applied by `armPark()` on release and when the deadman fires. **0 (cut the pulse)
+      is the default and is right for anything unloaded**; shoulder and elbow are the
+      two that sag. The holding band is only a few counts wide and it **moves with the
+      arm's pose**, because gravity torque does: there is no one number that holds at
+      every angle. The cap is **35**. **Measure it, never guess** — jog the joint up at 3, then 5, then 8
+      until it stops sagging, and put that number in with the sign that lifts. Too high
+      is a slow unattended climb into the frame, which is why the test caps `hold` at
+      25. The trade is current: a held joint drives until the next jog or a panic stop.
+      **`armStopAll()` never parks** — space is a true kill (OE dropped, full-off on all
+      16), and the test asserts it stays that way.
+    - **The hold is trimmed live, not by reflashing** — a slider per row in the
+      dashboard's arm pad sends `armh,<joint>,<bias>` and `armSetHold()` applies it
+      straight away (re-parking an idle joint so the change is felt), printing the
+      value to serial. Turn it until the sag stops, then **copy the number into
+      `armSv[]`** — it is RAM only and a reset goes back to the table. The clamp to
+      `ARM_HOLD_MAX` (35) is on the *board*, not just the slider: `armh,` arrives over
+      BLE like anything else. **The jog buttons stay at full ±100** — a gentle pulse is
+      a weak one, and a variable-speed jog is how four working joints once read as
+      nothing; the slider trims the hold only, never the jog.
       `ARM_JOG_MS` 800 is the same deadman the bench page refreshes every 300ms.
 
     Everything below is the bench rig, and the hardware facts carry over.
@@ -146,8 +227,9 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     The duplicated `V+`/`GND` pins on the
     opposite header are the *same nets*, there for daisy-chaining: feed V+ once,
     but do tie a GND to the board (common ground is what makes I2C work at all).
-    `OE` is pulled low already, and the Uno rig leaves it that way; only the Giga
-    wires it (D32, above) for a hardware all-channels-off kill.
+    `OE` is pulled low already, and the Uno rig leaves it that way (confirmed
+    2026-09-02 — `outputs()` there is a no-op and every stop is i2c-only); only the
+    Giga wires it (D32, above) for a hardware all-channels-off kill.
     - **It drives a 6-DOF arm** (**rewired 2026-08-31** — every channel moved, the
       old ch15/12/4/8/11 map is dead): **ch6 base, ch5 shoulder, ch4 elbow, ch3
       wrist, ch12 gripwrist, ch1 gripper**. ch2 is unused. **All six are 360s**,
@@ -598,14 +680,21 @@ in `app.js` (**the index is the wire value** — same order as the enum), and a
 - It takes the panel over the HUD and the operator message both, and the **only**
   things that end it are `scr,0` and a BLE drop — the panel can never be left
   stuck on it with no console to switch it off.
-- The panel is a **4-pin i2c ssd1306 at 0x3C on `Wire2` (d9 sda2 / d8 scl2)**, next to the
-  bh1750, via a custom u8g2 byte callback (`oledI2c2` in `main.ino`) — u8g2's `*_HW_I2C`
+- The panel is a **4-pin i2c ssd1306 at 0x3C on `Wire1` (sda1 d102 / scl1 d101)**, next to
+  the bme280 (moved off Wire2 2026-09-02), via a custom u8g2 byte callback (`oledI2c1` in
+  `main.ino`) — u8g2's `*_HW_I2C`
   constructor only knows the `Wire` object, and `Wire` is the arm's PCA9685 bus alone. The
   `SW_I2C` constructor it is built with is there only for its gpio/delay callback; `byte_cb`
   is replaced in `setup()`, so nothing is bit-banged. **I2C is ~10x slower than the old spi
-  panel**: a full 1KB frame is ~9ms at `OLED_I2C_HZ` 1MHz (~23ms at the specced 400k), so
-  `OLED_DRAW_INTERVAL` is 25ms, not 10 — at 10 the draw re-fires the instant it returns and
-  starves `loop()`. Tearing or a dark panel = drop the clock to 400000 and the tick to 40.
+  panel**: a full 1KB frame is ~23ms at `OLED_I2C_HZ` 400000, so `OLED_DRAW_INTERVAL` is
+  40ms, not 10 — at 10 the draw re-fires the instant it returns and starves `loop()`.
+  **1MHz is the usual ssd1306 overclock and this panel came up dark on it** (2026-09-02) —
+  400k is the specced clock and what works here, so raise it only with the panel in front
+  of you. **A dark panel is almost never the pins**: `giga-r1/i2c_scan/` sweeps all three
+  buses, and 0x3C acking there means address, lines and bus are all fine and the fault is
+  the clock or the charge-pump `delay(100)` before `begin()`. That scan is what settled it
+  on 2026-09-02, after a bus mismatch (panel on Wire1, sketch driving Wire2) and then the
+  clock had each read as "move it to another pin".
   Everything below is the **old 7-pin spi panel** (d13 sck, d11 copi, d10 dc, d12 rst on
   `SPI1`), kept because the pin-map findings still hold if it ever goes back. **Tried to move it
   off the digital header 2026-09-01 and reverted the same day**; what that cost bought:
