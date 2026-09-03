@@ -40,7 +40,11 @@ async function resolveCamUrl(url) {
 }
 
 // ---- frames ----
-const CAM_ROTATE = parseInt(process.env.CAM_ROTATE ?? "270", 10);
+// The mount angle, clockwise degrees, same number the dashboard's ROTATE button
+// holds. env is the boot default; the button overrides it at runtime so a cam
+// flipped mid-session doesn't leave Sage reading sideways stills.
+let CAM_ROTATE = parseInt(process.env.CAM_ROTATE ?? "270", 10);
+const setCamRot = (deg) => { CAM_ROTATE = ((Math.round(deg / 90) * 90 % 360) + 360) % 360; };
 
 const SOI = Buffer.from([0xff, 0xd8]);
 const EOI = Buffer.from([0xff, 0xd9]);
@@ -222,4 +226,4 @@ async function grabFrames(count = 4, gapMs = 1000) {
   return parts;
 }
 
-module.exports = { carveJpeg, upright, grabFrame, eyeParts, grabFrames, setLed, getLed, pingCam, autoLamp, lampStep, rampTo, LAMP_MAX };
+module.exports = { carveJpeg, upright, setCamRot, grabFrame, eyeParts, grabFrames, setLed, getLed, pingCam, autoLamp, lampStep, rampTo, LAMP_MAX };

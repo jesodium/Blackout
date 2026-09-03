@@ -11,8 +11,8 @@ const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
-const { eyeParts, grabFrames, setLed, getLed, pingCam, rampTo, LAMP_MAX } = require("./vision");
-const { parseSage, snapSummary, wantsTool } = require("./sage");
+const { eyeParts, grabFrames, setLed, getLed, pingCam, rampTo, setCamRot, LAMP_MAX } = require("./vision");
+const { parseSage, snapSummary, wantsTool, armMovesFor } = require("./sage");
 const recorder = require("./recorder");
 
 // ---- brains ----
@@ -169,10 +169,11 @@ app.post("/api/chat", async (req, res) => {
       { role: "system", content: CHAT_SYSTEM },
       ...langMsg(lang),
       { role: "system", content: ctx },
-      ...(moves ? [] : [{ role: "system", content: "MOVE LOCK: your drive is locked out right now. Never offer to move or set \"move\" this turn." }]),
+      ...(moves ? armLine() : []),
+      ...(moves ? [] : [{ role: "system", content: "MOVE LOCK: your drive and your arm are locked out right now. Never offer to move, and never set \"move\" or \"arm\" this turn." }]),
       ...mapped,
-    ], { maxTokens: 400 });
-    if (!moves && reply) reply.move = null;
+    ], { maxTokens: 400, confirm: req.body?.confirm === true });
+    if (!moves && reply) { reply.move = null; reply.arm = null; }
     res.json({ reply, steps });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -322,13 +323,34 @@ app.post("/api/bridge/stop", (req, res) => {
 // the dashboard as one tap per move — the arrows and hold sliders are the thing
 // that overdrives a joint, so the overdriving happens once, here, off-line.
 // Read-only: recording needs the usb cable, which the dashboard does not have.
-app.get("/api/arm-moves", (req, res) => {
-  try {
-    res.json(JSON.parse(fs.readFileSync(path.join(__dirname, "arm_moves.json"), "utf8")));
-  } catch {
-    res.json({});                    // no file yet = no moves, not a 500
+// One file per take in arm_moves/, filename = the move's name: a take can be
+// opened, diffed, copied to another rig or deleted in Finder without the
+// recorder running, and there is no index file to fall out of step with it.
+const ARM_DIR = path.join(__dirname, "arm_moves");
+function readArmMoves() {
+  const out = {};
+  let files;
+  try { files = fs.readdirSync(ARM_DIR).sort(); }
+  catch { return out; }              // no folder yet = no moves, not a 500
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    try { out[f.slice(0, -5)] = JSON.parse(fs.readFileSync(path.join(ARM_DIR, f), "utf8")); }
+    catch { }                        // a half-written take is skipped, not fatal
   }
-});
+  return out;
+}
+
+app.get("/api/arm-moves", (req, res) => res.json(armMovesFor(readArmMoves(), "show_in_app")));
+
+// The takes are the whole of Sage's arm, so the list goes into her prompt from
+// the file rather than being written into chat.md — record one in
+// arm-configurator.sh and she can ask for it on the next turn, no edit anywhere.
+function armLine() {
+  const names = Object.keys(armMovesFor(readArmMoves(), "sage_can_use"));
+  return [{ role: "system", content: names.length
+    ? `ARM MOVES the crew recorded — these names, exactly as written, are the only arm moves you can ask for: ${names.map((n) => `"${n}"`).join(", ")}.`
+    : "ARM: nothing has been recorded yet, so you have no arm moves at all. Never set \"arm\", and tell the operator there is nothing recorded if they ask for it." }];
+}
 
 // ---- workflows ----
 const BLK_DIR = path.join(__dirname, "workflows");
@@ -458,6 +480,15 @@ app.post("/api/led", async (req, res) => {
   if (isNaN(v)) return res.status(400).json({ error: "value 0-255 required" });
   try { await setLed(v); res.json({ ok: true, value: v }); }
   catch (err) { res.status(502).json({ error: err.message }); }
+});
+
+// The dashboard's ROTATE button. Sage grabs her own stills, so the mount angle has
+// to reach the server too or a flipped cam leaves her reading sideways frames.
+app.post("/api/cam-rot", (req, res) => {
+  const v = Number(req.body?.value);
+  if (!Number.isFinite(v)) return res.status(400).json({ error: "value in degrees required" });
+  setCamRot(v);
+  res.json({ ok: true, value: v });
 });
 
 // ---- sage ----
@@ -618,7 +649,7 @@ async function askSage(messages, { maxTokens = 400 } = {}) {
     messages,
     max_tokens: maxTokens,
   });
-  const sage = parseSage(resp.choices[0]?.message?.content);
+  const sage = parseSage(resp.choices[0]?.message?.content, armMovesFor(readArmMoves(), "sage_can_use"));
   if (sage.led != null && sage.led !== getLed()) {
     const from = getLed();
 
@@ -636,6 +667,26 @@ async function askSage(messages, { maxTokens = 400 } = {}) {
 
 // one turn can take a few passes, but the last one has to answer
 const MAX_TOOL_STEPS = parseInt(process.env.SAGE_MAX_STEPS || "3", 10);
+
+// ---- tool confirmation ----
+// CONSOLE -> ASK FIRST puts a yes/no card in the operator's feed before Sage's
+// tool actually runs. The flag rides on /api/chat, so it only ever gates the
+// operator's own turns: gating the autonomous analysis would park the loop for a
+// minute with nobody watching the feed.
+// A silent browser reads as NO, same rule as blk's ask/find — a lost tab must
+// never mean "go ahead".
+const CONFIRM_MS = 60000;
+const pendingConfirm = new Map();
+
+function askConfirm(name, arg) {
+  const id = `${Date.now()}-${Math.random()}`;
+  return new Promise((resolve) => {
+    const done = (ok) => { clearTimeout(timer); pendingConfirm.delete(id); resolve(ok); };
+    const timer = setTimeout(() => done(false), CONFIRM_MS);
+    pendingConfirm.set(id, done);
+    io.emit("sage-confirm", { id, name, arg: arg || null, timestamp: Date.now() });
+  });
+}
 
 const SHOT_DIR = path.join(__dirname, "public", "shots");
 fs.mkdirSync(SHOT_DIR, { recursive: true });
@@ -675,13 +726,22 @@ async function runTool(name, arg) {
   return null;
 }
 
-async function agentLoop(messages, { maxTokens = 400 } = {}) {
+async function agentLoop(messages, { maxTokens = 400, confirm = false } = {}) {
   const msgs = messages.slice();
   const steps = [];
   let sage;
   for (let i = 0; i < MAX_TOOL_STEPS; i++) {
     sage = await askSage(msgs, { maxTokens });
     if (!wantsTool(sage, i, MAX_TOOL_STEPS)) break;
+    if (confirm && !(await askConfirm(sage.tool, sage.toolArg))) {
+      const step = { kind: "tool", name: sage.tool, arg: sage.toolArg || null,
+        detail: "operator said no", say: sage.text || null };
+      steps.push(step);
+      emitStep(step);
+      msgs.push({ role: "assistant", content: sage.text || `(reaching for ${sage.tool})` });
+      msgs.push({ role: "user", content: "The operator turned that down. Answer them now from what you already have, and don't reach for anything else this turn." });
+      continue;
+    }
     const out = await runTool(sage.tool, sage.toolArg);
     if (!out) break;
     const step = { kind: "tool", name: sage.tool, arg: out.arg || null, detail: out.detail, img: out.img || null, say: sage.text || null };
@@ -1046,6 +1106,9 @@ io.on("connection", (socket) => {
   socket.on("cmd", (w) => {
     if (w === "stop" || clients.get(socket.id)?.granted) socket.broadcast.emit("cmd", w);
   });
+  // whoever answers first wins — the gate is an operator prompt, not a permission
+  socket.on("sage-confirm-res", (d) => { if (d && d.id) pendingConfirm.get(d.id)?.(!!d.ok); });
+
   socket.on("set-language", (code) => {
     currentLanguage = (code === "es") ? "es" : "en";
     console.log("Language set:", currentLanguage);

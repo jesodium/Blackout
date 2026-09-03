@@ -666,9 +666,14 @@ void setup() {
                                    //  which is what a name-matching central reads
   BLE.setLocalName(BOARD_NAME);    // advertisement name: what a scanner shows
 
-  // 30-50ms: SEND_INTERVAL is 100ms, so a tighter interval buys no latency and
-  // leaves no slack when the venue's 2.4ghz gets busy.
-  BLE.setConnectionInterval(24, 40);
+  // 7.5-15ms. The old 30-50ms was picked off SEND_INTERVAL (100ms) -- but that is
+  // the *telemetry* cadence, and telemetry is not what an operator feels. An
+  // inbound command can only be delivered on a connection event, so the interval
+  // IS the manual-drive latency floor: at 30-50ms a stick move waited up to a
+  // frame before the board even saw it. This is a request, not a setting -- the
+  // central picks the final value (macOS/Chrome usually honours it), so a busy
+  // 2.4ghz venue can still land on the slower end by itself.
+  BLE.setConnectionInterval(6, 12);
   BLE.setAdvertisedService(sensorService);
   sensorService.addCharacteristic(sensorChar);
   sensorService.addCharacteristic(cmdChar);
@@ -945,9 +950,13 @@ void handleCmd(String c) {
   else if (c.startsWith("go,")) startRoutine(c.substring(3));
   else if (c.startsWith("drv,")) startDrive(c);
   else if (c.startsWith("blk,")) handleBlk(c);
-  else if (c.startsWith("armh,")) {                // bench trim for the hold bias
-    int a = c.indexOf(',', 5);
-    if (a > 0) armSetHold(c.substring(5, a).toInt(), c.substring(a + 1).toInt());
+  else if (c.startsWith("armh,")) {                // bench trim: armh,<j>,<hold>[,<sag>]
+    int a = c.indexOf(',', 5);                     // sag is the same bias per 1000ms
+    int b = a > 0 ? c.indexOf(',', a + 1) : -1;    // of travel — one flat number
+    if (a > 0)                                     // cannot hold a joint at every pose
+      armSetHold(c.substring(5, a).toInt(),
+                 c.substring(a + 1, b > 0 ? b : c.length()).toInt(),
+                 b > 0 ? c.substring(b + 1).toInt() : 0);
   }
   else if (c.startsWith("armz,")) {               // "this is home" — the travel
     String j = c.substring(5);                     // budget is dead reckoning and
