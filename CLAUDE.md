@@ -153,6 +153,14 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       **Giga**, not to the Uno bench rig: `main.ino` reads the same command
       strings off USB that it reads off BLE (`Serial.readStringUntil` in
       `loop()`), so every line it writes is what the dashboard would have sent.
+      **It finds the board by SERVICE UUID, never by name** — the same filter the
+      dashboard and the Electron picker use. `main.ino` sets only the
+      advertisement's local name, so the *GAP device name* stayed ArduinoBLE's
+      default `"Arduino"`; bleak's `find_device_by_name()` reads that one, so the
+      BLE mode never found a board that was advertising the whole time
+      (2026-09-02). `BLE.setDeviceName(BOARD_NAME)` now goes out alongside
+      `setLocalName()`, but the service match is the fix — a scanner that matches
+      on a name is one reflash away from lying again.
       **It speaks either transport, operator's pick** (the USB/BLE buttons on the
       page, or `--ble` to start there): USB is the bench cable and is instant,
       BLE is the link the rover actually runs on and a with-response write is
@@ -164,6 +172,13 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       rides into the command string. bleak is async and flask is not, so one
       event loop lives in a daemon thread and `LOCK` keeps writes from
       interleaving on a link that is round-trip bound.
+      **It has to read the board's serial output even though it wants none of
+      it** (2026-09-02): `main.ino` prints the telemetry CSV at 10Hz, and with
+      nothing draining it the tty buffer fills in seconds, `Serial.println()`
+      blocks on a CDC endpoint the host stopped reading, and `loop()` stalls
+      *inside* it — so the command written a moment ago sits unread. That was
+      **60ms a command over the USB cable**, slower than BLE; the discard thread
+      (`_drain()`) puts it at ~1ms. A laggy USB link here is this, never the cable.
       A take is saved to `server/arm_moves.json` as flat `{ms, cmd}` and the
       dashboard's arm pad turns each one into a button (`/api/arm-moves`).
       **It records commands, not positions** — same reason as everything else
@@ -642,6 +657,28 @@ routines below — those are compiled-in tables, BLK is authored on the dashboar
   `node server/test-blk.mjs` is the self-check — it runs a JS mirror of the
   firmware VM against the browser interpreter and asserts the same trace, so
   extend it too, and keep `BOPS` in step with `blkvm.h`.
+
+### BLE stalls are BLE.poll() starvation, never the host
+
+Commands that land fine and then stop landing — or arrive hundreds of ms late,
+in the dashboard, the Electron app and `armrec.py` alike — are the board, and no
+host-side change can touch it. ArduinoBLE on mbed runs the HCI transport in a
+**second thread** that parks received packets in a fixed buffer; the sketch
+thread drains it by calling `BLE.poll()`, and when it fills the controller's
+packets are **dropped, not queued**
+([ArduinoBLE#130](https://github.com/arduino-libraries/ArduinoBLE/issues/130),
+`HCICordioTransport.cpp`). Polling once per `loop()` pass is not enough here: an
+oled frame is ~23ms of i2c and `pulseIn()` sits up to `SONAR_TIMEOUT_US`, both
+longer than the 30-50ms connection interval.
+
+`blePump()` in `main.ino` is the fix — `BLE.poll()` guarded on `bleReady`, called
+from inside the known blockers: the u8g2 byte callback's end-of-transfer (~16 a
+frame, so the 23ms blind spot becomes ~1.5ms), either side of `pulseIn()`, and
+after the dht's ~30ms bit-bang. **Anything new that blocks `loop()` for longer
+than a connection interval has to pump**, the same rule as the draw tick.
+Writes-with-response are ATT-acked from inside `poll()`, so their round-trip time
+is a direct read of whether polling is starved — that is what the bench probe
+measures.
 
 ## Screensavers
 

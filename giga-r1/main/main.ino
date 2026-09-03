@@ -46,6 +46,20 @@ U8G2_SSD1306_128X64_NONAME_F_SW_I2C oled(U8G2_R0, U8X8_PIN_NONE, U8X8_PIN_NONE, 
 // replaced in setup(), so no pin is ever bit-banged.
 // Wire1's txBuffer is 256B and a tile row is 1 control byte + 128 data, so it fits.
 
+// ---- ble pump ----
+// ArduinoBLE on mbed runs the HCI transport in its own thread, parking received
+// packets in a fixed buffer that the SKETCH thread has to drain by calling
+// BLE.poll(). When that buffer fills the controller's packets are DROPPED, not
+// queued (HCICordioTransport.cpp) — so a command never arrives and the link goes
+// quiet for no visible reason, then comes back. Polling once a loop() pass is not
+// enough here: an oled frame is ~23ms of i2c and pulseIn() can sit for
+// SONAR_TIMEOUT_US, both longer than the 30-50ms connection interval.
+// This is why the stall showed up in the dashboard and the Electron app too — it
+// was never the host, and no host-side fix could have touched it.
+// Anything added to loop() that blocks longer than a connection interval pumps.
+bool bleReady = false;                 // poll() before begin() has no transport
+inline void blePump() { if (bleReady) BLE.poll(); }
+
 extern "C" uint8_t oledI2c1(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr) {
   switch (msg) {
     case U8X8_MSG_BYTE_SEND:
@@ -62,6 +76,7 @@ extern "C" uint8_t oledI2c1(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *ar
       break;
     case U8X8_MSG_BYTE_END_TRANSFER:
       Wire1.endTransmission();
+      blePump();       // ~16 of these a frame: the 23ms blind spot becomes ~1.5ms
       break;
     default: return 0;
   }
@@ -647,7 +662,9 @@ void setup() {
     while (1) { Serial.println("BLE init failed"); delay(1000); }
   }
 
-  BLE.setLocalName(BOARD_NAME);
+  BLE.setDeviceName(BOARD_NAME);   // GAP name: without it this stays "Arduino",
+                                   //  which is what a name-matching central reads
+  BLE.setLocalName(BOARD_NAME);    // advertisement name: what a scanner shows
 
   // 30-50ms: SEND_INTERVAL is 100ms, so a tighter interval buys no latency and
   // leaves no slack when the venue's 2.4ghz gets busy.
@@ -657,6 +674,7 @@ void setup() {
   sensorService.addCharacteristic(cmdChar);
   BLE.addService(sensorService);
   BLE.advertise();
+  bleReady = true;                     // blePump() is live from here
   Serial.println("BLE advertising as " BOARD_NAME);
   startPairTune();
 }
@@ -979,7 +997,9 @@ float pingCm() {
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
+  blePump();
   unsigned long us = pulseIn(ECHO_PIN, HIGH, SONAR_TIMEOUT_US);
+  blePump();       // pulseIn blocks to SONAR_TIMEOUT_US with nothing in range
   return us > 0 ? us / 58.0 : -1;
 }
 
@@ -1044,6 +1064,7 @@ void loop() {
     int t = 0, h = 0;
 
     if (dht.readTemperatureHumidity(t, h) == 0) { temp = t; humid = h; }
+    blePump();       // the dht bit-bangs its one-wire protocol for ~30ms
     if (bmeOk) {
       float p = bme.readPressure() / 100.0F;
       if (p > 300 && p < 1100) { pressure = p; bmeMiss = 0; }
