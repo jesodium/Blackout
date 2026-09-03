@@ -32,9 +32,13 @@ MOVES_F = os.path.join(HERE, "arm_moves.json")
 JOINTS = ["base", "shoulder", "elbow", "wrist", "gripwrist", "gripper"]
 REPEAT_MS = 300      # under the board's 800ms ARM_JOG_MS deadman
 REC_MAX = 5000       # a recorder left on overnight must not eat the machine
-ARM_HOLD_MAX = 35    # same cap as ARM_HOLD_MAX in arm.h; the board clamps anyway
+NUDGE_MS = 120       # bench knob: a tap of the small arrows is this long at FULL
+                     # power. Fine control on a loaded joint is a SHORTER burst,
+                     # never a gentler one — pulse width is speed and torque at
+                     # once, so a slow pulse on a 360 is a weak one.
 BOARD_NAME = "BLACKOUT-V3"    # what BLE pairing matches on, same as the dashboard
 BLE_CMD = "19b10002-e8f2-537e-4f6c-d104768a1214"   # cmdChar in main.ino
+BLE_SVC = "19b10000-e8f2-537e-4f6c-d104768a1214"   # sensorService in main.ino
 
 LINK = {"kind": "usb"}        # "usb" | "ble"
 
@@ -54,6 +58,28 @@ def find_port():
 
 ser = None
 LOCK = threading.RLock()
+DRAIN = [False]
+
+
+def _drain():
+    """Read the board's serial output and throw it away, forever.
+
+    IMPORTANT NOTE: nothing here wants the telemetry, but nothing may ignore it
+    either. main.ino prints its CSV line at 10Hz; with no reader the tty input
+    buffer fills in a few seconds, the board's Serial.println() then blocks on a
+    CDC endpoint the host has stopped draining, and loop() stalls inside it — so
+    the command written a moment ago sits unread and every jog lags the button.
+    Measured 2026-09-02: 60ms a command before this, ~1ms after.
+    """
+    while True:
+        s = ser
+        try:
+            if s:
+                s.read(4096)                # returns on `timeout`, data or not
+                continue
+        except Exception:
+            pass                            # closed under us; port() reopens
+        time.sleep(0.05)
 
 
 def port():
@@ -65,6 +91,9 @@ def port():
         # write_timeout: a browned-out board stops draining the CDC buffer and
         # write() blocks forever, wedging the whole server.
         ser = serial.Serial(dev, 9600, timeout=0.2, write_timeout=1)
+        if not DRAIN[0]:
+            DRAIN[0] = True
+            threading.Thread(target=_drain, daemon=True).start()
         time.sleep(2)
     return ser
 
@@ -92,9 +121,23 @@ def _ble_thread():
     loop.run_forever()
 
 
+def is_board(d, ad):
+    """Match the SERVICE, not the name — the same rule the dashboard and the
+    Electron picker use (`filters: [{ services: [BLE_SERVICE] }]`).
+
+    IMPORTANT NOTE: main.ino only calls BLE.setLocalName(), so the GAP device
+    name stays ArduinoBLE's default "Arduino" and only the *advertisement's*
+    local name says BLACKOUT-V3. bleak's find_device_by_name() reads the former,
+    so it never matched and the link read as "not advertising" with the board
+    sitting right there advertising (2026-09-02). The name is the fallback.
+    """
+    return (BLE_SVC in [u.lower() for u in (getattr(ad, "service_uuids", None) or [])]
+            or (getattr(ad, "local_name", None) or "") == BOARD_NAME)
+
+
 async def _ble_connect():
     from bleak import BleakClient, BleakScanner
-    dev = await BleakScanner.find_device_by_name(BOARD_NAME, timeout=12)
+    dev = await BleakScanner.find_device_by_filter(is_board, timeout=12)
     if not dev:
         raise IOError(BOARD_NAME + " not advertising — is the dashboard holding "
                       "the link? only one central at a time")
@@ -230,7 +273,7 @@ button{background:#211d17;color:#ece5d6;border:1px solid #3a342b;border-radius:6
 button:active{background:#3a342b}
 .wide{width:100%}.rec{border-color:#a33}.on{background:#a33}
 #log{color:#8a8072;white-space:pre-wrap;margin-top:10px;min-height:2em}
-.jrow{display:grid;grid-template-columns:1fr auto auto auto 2.5em auto;gap:6px;
+.jrow{display:grid;grid-template-columns:1fr auto auto auto auto;gap:6px;
  align-items:center;margin:6px 0}
 .mv{display:grid;grid-template-columns:1fr auto auto;gap:6px;margin:6px 0;align-items:center}
 </style>
@@ -239,6 +282,10 @@ button:active{background:#3a342b}
  <button id=usb onclick="link('usb')">usb</button>
  <button id=ble onclick="link('ble')">ble</button></div>
 <div id=joints></div>
+<div class=row style=grid-template-columns:1fr>
+ <label><input type=checkbox id=parkchk checked> park on release (hold against gravity)</label></div>
+<div class=row style=grid-template-columns:1fr><span style=color:#8a8072>
+ ◀▶ jog while held &nbsp; ◂▸ tap = %NUDGE%ms at full power, then parked</span></div>
 <div class=row style=grid-template-columns:1fr>
  <button class=wide onclick=send('stop')>■ PANIC STOP</button></div>
 <div class=row>
@@ -265,28 +312,32 @@ function send(c,quiet){const g=gen,stop=(c==='stop'||c==='arm,'||/^arm,\d+,0$/.t
   if(!quiet||t[0]!=='o')log.textContent=c+'  ->  '+t}).catch(e=>log.textContent='!! '+e);
  return q}
 function hold(i,d){return e=>{e.preventDefault();held=[i,d];send('arm,'+i+','+d)}}
-function rel(i){return()=>{if(held&&held[0]===i){held=null;send('arm,'+i+',0')}}}
-// A released 360 free-wheels, so a gravity-loaded joint falls whether the pulse
-// is cut or parked at neutral. The only thing that holds it up is a small pulse
-// pushing back: `armh,<joint>,<bias>`, applied by armPark() on every release.
-// Step it — 3, then 5, then 8 — until the sag stops, then COPY THE NUMBER INTO
-// armSv[] in arm.h. This is RAM on the board; a reset goes back to the table.
-const HMAX=%HMAX%, hv=J.map(()=>0);
+// Park, never bare `arm,` — that one is armStopAll(), a kill of all 16. Parking
+// applies whatever hold bias armSv[]/armh, last set, and that pulse is the only
+// thing holding a gravity-loaded 360 up: released, it free-wheels either way.
+// Unchecked overrides the bias to 0 (limp) and there is no per-joint command to
+// put the table's number back — reset the board for that.
+function park(i){held=null;
+ if(!parkchk.checked)send('armh,'+i+',0',1);
+ send('arm,'+i+',0')}
+function rel(i){return()=>{if(held&&held[0]===i)park(i)}}
+// The small arrows are the big ones at full power for NUDGE ms and then parked,
+// which is how a loaded joint gets moved a little without sagging back down —
+// the two sizes differ in DURATION only. !held lets an arrow press win the
+// pending auto-park; nb makes the last tap the one that parks.
+const NUDGE=%NUDGE%; let nb=0;
+function nudge(i,d){return e=>{e.preventDefault();const n=++nb;
+ send('arm,'+i+','+d);
+ setTimeout(()=>{if(n===nb&&!held)park(i)},NUDGE)}}
 joints.innerHTML=J.map((n,i)=>`<div class=jrow><span>${n}</span>
  <button data-j=${i} data-d=-100>◀</button><button data-j=${i} data-d=100>▶</button>
- <button data-h=${i} data-d=-1>hold−</button><span id=h${i}>0</span>
- <button data-h=${i} data-d=1>hold+</button></div>`).join('');
+ <button data-n=${i} data-d=-100>◂</button><button data-n=${i} data-d=100>▸</button></div>`).join('');
 for(const b of joints.querySelectorAll('[data-j]')){
  const i=+b.dataset.j,d=+b.dataset.d;
  b.onpointerdown=hold(i,d);b.onpointerup=rel(i);b.onpointerleave=rel(i);b.onpointercancel=rel(i);
  b.oncontextmenu=e=>e.preventDefault()}
-// Buttons, not a slider: the holding band is a few counts wide, and a dragged
-// slider would fire an armh, per pointermove down a link that is round-trip
-// bound. The board clamps to ARM_HOLD_MAX either way.
-for(const b of joints.querySelectorAll('[data-h]')){
- const i=+b.dataset.h,d=+b.dataset.d;
- b.onclick=()=>{hv[i]=Math.max(-HMAX,Math.min(HMAX,hv[i]+d));
-  document.getElementById('h'+i).textContent=hv[i];send('armh,'+i+','+hv[i])}}
+for(const b of joints.querySelectorAll('[data-n]'))
+ b.onclick=nudge(+b.dataset.n,+b.dataset.d);
 async function link(to){const r=await fetch('/link?to='+to,{method:'POST'});
  const j=await r.json();if(j.error)log.textContent=j.error;paint(j)}
 async function rec(){const j=await(await fetch('/rec',{method:'POST'})).json();paint(j)}
@@ -322,7 +373,7 @@ def state():
 @app.get("/")
 def index():
     return (PAGE.replace("%JOINTS%", json.dumps(JOINTS))
-                .replace("%REP%", str(REPEAT_MS)).replace("%HMAX%", str(ARM_HOLD_MAX)))
+                .replace("%REP%", str(REPEAT_MS)).replace("%NUDGE%", str(NUDGE_MS)))
 
 
 @app.post("/cmd")
@@ -439,6 +490,18 @@ def selftest():
     assert sent == ["arm,%d,0" % i for i in range(len(JOINTS))], \
         "a take must land parked on the hold, never on bare arm, (that is a kill)"
     assert "arm," not in sent, "bare arm, is armStopAll() and drops the hold"
+    # a nudge longer than the jog repeat is not a nudge, it is a jog
+    assert 0 < NUDGE_MS < REPEAT_MS, "NUDGE_MS must be a burst, not a hold"
+    assert "%" not in index().split("<script>")[0].replace("100%", ""), \
+        "an unsubstituted %PLACEHOLDER% renders as literal text"
+    # the link matched on d.name for months and never found a board: that name is
+    # "Arduino" until main.ino calls setDeviceName()
+    class A:
+        def __init__(self, u=(), n=None): self.service_uuids, self.local_name = list(u), n
+    assert is_board(None, A([BLE_SVC.upper()])), "the service match is case-blind"
+    assert is_board(None, A([], BOARD_NAME)), "the local name is the fallback"
+    assert not is_board(None, A([], "Arduino")), "the GAP default is not a match"
+    assert not is_board(None, A()), "an empty advertisement is not the board"
     print("armrec selftest ok")
 
 
