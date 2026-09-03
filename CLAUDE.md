@@ -122,29 +122,25 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       all no-ops, because a blocking transaction into a browned-out PCA9685 looks
       exactly like a bricked board — silent from boot, USB still enumerated.
       `armBegin()` prints `PCA9685 ok` / `PCA9685 not found`.
-    - **Travel limits are the only stop a 360 can have.** No joint on this arm has
-      an encoder, so a limit cannot be an angle — it is a *run-time budget*:
-      `armTravel[]` integrates `speed x ms` and `limit` in `armSv[]` caps it in
-      **ms at full speed**, signed either way from the last re-home, so a joint's
-      range is 2x that number wide. `ARM_TRAVEL_MS` is 2500 and every row is a
-      **guess until it is measured** — jog a joint to its mechanical end and take
-      the seconds. At the stop that direction becomes a park and **the other one
-      still works**, or the arm traps itself at its own limit with nothing to
-      retrieve it. It is dead reckoning and it **DRIFTS** (a stall, a sag, a hand
-      moving the arm), which is why `armz,<joint>` (bare = all) re-homes the count
-      and why RE-HOME is a button in the arm pad, not a maintenance task.
-      **The hold bias is deliberately not counted** — `armPark()` zeroes
-      `armSpeed[]`, because a hold that balances gravity moves nothing and
-      counting it would drain the budget off a parked arm overnight.
-      The dashboard keeps its own copy of the same count (`ARM_TRAVEL_MS` /
-      `ARM_LIMIT` in `app.js`, and a `<meter>` per row) so the operator watches
-      the stop coming instead of a joint silently refusing; **the board is the
-      authority**, this one is UX. Every arm command in the pad goes through
-      `send()` — one choke point — or a tapped move spends budget the meter never
-      sees. **`?armlimits=off` is the debug arg**: it turns off the browser's
-      stops *and* pushes `arml,0` to the board, re-pushed on every connect because
-      the board boots with them on. `npm run test:arm` checks the integral, the
-      one-directional stop, and that the two copies of the table agree.
+    - **The travel budget is OFF from the dashboard (2026-09-03), by operator
+      request** — the arm now runs unstopped. The *firmware* still has it and
+      `npm run test:arm` still checks it: `armTravel[]` integrates `speed x ms`,
+      `limit` in `armSv[]` caps it in **ms at full speed** signed either way from
+      the last re-home, and at the stop that direction parks while **the other one
+      still works** (or the arm traps itself with nothing to retrieve it). What
+      went is the dashboard half — the `ARM_TRAVEL_MS`/`ARM_LIMIT` copy, the
+      `<meter>` per row, the greyed-out arrow — and the pad now pushes **`arml,0`
+      on every connect**, so the board's stops are off too. The `?armlimits=off`
+      debug arg is gone with it; that is the default now. **The way back is that
+      one line** (`onCmd("arml,0")` in `<Arm/>`'s enabled effect) plus a browser
+      copy of the budget, and `test-arm.mjs` asserts the line is there so it
+      cannot rot silently. RE-HOME stays a button: a board reset boots with the
+      stops back ON until the next connect, and `armz,` clears the count.
+      **The hold bias was never counted** — `armPark()` zeroes `armSpeed[]`,
+      because a hold that balances gravity moves nothing.
+      Every arm command still goes through the one choke point (`armSend()` in
+      `app.js`), which is what the test asserts and where anything that has to see
+      every arm command belongs.
     - **Canned moves are recorded on the bench and replayed as one tap** — the
       arrows and hold sliders are a live control surface, and a live control
       surface is how a joint gets overdriven, so the overdriving happens once,
@@ -179,8 +175,37 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       *inside* it — so the command written a moment ago sits unread. That was
       **60ms a command over the USB cable**, slower than BLE; the discard thread
       (`_drain()`) puts it at ~1ms. A laggy USB link here is this, never the cable.
-      A take is saved to `server/arm_moves.json` as flat `{ms, cmd}` and the
-      dashboard's arm pad turns each one into a button (`/api/arm-moves`).
+      A take is saved as **its own file**, `server/arm_moves/<name>.json`, holding
+      flat `{ms, cmd}` steps plus its two flags; the dashboard's arm pad turns each
+      one into a button (`/api/arm-moves`). **The filename is the name and the
+      folder is the collection** — no index file to fall out of step with it, and a
+      take can be opened, diffed, copied to another rig or deleted in Finder with
+      nothing running. That makes the filename rules the naming rules (`path_of()`
+      refuses a blank, a leading dot and a slash), and it is why a rename is
+      `os.rename` — the steps never pass through it.
+      **A take's clock starts at RECORD, not at the first jog**, so every one of
+      them carried the operator's reaction time as dead air at the head — 2.1s on
+      `Open Gripper`, replayed faithfully as a button that does nothing for two
+      seconds. `clean()` shifts every step by the first one's timestamp on save
+      (the eight takes on disk were migrated 2026-09-03); the **gaps** all
+      survive, because the gaps are the take. The selftest asserts both halves.
+      **A take that only ever drives one joint one way is rendered as a HELD
+      button, not a tape** — `armJogOf()` in `app.js` reads that off the steps, so
+      "Open Gripper" behaves exactly like the gripper arrow and a short recording
+      no longer replays as a twitch. Anything mixed stays a tap-to-replay tape.
+      **Each joint row has a speed slider and the speed is part of the take**
+      (`SPEED_MIN` 20..100, scaling the arrows' +/-100): some moves want slow —
+      lining the gripper up — and some want everything the joint has. It goes out
+      as the ordinary `arm,<j>,<speed>` the firmware already took, so nothing
+      downstream learned a new field: the recorder saves the wire command,
+      `armJogOf()` in `app.js` already replays a HELD take at its recorded speed,
+      and Sage's tapes are unchanged. Kept per rig in `localStorage.armSpd`.
+      **Slow is also weak** — pulse width is speed and torque at once — so a slow
+      setting may not lift a gravity-loaded joint at all; that is the servo, not
+      the slider, and the fix is still a shorter burst at full power. The floor is
+      20 because below ~100us off neutral the pulse is inside the servo deadband
+      and the joint only buzzes; `armrec.py --selftest` checks that against the
+      narrowest `span` in `arm.h`.
       **It records commands, not positions** — same reason as everything else
       here — so a take replays from wherever the arm is sitting and drifts a
       little each time; start it from the same pose. **The gaps are the take**:
@@ -213,22 +238,56 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       is the default and is right for anything unloaded**; shoulder and elbow are the
       two that sag. The holding band is only a few counts wide and it **moves with the
       arm's pose**, because gravity torque does: there is no one number that holds at
-      every angle. The cap is **35**. **Measure it, never guess** — jog the joint up at 3, then 5, then 8
+      every angle — which is why the bias is a **line, not a constant**: `sag` in
+      `armSv[]` is that same -100..100 bias again *per 1000ms of travel*, and
+      `armHoldAt()` applies `hold + sag * armTravel[i]/1000`, clamped to
+      `ARM_HOLD_MAX` either way. `armTravel[]` is the only estimate of pose this
+      arm has (the travel budget's own dead-reckoning count, which is why it
+      keeps integrating with the budget switched off) — so it **drifts, and a
+      stall or a shove makes it wrong**; RE-HOME (`armz,`) is the fix, exactly as
+      it is for the budget. `sag` 0 is the old flat bias and is right for
+      anything unloaded. **Measure it at two poses**: trim `hold` at home, jog the
+      joint out ~2s, trim again — half the difference is `sag`. The test rejects a
+      `sag` steep enough to saturate the clamp inside the joint's own travel
+      budget, because past that point the trim is a knob that has stopped doing
+      anything. The cap is **35**. **Measure it, never guess** — jog the joint up at 3, then 5, then 8
       until it stops sagging, and put that number in with the sign that lifts. Too high
       is a slow unattended climb into the frame, which is why the test caps `hold` at
       25. The trade is current: a held joint drives until the next jog or a panic stop.
       **`armStopAll()` never parks** — space is a true kill (OE dropped, full-off on all
       16), and the test asserts it stays that way.
     - **The hold is trimmed live, not by reflashing** — a slider per row in the
-      dashboard's arm pad sends `armh,<joint>,<bias>` and `armSetHold()` applies it
-      straight away (re-parking an idle joint so the change is felt), printing the
-      value to serial. Turn it until the sag stops, then **copy the number into
-      `armSv[]`** — it is RAM only and a reset goes back to the table. The clamp to
+      dashboard's arm pad sends `armh,<joint>,<bias>[,<sag>]` and `armSetHold()`
+      applies it straight away (re-parking an idle joint so the change is felt),
+      printing both plus the resulting bias *at the current pose* to serial. Two
+      sliders per row: the left is `hold`, the right is `sag`. Turn them until the
+      sag stops at both ends of the joint's travel, then **copy both numbers into
+      `armSv[]`** and into `ARM_HOLD_INIT`/`ARM_SAG_INIT` in `app.js` (the test
+      fails if the two tables drift) — it is RAM only and a reset goes back to the
+      table. The clamp to
       `ARM_HOLD_MAX` (35) is on the *board*, not just the slider: `armh,` arrives over
       BLE like anything else. **The jog buttons stay at full ±100** — a gentle pulse is
       a weak one, and a variable-speed jog is how four working joints once read as
       nothing; the slider trims the hold only, never the jog.
       `ARM_JOG_MS` 800 is the same deadman the bench page refreshes every 300ms.
+    - **The pad is driveable from the gamepad** (2026-09-03): **LB/RB** step the
+      selected joint (six joints, one stick) and the **right stick Y** jogs it —
+      a direction, not a throttle, so it is the same full ±100 the arrows send;
+      a gentle pulse on a 360 is a weak one. It feeds the same `heldRef` the
+      300ms repeat and the deadman already run on. The **wheels park while the
+      ARM tab is open** (`subRef` in `Drive`'s pad loop): one stick, and a jog
+      that also rolls the rover off the bench is how a joint gets wound into the
+      frame. Chrome hides a gamepad from the page until it sends input, so a
+      silent controller reads as no controller.
+    - **Shift-click an arrow to name that direction** — "gripper ▶" says nothing
+      about which way is open. The word renders inside the square and lives in
+      `localStorage.armLabels` (per rig, not in a table anyone has to reflash).
+      It is a `<dialog>`, **never `prompt()`**: Electron never implemented
+      `window.prompt`, so a prompt-based dialog is dead inside the app. For the
+      same class of reason the arrows are greyed with a class and `aria-disabled`
+      rather than `disabled` — **a disabled button emits no pointer events at
+      all**, so the shift-click could never reach the buttons that most needed a
+      name.
 
     Everything below is the bench rig, and the hardware facts carry over.
     **Its two power rails are not the same thing:** `VCC` is chip logic (5V from
@@ -478,13 +537,24 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     rotated frame's coords and `rotBox()` maps them back to raw-frame coords so the
     overlay's inherited css transform still lands them on the object; that mapping is
     a sign error waiting to happen, so `npm run test:detect` checks it off-browser.
-    The -90 in `detect.mjs` and the `rotate()` on `.cam-feed` are the same fact written
-    twice — remount the cam upright and both go together.
-    **The label is drawn counter-rotated +90** for that same reason: inheriting the css
+    **The mount angle is one fact in four places and there is a button for it now**
+    (2026-09-03): ROTATE next to DETECT OBJECTS cycles 0/90/180/270 and drives the
+    `--cam-rot` css var on `.cam-feed`, the frame `detectUpright()` hands the model,
+    the label counter-rotation, and — over `POST /api/cam-rot` → `setCamRot()` in
+    `vision.js` — the still **Sage** is shown. That last one is the trap: rotate only
+    the picture and her vision quietly goes sideways, which is the failure the -90 was
+    there to prevent in the first place. It is kept per rig in `localStorage.camRot`;
+    `CAM_ROTATE` (env) is still the boot default, and `npm run test:detect` asserts all
+    four copies move together and round-trips `rotBox` against its forward map at every
+    angle. Remounting the cam upright is now the button, not an edit.
+    **The label is drawn counter-rotated by `-rot`** for that same reason: inheriting the css
     transform is what keeps the boxes aligned for free, but it also turns the text, so a
     label drawn plainly above a box comes out *beside* it reading bottom-to-top. Cancel
-    the rotation and screen-up becomes canvas +x, which is where the plate goes (and it
-    is clamped into the frame — coco hands back boxes that overhang the edge). Keep it
+    the rotation and screen-up is local -y again. **The plate is anchored on the box
+    centre**, because a centre is the one point that does not move under rotation — no
+    per-angle corner table, and a box coco hung off the edge cannot fling its plate
+    off-screen the way a corner anchor could (the centre is still clamped into the
+    frame). Keep it
     thin and small: the box is the readout, the label only says which box. Detection is on its own 100ms timer with a busy flag rather than off
     the paint path, so a slow machine drops boxes instead of frames — measured 25ms
     warm on webgl (47ms first, 733ms to load the model), against a feed that arrives
@@ -569,6 +639,49 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     **CONSOLE → SAGE MOVES turns it off** (`sageMoves` in localStorage): the flag
     rides on `/api/chat`, so off tells her the drive is locked and she stops offering
     rather than writing cards the dashboard would hide.
+  - **Sage can move the arm, but only when the operator asks for it in words, and
+    only from the takes the crew recorded** — `"arm"` in her json is a take's
+    NAME, one per line, at most three; `parseArm()` in `sage.js` resolves them
+    against `arm_moves/` **server-side** into the flat `{ms, cmd}` tape the
+    pad already replays, so the browser needs no second copy of anything. **There
+    is deliberately no joint jog**: a freeform burst on a 360 with no encoder is
+    exactly what the recorder exists to keep out of her hands, so every arm move
+    she can ask for is one somebody already ran on the bench and kept. An unknown
+    name throws the whole proposal out. The available names go into her prompt
+    from the file (`armLine()`), so recording a take is all it takes to give her
+    one — nothing to edit in `chat.md`, and a name written there would go stale.
+    **"Only when asked" is a prompt rule, not a gate** — the gate is the YES
+    press, exactly like a drive move, and SAGE MOVES off locks the arm too.
+    `armJog()` still has one call site; the tape goes out as ordinary `arm,`
+    commands, so the deadman and the travel budget apply unchanged.
+  - **Each take carries its own two flags** — the bench fills up with debug takes,
+    and a debug take is exactly what should not be one tap away on comp day or in
+    Sage's hands. A take in `arm_moves/<name>.json` is either a bare list of steps
+    (everything recorded before the flags existed — those count as usable
+    everywhere) or `{steps, sage_can_use, show_in_app}`, and `armMovesFor()` in
+    `sage.js` is the one filter: `/api/arm-moves` reads `show_in_app`, Sage's
+    prompt and `parseArm()` read `sage_can_use`. Set them with the two chips per
+    row in the configurator (`/moves/<name>/flag`) — re-recording a take keeps
+    them. **A take's name is its filename, and nothing caches it** —
+    `/api/arm-moves` and Sage's `armLine()` both re-read the folder per call — so
+    clicking a name in the configurator renames it in place
+    (`/moves/<name>/rename`, which refuses a blank, a dot-leading name, a slash
+    and a collision) and both sides pick it up on their next read. **The bench itself plays anything regardless**, flags or not; they only
+    gate the two places a take fires with nobody watching the arm.
+  - **The arm travel ledger lives outside `<Arm/>`** (`armLedger` / `armSend()` /
+    `armPlay()` in `app.js`): the pad unmounts on every tab switch, and a
+    component that unmounts forgets the count — it showed a fresh meter on an arm
+    already at its stop. Sage's arm cards fire from the agent feed with no pad on
+    screen at all. `armSend()` is the choke point the test still asserts on, and
+    the panic key kills the tape from the app root.
+  - **CONSOLE → ASK FIRST gates every tool Sage reaches for** (`sageConfirm` in
+    localStorage, default ON): the flag rides on `/api/chat`, `askConfirm()` in
+    `server.js` parks the agent loop and emits `sage-confirm`, and the browser
+    answers over the socket. **A silent browser reads as NO** after 60s, same rule
+    as blk's `ask`/`find`. It only ever gates the operator's own turns — gating
+    the autonomous analysis would park the loop for a minute with nobody watching
+    the feed. A declined tool is told to her as "the operator turned that down"
+    so she answers from what she has instead of asking again.
   - **Sage can ask for a 10s sensor snapshot** when she isn't sure about something:
     `"snapshot": "<why>"` in her json → `takeSnapshot()` dumps the last 10s of
     `dataHistory` to `public/snapshots/<ts>.json` and logs a summary row.
@@ -790,7 +903,11 @@ conventions:
   `TEST2` and `RUN` (`RUN` is an empty `{END, 0, 0}` placeholder). `MISSION` and
   `TEST2` run on a measured pwm of 103, not `SPEED_SLOW`. All five are wired in
   `startRoutine()` and matched by lowercase name (`"test2"`, `"mission"`, …).
-- Always close with `{END, 0, 0}`.
+- Always close with `{END, 0, 0}`. **There is no arm op** — `Op` is
+  `FWD BACK LEFT RIGHT WAIT ANALYZE END` and the runner has no arm case, and the
+  recorded takes live in `server/arm_moves/` on the PC, not in flash. A
+  routine that works the arm means a new op plus getting the take onto the board;
+  today the arm only ever moves from an `arm,` command over BLE/USB.
 - Add/update the table, then wire it into `startRoutine()` in `main.ino` and
   (if it's a new named routine, not an edit to `RUN`) a dashboard button, per
   the file's own "Adding a routine" note.

@@ -60,16 +60,28 @@
 // MEASURE IT, never guess: jog the joint up at 3, then 5, then 8 until it stops
 // sagging, and put that number here with the sign that lifts.
 //
+// sag is that same bias per 1000ms of travel, and it exists because ONE hold
+// number cannot work: gravity torque on a joint goes with its pose, so a bias
+// that holds the elbow tucked in is not the bias that holds it out at arm's
+// length. armTravel[] is the only estimate of pose this arm has (integrated
+// speed x ms since the last re-home — dead reckoning, and it DRIFTS), so the
+// applied hold is hold + sag * travel/1000, clamped to ARM_HOLD_MAX either way.
+// 0 = the old flat bias. MEASURE IT the same way, at two poses: trim hold at
+// home (that is `hold`), jog the joint out 2s, trim it again (call it B), and
+// sag = (B - hold) / 2. Both are live off `armh,<joint>,<hold>,<sag>`.
+// It is open loop and it is wrong after a stall or a shove — armz, is the fix,
+// same as the travel budget it reads.
+//
 // limit is the travel budget above, per joint, and every one of them is a GUESS
 // until it is measured on the bench (armrec.py prints the run-time of a take).
-struct ArmJoint { uint8_t ch; bool cont; int neutral; int span; int hold; long limit; const char *name; };
+struct ArmJoint { uint8_t ch; bool cont; int neutral; int span; int hold; int sag; long limit; const char *name; };
 ArmJoint armSv[] = {
-  { 6,  true, 1490, ARM_SPAN_US, 0, ARM_TRAVEL_MS, "base"      },   // measured on the bench 2026-08-24
-  { 5,  true, 1500, ARM_SPAN_US, 0, ARM_TRAVEL_MS, "shoulder"  },   // untrimmed; sags — needs a hold
-  { 4,  true, 1500, ARM_SPAN_US, 0, ARM_TRAVEL_MS, "elbow"     },   // untrimmed; sags — needs a hold
-  { 3,  true, 1500, ARM_SPAN_US, 0, ARM_TRAVEL_MS, "wrist"     },   // untrimmed
-  { 12, true, 1500, 1000,        0, ARM_TRAVEL_MS, "gripwrist" },   // short of full travel at 700
-  { 1,  true, 1500, ARM_SPAN_US, 0, 1200,          "gripper"   },   // 360, stripped pot — a gripper
+  { 6,  true, 1490, ARM_SPAN_US, 0, 0, ARM_TRAVEL_MS, "base"      },   // measured on the bench 2026-08-24
+  { 5,  true, 1500, ARM_SPAN_US, 0, 0, ARM_TRAVEL_MS, "shoulder"  },   // untrimmed; sags — needs a hold
+  { 4,  true, 1500, ARM_SPAN_US, 0, 0, ARM_TRAVEL_MS, "elbow"     },   // untrimmed; sags — needs a hold
+  { 3,  true, 1500, ARM_SPAN_US, 0, 0, ARM_TRAVEL_MS, "wrist"     },   // untrimmed
+  { 12, true, 1500, 1000,        0, 0, ARM_TRAVEL_MS, "gripwrist" },   // short of full travel at 700
+  { 1,  true, 1500, ARM_SPAN_US, 0, 0, 1200,          "gripper"   },   // 360, stripped pot — a gripper
                                                                     // closes on a thing and then stalls,
                                                                     // so it gets the shortest budget
 };
@@ -149,10 +161,19 @@ void armZero(int i) {
 // Where a released joint is left: holding itself up, or pulse cut. Anything
 // with a hold keeps drawing current until armStopAll() or the next jog — that
 // is the trade for an arm that does not fall over between moves.
+// The bias this joint needs where it is now: the table's flat hold, leaned on
+// by how far it has travelled since home. Clamped to ARM_HOLD_MAX, or a joint
+// far enough out gets a jog instead of a hold.
+static int armHoldAt(uint8_t i) {
+  return constrain(armSv[i].hold + (int)((long)armSv[i].sag * armTravel[i] / 1000),
+                   -ARM_HOLD_MAX, ARM_HOLD_MAX);
+}
+
 static void armPark(uint8_t i) {
   armAccum(i, millis());
   armSpeed[i] = 0;
-  if (armSv[i].hold) armSetUs(armSv[i].ch, armPulse(i, armSv[i].hold));
+  int hold = armHoldAt(i);
+  if (hold) armSetUs(armSv[i].ch, armPulse(i, hold));
   else armOff(armSv[i].ch);
   armLastCmd[i] = 0;
 }
@@ -172,11 +193,14 @@ void armStopAll() {
 // Bench trim for the hold bias, off the slider in the dashboard's arm pad:
 // turn it until the joint stops sagging, then copy the printed number into
 // armSv[] above — this is RAM only and a reset takes it back to the table.
-void armSetHold(uint8_t i, int v) {
+void armSetHold(uint8_t i, int v, int sag) {
   if (i >= ARM_N) return;
   armSv[i].hold = constrain(v, -ARM_HOLD_MAX, ARM_HOLD_MAX);
+  armSv[i].sag = constrain(sag, -ARM_HOLD_MAX, ARM_HOLD_MAX);
   Serial.print("arm hold "); Serial.print(armSv[i].name);
-  Serial.print(" = "); Serial.println(armSv[i].hold);
+  Serial.print(" = "); Serial.print(armSv[i].hold);
+  Serial.print(" sag "); Serial.print(armSv[i].sag);
+  Serial.print(" -> now "); Serial.println(armHoldAt(i));
   if (!armLastCmd[i]) armPark(i);    // idle: re-park so the change is felt now
 }
 

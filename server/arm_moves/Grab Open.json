@@ -1,0 +1,30 @@
+{
+  "steps": [
+    {
+      "ms": 0,
+      "cmd": "arm,4,-100"
+    },
+    {
+      "ms": 90,
+      "cmd": "arm,4,0"
+    },
+    {
+      "ms": 1260,
+      "cmd": "arm,4,100"
+    },
+    {
+      "ms": 1320,
+      "cmd": "arm,4,0"
+    },
+    {
+      "ms": 1680,
+      "cmd": "arm,4,100"
+    },
+    {
+      "ms": 1860,
+      "cmd": "arm,4,0"
+    }
+  ],
+  "sage_can_use": true,
+  "show_in_app": true
+}
