@@ -45,8 +45,7 @@ const parseMove = (v) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 
 // 360 with no encoder winds itself into the frame, and vetting each move once,
 // off-line, is the whole point of the recorder.
 const ARM_REPEAT_MS = 300;   // gap left between chained takes; must stay under
-                             // ARM_JOG_MS (800) in arm.h so nothing stutters
-const ARM_MAX_TAKES = 3;     // she asks for a move, not a routine
+                             // ARM_JOG_MS in arm.h so nothing stutters
 
 // A take in arm_moves/<name>.json is either a bare list of steps — everything
 // before the flags existed, and those count as usable everywhere — or
@@ -69,7 +68,7 @@ function armMovesFor(all, which) {
 // proposal is a joint turning for a reason nobody wrote down.
 function parseArm(v, moves = {}) {
   const lines = String(v || "").split("\n").map((s) => s.trim()).filter(Boolean);
-  if (!lines.length || lines.length > ARM_MAX_TAKES) return null;
+  if (!lines.length) return null;
   const names = [], tape = [];
   let at = 0;
   for (const line of lines) {
@@ -84,6 +83,20 @@ function parseArm(v, moves = {}) {
   return { text: names.join("\n"), tape };
 }
 
+// ---- tapes ----
+// A whole run the crew drove by hand and kept (server/tapes/). She names ONE,
+// exactly as written, and the operator presses YES — same gate as an arm take,
+// and for the same reason: the driving was vetted once, when it was recorded.
+// One at a time on purpose — a tape is a whole run, so chaining two is a routine
+// nobody has rehearsed.
+function parseTape(v, tapes = {}) {
+  const want = String(v || "").trim().replace(/^play\s+/i, "").toLowerCase();
+  if (!want || want.includes("\n")) return null;
+  const key = Object.keys(tapes).find((k) => k.toLowerCase() === want);
+  const steps = key && Array.isArray(tapes[key]) ? tapes[key] : null;
+  return steps && steps.length ? { text: key, tape: steps } : null;
+}
+
 function parseFinding(v) {
   const s = typeof v === "string" ? v.trim() : "";
   return s ? s.slice(0, 140) : null;
@@ -91,7 +104,7 @@ function parseFinding(v) {
 
 const wantsTool = (sage, step, max) => !!(sage && sage.tool) && step < max - 1;
 
-function parseSage(raw, armMoves) {
+function parseSage(raw, armMoves, tapes) {
   const s = String(raw || "").trim();
   const start = s.indexOf("{"), end = s.lastIndexOf("}");
   if (start !== -1 && end > start) {
@@ -107,10 +120,11 @@ function parseSage(raw, armMoves) {
         snapshot: parseSnapshot(o.snapshot),
         move: parseMove(o.move),
         arm: parseArm(o.arm, armMoves),
+        tape: parseTape(o.tape, tapes),
       };
     } catch {  }
   }
-  return { text: s, status: null, action: null, tool: null, toolArg: null, led: null, finding: null, snapshot: null, move: null, arm: null };
+  return { text: s, status: null, action: null, tool: null, toolArg: null, led: null, finding: null, snapshot: null, move: null, arm: null, tape: null };
 }
 
-module.exports = { parseSage, snapSummary, wantsTool, SAGE_TOOLS, parseArm, armMovesFor, ARM_REPEAT_MS, ARM_MAX_TAKES };
+module.exports = { parseSage, snapSummary, wantsTool, SAGE_TOOLS, parseArm, parseTape, armMovesFor, ARM_REPEAT_MS };

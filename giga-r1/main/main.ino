@@ -22,6 +22,8 @@
 #define RELAY_OFF HIGH
 static const uint8_t RELAY_PINS[] = {RELAY_CAM_LED, RELAY_STRIP, RELAY_LED};
 
+#define LOOP_STALL_MS 150   // ~10 connection intervals at 7.5-15ms
+
 #define BUZZ_PIN 72
 #define BUZZ_SOUND LOW
 #define BUZZ_IDLE  HIGH
@@ -59,6 +61,58 @@ U8G2_SSD1306_128X64_NONAME_F_SW_I2C oled(U8G2_R0, U8X8_PIN_NONE, U8X8_PIN_NONE, 
 // Anything added to loop() that blocks longer than a connection interval pumps.
 bool bleReady = false;                 // poll() before begin() has no transport
 inline void blePump() { if (bleReady) BLE.poll(); }
+
+// ---- black box ----
+// Why the link died, readable AFTER the fact. A BLE drop leaves the sketch
+// running, so a RAM ring outlives every drop that is not a reset — and a reset
+// is the one thing the ring can never hold, which is what RCC->RSR at boot is
+// for: it names what reset the board (brownout / watchdog / pin / power-on)
+// before setup() clears it. Together those split "the host lost the link" from
+// "the board rebooted under you", which is the whole question.
+// The dashboard asks for a dump on every connect, so the reason for the LAST
+// drop is on screen before the next run starts.
+// IMPORTANT NOTE: RAM only — a power cut takes the ring with it (the boot line
+// survives regardless, it is a register). If a power cut ever turns out to be
+// the common case, the upgrade is the RTC backup registers (32 words that
+// survive reset), not a bigger ring.
+#define LOG_N 48
+enum LogCode : uint8_t { LOG_BOOT, LOG_BLE_UP, LOG_BLE_DOWN, LOG_STALL, LOG_NOTIFY_FAIL };
+struct LogEvt { uint32_t ms; uint32_t arg; uint8_t code; };
+LogEvt logRing[LOG_N];
+uint8_t logHead = 0;          // next slot to write
+uint16_t logCount = 0;        // total ever logged, so a full ring still says how many were lost
+uint32_t resetBits = 0;
+
+void logEvt(uint8_t code, uint32_t arg = 0) {
+  logRing[logHead] = { millis(), arg, code };
+  logHead = (logHead + 1) % LOG_N;
+  logCount++;
+}
+
+// the reset flags are one register and a handful of bits; decoding them here
+// keeps the dashboard free of a second copy that could drift.
+String resetWhy(uint32_t r) {
+  String s = "";
+  if (r & RCC_RSR_LPWR1RSTF) s += "lowpower ";
+  if (r & RCC_RSR_WWDG1RSTF) s += "windowdog ";
+  if (r & RCC_RSR_IWDG1RSTF) s += "watchdog ";
+  if (r & RCC_RSR_SFT1RSTF)  s += "software ";
+  if (r & RCC_RSR_PORRSTF)   s += "poweron ";
+  if (r & RCC_RSR_BORRSTF)   s += "brownout ";
+  if (r & RCC_RSR_PINRSTF)   s += "pin ";
+  return s.length() ? s : "unknown";
+}
+
+const char *logName(uint8_t c) {
+  switch (c) {
+    case LOG_BOOT:        return "boot";
+    case LOG_BLE_UP:      return "ble up";
+    case LOG_BLE_DOWN:    return "ble down";
+    case LOG_STALL:       return "loop stall";
+    case LOG_NOTIFY_FAIL: return "notify failed";
+  }
+  return "?";
+}
 
 extern "C" uint8_t oledI2c1(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr) {
   switch (msg) {
@@ -622,6 +676,9 @@ void tickPanel() {
 
 // ---- setup ----
 void setup() {
+  resetBits = RCC->RSR;            // read before anything clears it
+  RCC->RSR |= RCC_RSR_RMVF;        // and clear, or every later boot reads this one
+  logEvt(LOG_BOOT, resetBits);
   Serial.begin(9600);
   Serial.setTimeout(50);
   pinMode(TRIG_PIN, OUTPUT);
@@ -944,6 +1001,34 @@ void tickRoutine() {
   applyStep(routine[stepIdx]);
 }
 
+// one line per event, formatted HERE so the dashboard needs no second copy of
+// the code table. Pumps between lines: a full ring is 48 notifies back to back.
+void dumpLog() {
+  uint16_t lost = logCount > LOG_N ? logCount - LOG_N : 0;
+  uint8_t n = logCount < LOG_N ? logCount : LOG_N;
+  uint8_t i = logCount < LOG_N ? 0 : logHead;
+  String head = "E:log,0,up ";
+  head += millis() / 1000;
+  head += "s, last reset ";
+  head += resetWhy(resetBits);
+  if (lost) { head += ", "; head += lost; head += " older events lost"; }
+  Serial.println(head);
+  if (bleConnected) sensorChar.writeValue(head);
+  for (uint8_t k = 0; k < n; k++, i = (i + 1) % LOG_N) {
+    String l = "E:log,";
+    l += logRing[i].ms;
+    l += ",";
+    l += logName(logRing[i].code);
+    if (logRing[i].code == LOG_BOOT) { l += " ("; l += resetWhy(logRing[i].arg); l += ")"; }
+    else if (logRing[i].arg) { l += " "; l += logRing[i].arg; l += "ms"; }
+    Serial.println(l);
+    if (bleConnected) sensorChar.writeValue(l);
+    blePump();
+  }
+  Serial.println("E:logend");
+  if (bleConnected) sensorChar.writeValue("E:logend");
+}
+
 void handleCmd(String c) {
   c.trim();
   if (c == "stop") stopRoutine();
@@ -962,10 +1047,6 @@ void handleCmd(String c) {
     String j = c.substring(5);                     // budget is dead reckoning and
     armZero(j.length() ? j.toInt() : -1);          // drifts; bare armz, = all joints
     Serial.println("arm travel zeroed");
-  }
-  else if (c.startsWith("arml,")) {                // bench only: the stops off
-    armLimits = c.substring(5).toInt() != 0;
-    Serial.print("arm limits "); Serial.println(armLimits ? "on" : "OFF");
   }
   else if (c.startsWith("arm,")) {
     int a = c.indexOf(',', 4);
@@ -990,6 +1071,10 @@ void handleCmd(String c) {
     if (!saver) updateOled();
   }
 
+  else if (c.startsWith("log")) {                   // "log," dumps, "log,clear" wipes
+    if (c.endsWith("clear")) { logHead = 0; logCount = 0; logEvt(LOG_BOOT, resetBits); }
+    dumpLog();
+  }
   else if (c.startsWith("scr,")) { startSaver(c.substring(4).toInt()); updateOled(); }
   else if (c.startsWith("oled,")) {
     String msg = c.substring(5);
@@ -1035,12 +1120,22 @@ float medianPingCm() {
 
 // ---- loop ----
 void loop() {
+  // a pass longer than a couple of connection intervals is BLE.poll() starvation
+  // — the thing that drops commands and can look exactly like a disconnect, so
+  // the log has to name it or the ring only ever says "ble down" with no cause.
+  static unsigned long lastPass = 0;
+  unsigned long pass = millis();
+  if (lastPass && pass - lastPass > LOOP_STALL_MS) logEvt(LOG_STALL, pass - lastPass);
+  lastPass = pass;
+
   BLE.poll();
 
   bool nowConnected = BLE.central();
   if (nowConnected != bleConnected) {
     bleConnected = nowConnected;
+    unsigned long was = connectAt;
     connectAt = millis();
+    logEvt(bleConnected ? LOG_BLE_UP : LOG_BLE_DOWN, connectAt - was);
     Serial.println(bleConnected ? "BLE central connected" : "BLE central gone");
 
     if (!bleConnected) { hudLevel = ""; hudMetrics = ""; saver = SCR_OFF; startPairTune(); }
@@ -1103,5 +1198,5 @@ void loop() {
   line += lux;
 
   Serial.println(line);
-  sensorChar.writeValue(line);
+  if (!sensorChar.writeValue(line) && bleConnected) logEvt(LOG_NOTIFY_FAIL);
 }

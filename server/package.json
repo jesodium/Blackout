@@ -21,6 +21,7 @@
     "test:face": "node test-sageface.mjs",
     "test:matrix": "node test-matrix.mjs",
     "test:padnav": "node test-padnav.mjs",
+    "test:blackbox": "node test-blackbox.mjs",
     "test:icons": "node test-icons.mjs",
     "test:rec": "node test-rec.js",
     "test:elev": "node test-elev.mjs",
@@ -28,8 +29,10 @@
     "test:mjpeg": "node test-mjpeg.mjs",
     "test:detect": "node test-detect.mjs",
     "test:arm": "node test-arm.mjs",
+    "test:tape": "node test-tape.mjs",
     "test:armrec": "python3 armrec.py --selftest",
-    "test:sonar": "node test-sonar.mjs"
+    "test:sonar": "node test-sonar.mjs",
+    "test:demo": "node test-demo.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

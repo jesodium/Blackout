@@ -47,6 +47,24 @@ const SENSORS = [
 
 const reads = (s, v) => v != null && !isNaN(v) && (v !== 0 || s.zeroOk);
 
+// ---- demo mode ----
+// a sensor that dies mid-run blanks its tile and drags the verdict to NOT READING, in front of
+// the judges. Demo mode fills those in with plausible drifting numbers so the run carries on.
+// dist is deliberately absent: the sonar is what the rover steers on, and a faked wall is worse
+// than a blank one. Browser-side only — nothing fake reaches the server's history or Sage.
+const DEMO_RANGE = { temp: [28, 30], humid: [60, 70], alt: [-1, 0], pressure: [999.5, 1000.5], lux: [2, 15] };
+const DEMO_KEYS = Object.keys(DEMO_RANGE);
+const demoVal = (key, now = Date.now()) => {
+  const [lo, hi] = DEMO_RANGE[key];
+  const p = (Math.sin(now / 9000 + DEMO_KEYS.indexOf(key) * 1.7) + 1) / 2;  // slow wander, no state to keep
+  return lo + p * (hi - lo);
+};
+const demoFill = (pkt, now) => {
+  const out = { ...pkt };
+  for (const s of SENSORS) if (DEMO_RANGE[s.key] && !reads(s, out[s.key])) out[s.key] = demoVal(s.key, now);
+  return out;
+};
+
 const PKT_STALE_MS = 3000;
 
 // ---- voice commands ----
@@ -633,9 +651,14 @@ const VERB_MIX = { fwd: [1, 1], back: [-1, -1], left: [1, -1], right: [-1, 1] };
 // ---- arm ----
 // Every joint is a 360 with no encoder or end stop, so there is no "go to 45deg":
 // a button held sends the same jog over and over and the board's deadman
-// (ARM_JOG_MS, 800ms) kills the pulse the moment the repeats stop — a closed tab
+// (ARM_JOG_MS, 3s) kills the pulse the moment the repeats stop — a closed tab
 // or a dropped link must not outlive the hand on the button.
 const ARM_REPEAT_MS = 300;
+// A tap is a ~60ms burst, and 60ms of a 360 is nothing you can see — which is
+// what "I press it and it does nothing" is. The stop is held back so a press is
+// worth at least this long; it is under the board's ARM_JOG_MS deadman, so
+// nothing has to be re-sent to cover the gap.
+const ARM_MIN_JOG_MS = 250;
 const ARM_PAD_DZ = 0.35;   // stick deadzone for the arm — wider than Drive's, a nudge must not jog
 const ARM_JOINTS = ["base", "shoulder", "elbow", "wrist", "gripwrist", "gripper"];
 // The hold/sag trim is NOT on this pad (removed 2026-09-03, operator's call).
@@ -681,6 +704,171 @@ function armRehome(onCmd) {
   armSend("armz,", onCmd);
 }
 
+// ---- tapes ----
+// A whole manual run written down. sendCmd is the one place every command leaves
+// the browser, so recording is a tap there — drive, arm, lights, routines, all of
+// it, with the gaps. A step is the arm take's {ms, cmd}, so the player below is
+// the arm player with one branch added: a cmd starting with "@" never reaches the
+// board, it is one of the things only the PC has (say/analyze/log/led), typed in
+// by hand when the tape is edited. English-only on purpose: bench tool.
+// `name` rides along because the component unmounts with the drawer — see Tapes().
+const tapeRec = { on: false, t0: 0, steps: [], name: "" };
+const tapeStart = (name) => { tapeRec.on = true; tapeRec.t0 = Date.now(); tapeRec.steps = []; tapeRec.name = name; };
+const tapeWatch = (cmd) => {
+  // blk upload chatter is not a move — a workflow is its own file already
+  if (tapeRec.on && !cmd.startsWith("blk,")) tapeRec.steps.push({ ms: Date.now() - tapeRec.t0, cmd });
+};
+// the clock starts at REC, so every take carries the operator's reaction time as
+// dead air at the head. Shift to the first step — the GAPS are the take, the head
+// is not. Same rule as armrec.py's clean().
+const tapeStop = () => {
+  tapeRec.on = false;
+  const t0 = tapeRec.steps.length ? tapeRec.steps[0].ms : 0;
+  const out = tapeRec.steps.map(s => ({ ...s, ms: s.ms - t0 }));
+  tapeRec.steps = [];          // a second stop must not save the last take again
+  return out;
+};
+
+const TAPE_EVENTS = ["sage", "say", "analyze", "log", "led"];
+const TAPE_LINE_MS = 6000;   // she gets this long to answer; after it, the cue
+
+// "@say" is a script — the same words every run, and it sounds like it.
+// "@sage" is a CUE: she writes the sentence herself off the cue and whatever the
+// rover can read at the time, so a rehearsed run still comes out different every
+// time and grounded in the room. The ask goes out when the tape STARTS, not when
+// the step fires — waiting two seconds for a model in the middle of a
+// presentation is dead air — and whatever hasn't landed by then falls back to
+// speaking the cue as written. The venue has no internet, so that fallback is
+// the normal case, not the unhappy one: a tape always talks.
+function tapeCue(cue) {
+  const slot = { line: null };
+  fetch("/api/tape-line", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cue, lang: getLang() }), signal: AbortSignal.timeout(TAPE_LINE_MS),
+  }).then(r => r.json()).then(d => { slot.line = d.text || null; }).catch(() => {});
+  return slot;
+}
+
+function tapeStep(cmd, io, cues) {
+  if (!cmd.startsWith("@")) return void armSend(cmd, io.onCmd);
+  const m = /^@(\w+)\s*([^]*)$/.exec(cmd);
+  const kind = m?.[1], text = (m?.[2] || "").trim();
+  if (kind === "sage") {
+    // whatever is in hand right now — never a wait, this is live
+    const line = cues?.get(text)?.line || text;
+    io.onNote?.(line);
+    speak(line);
+  }
+  else if (kind === "say") speak(text);
+  else if (kind === "analyze") io.onAnalyze?.(null, text || null);
+  else if (kind === "log") io.onNote?.(text);
+  else if (kind === "led") fetch("/api/led", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: +text || 0 }) }).catch(() => {});
+  else io.onNote?.(`tape: unknown event ${cmd}`);
+}
+
+// Timeouts off one clock, never a loop with waits — the board's deadman lives on
+// the gaps. Shares armLedger.tape, so the panic key kills a tape mid-run exactly
+// as it kills an arm take.
+function tapePlay(steps, io) {
+  armStopTape();
+  const cues = new Map();
+  for (const st of steps) {
+    const cue = st.cmd.startsWith("@sage") ? st.cmd.slice(5).trim() : null;
+    if (cue && !cues.has(cue)) cues.set(cue, tapeCue(cue));
+  }
+  const last = steps.length ? steps[steps.length - 1].ms : 0;
+  armLedger.tape = steps.map(st => setTimeout(() => tapeStep(st.cmd, io, cues), st.ms));
+  armLedger.tape.push(setTimeout(() => { io.onCmd("stop"); armSend("arm,", io.onCmd); }, last + ARM_REPEAT_MS));
+  return last + ARM_REPEAT_MS;
+}
+
+function Tapes({ onCmd, onAnalyze, onNote, enabled }) {
+  const [files, setFiles] = useState([]);
+  // Seeded from the module flag, not false: the drawer unmounts this whole
+  // component when the console is closed (or another tab is picked), and the arm
+  // pad is BEHIND the drawer — so recording a run means closing the console
+  // mid-take. tapeRec lives outside the component and keeps recording; this is
+  // what makes it come back reading ■ STOP + SAVE instead of wiping the take.
+  const [rec, setRec] = useState(tapeRec.on);
+  const [name, setName] = useState(tapeRec.on ? tapeRec.name : "");
+  const [edit, setEdit] = useState(null);      // { name, text } — the raw json
+  const [err, setErr] = useState("");
+  const load = () => fetch("/api/tapes").then(r => r.json()).then(d => setFiles(d.files || [])).catch(() => {});
+  useEffect(() => { load(); }, []);   // load() returns a promise; React calls an effect's return value as cleanup
+
+  const save = async (n, steps) => {
+    const r = await fetch(`/api/tapes/${encodeURIComponent(n)}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ steps }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return void setErr(d.error || "save failed");
+    setErr(""); load();
+    return true;
+  };
+
+  const stop = async () => {
+    const steps = tapeStop();
+    setRec(false);
+    if (!steps.length) return void setErr("nothing was sent — nothing to save");
+    await save(name.trim() || "take", steps);
+    setName("");
+  };
+
+  const open = async (n) => {
+    const r = await fetch(`/api/tapes/${encodeURIComponent(n)}`);
+    setEdit({ name: n, text: await r.text() });
+    setErr("");
+  };
+
+  const saveEdit = async () => {
+    let parsed;
+    try { parsed = JSON.parse(edit.text); } catch (e) { return void setErr("bad json: " + e.message); }
+    if (await save(edit.name, parsed.steps || parsed)) setEdit(null);
+  };
+
+  const del = async (n) => {
+    if (!confirm(`Delete tape "${n}"?`)) return;
+    await fetch(`/api/tapes/${encodeURIComponent(n)}`, { method: "DELETE" });
+    if (edit?.name === n) setEdit(null);
+    load();
+  };
+
+  return html`
+    <div class="tapes">
+      <div class="tapes-bar">
+        <input class="tapes-name" placeholder="tape name" value=${name} disabled=${rec}
+          onInput=${(e) => setName(e.target.value)} />
+        <button type="button" class=${"btn" + (rec ? " is-rec" : "")} disabled=${!enabled && !rec}
+          onClick=${() => (rec ? stop() : (tapeStart(name.trim()), setErr(""), setRec(true)))}>
+          ${rec ? "■ STOP + SAVE" : "● RECORD"}
+        </button>
+        <span class="tapes-hint">${rec ? "recording every command — drive, arm, lights" : `add by hand: @sage <what to talk about — she writes the line> · ${TAPE_EVENTS.slice(1).map(e => "@" + e).join(" ")}`}</span>
+      </div>
+      ${err && html`<div class="tapes-err">${err}</div>`}
+      <ul class="tapes-list">
+        ${files.map(n => html`<li key=${n} class="tapes-row">
+          <span class="tapes-row-name">${n}</span>
+          <button type="button" class="serial-btn" disabled=${!enabled || rec}
+            onClick=${async () => {
+              const r = await fetch(`/api/tapes/${encodeURIComponent(n)}`);
+              const d = await r.json().catch(() => null);
+              if (d) tapePlay(d.steps || [], { onCmd, onAnalyze, onNote });
+            }}>▶ PLAY</button>
+          <button type="button" class="serial-btn" onClick=${() => open(n)}>EDIT</button>
+          <button type="button" class="serial-btn" onClick=${() => del(n)}>✕</button>
+        </li>`)}
+      </ul>
+      ${edit && html`<div class="tapes-edit">
+        <textarea class="tapes-json" spellcheck="false" value=${edit.text}
+          onInput=${(e) => setEdit({ ...edit, text: e.target.value })}></textarea>
+        <div class="tapes-bar">
+          <button type="button" class="btn" onClick=${saveEdit}>SAVE ${edit.name}</button>
+          <button type="button" class="serial-btn" onClick=${() => setEdit(null)}>CLOSE</button>
+        </div>
+      </div>`}
+    </div>`;
+}
+
 // Shift-click an arrow to name it. "gripper ▶" says nothing about which way is
 // open — the crew's own word for it does, and it is per rig, so it lives in
 // localStorage rather than in a table someone has to edit and reflash.
@@ -704,6 +892,10 @@ const armJogOf = (steps) => {
 // neutral (1490) sits off-centre in the servo's own deadband, so the same
 // magnitude clears it going one way and dies going the other. 55 is above
 // break-away both ways. The real fix is trimming that neutral on the bench.
+// R2 boost cap. 255 is everything the L298N has; below MANUAL_PWM the boost
+// would be slower than no boost at all, which is why the low chip is 140.
+const BOOSTS = [["140", 140], ["200", 200], ["255", 255]];
+const BOOST_KEY = "boostPwm";
 const ARM_SPEEDS = [["SLOW", 55], ["MED", 75], ["FAST", 100]];
 const ARM_SPD_KEY = "armPadSpd";
 
@@ -712,6 +904,7 @@ const armLabelsLoad = () => { try { return JSON.parse(localStorage.getItem(ARM_L
 
 function Arm({ onCmd, enabled }) {
   const heldRef = useRef(null);
+  const downRef = useRef(0);
   const [moves, setMoves] = useState({});
   // which joint the gamepad drives. Six joints and one stick, so the pad picks
   // one at a time; the on-screen arrows still work on any row and set this too.
@@ -732,10 +925,6 @@ function Arm({ onCmd, enabled }) {
 
   useEffect(() => {
     if (!enabled) { armStopTape(); return; }
-    // The board boots with its travel stops ON and they are off here, so this is
-    // re-pushed on every connect — same as the buzzer mute. A board reset brings
-    // them back until the next connect, and RE-HOME clears the count meanwhile.
-    onCmd("arml,0");
     const id = setInterval(() => {
       const h = heldRef.current;
       if (!h) return;
@@ -790,14 +979,19 @@ function Arm({ onCmd, enabled }) {
     setSel(i);
     if (nameable && e.shiftKey) { setRen({ i, dir }); return; }
     if (!enabled) return;
+    downRef.current = Date.now();
     heldRef.current = [i, jog(dir)];
     armSend(`arm,${i},${jog(dir)}`, onCmd);   // first one now, the interval only repeats it
   };
-  // release stops the joint outright rather than waiting out the deadman
+  // release stops the joint outright rather than waiting out the deadman — but
+  // never before ARM_MIN_JOG_MS, or a tap is a burst too short to see. A press
+  // that lands in the meantime owns the joint, so the late stop drops itself.
   const release = (i) => () => {
     if (heldRef.current?.[0] !== i) return;
     heldRef.current = null;
-    armSend(`arm,${i},0`, onCmd);
+    const left = ARM_MIN_JOG_MS - (Date.now() - downRef.current);
+    if (left > 0) setTimeout(() => { if (!heldRef.current) armSend(`arm,${i},0`, onCmd); }, left);
+    else armSend(`arm,${i},0`, onCmd);
   };
 
   return html`
@@ -883,6 +1077,10 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
   const keysRef = useRef(new Set());
   const moving = useRef(false);
   const sqWas = useRef(false);
+  // R2 boost cap, per rig — the ceiling the pad's trigger drives at
+  const [boost, setBoost] = useState(() => +localStorage.getItem(BOOST_KEY) || BOOSTS[1][1]);
+  const boostRef = useRef(boost);
+  boostRef.current = boost;
   const analyzeRef = useRef(onAnalyze);
   analyzeRef.current = onAnalyze;
 
@@ -920,7 +1118,6 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
   }, [onCmd]);
 
   const MANUAL_PWM = 110;
-  const TURBO_PWM = 200;
   const SPIN_SCALE = 0.45;
 
   const DEADZONE = 0.15;
@@ -936,7 +1133,7 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
       const pad = [...navigator.getGamepads()].find(Boolean);
 
       const turbo = !!pad && (pad.buttons[7]?.pressed || (pad.buttons[7]?.value ?? 0) > 0.35);
-      const cap = turbo ? TURBO_PWM : MANUAL_PWM;
+      const cap = turbo ? boostRef.current : MANUAL_PWM;
       let l = 0, r = 0;
       if (pad) {
         const sq = !!pad.buttons[2]?.pressed;
@@ -1026,7 +1223,14 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
               <span></span>${padBtn("fwd", "▲", "W")}<span></span>
               ${padBtn("left", "◀", "A")}${padBtn("back", "▼", "S")}${padBtn("right", "▶", "D")}
             </div>
-            <small class="drive-hint">${hint}</small>`
+            <small class="drive-hint">${hint}</small>
+            <div class="arm-spd boost-row">
+              <span class="label">R2</span>
+              ${BOOSTS.map(([lbl, v]) => html`
+                <button type="button" key=${v} class=${"chip" + (boost === v ? " is-on" : "")}
+                  aria-pressed=${boost === v} title="pwm cap while the R2 trigger is held"
+                  onClick=${() => { setBoost(v); localStorage.setItem(BOOST_KEY, v); }}>${lbl}</button>`)}
+            </div>`
           : html`<${Arm} onCmd=${onCmd} enabled=${armed} />`}
           <div class="conn-seg sub-seg" data-sub=${sub} role="tablist">
             <span class="conn-seg-thumb"></span>
@@ -1482,7 +1686,7 @@ function SensorStrip({ packet }) {
     <//>`;
 }
 
-function JudgeView({ packet, connected, ai }) {
+function JudgeView({ packet, connected, ai, feed }) {
   const v = assess(packet);
   return html`
     <main class="judge" id="sensors">
@@ -1505,8 +1709,13 @@ function JudgeView({ packet, connected, ai }) {
               </div>`;
           })}
         </div>
+        ${feed?.length ? html`<div class="judge-chat">
+          <span class="judge-key">${t("zone.agent")}</span>
+          <div class="judge-chat-log" role="log" aria-live="polite">
+            ${feed.slice().reverse().map(e => html`<${FeedLine} key=${e.id} e=${e} onAnswer=${() => {}} />`)}
+          </div>
+        </div>` : null}
       </div>
-      ${""}
       ${ai.text && ai.text !== t("ai.awaiting") && html`<p class="judge-say">${ai.text}</p>`}
     </main>`;
 }
@@ -1627,6 +1836,7 @@ const ASK_KINDS = {
     warn: e.guarded ? t("move.guarded", { n: e.guarded, cm: GUARD_CM }) : null,
   }),
   arm: (e) => ({ title: t("arm.asks"), code: e.text, detail: t("arm.steps", { n: e.tape.length }) }),
+  tape: (e) => ({ title: t("tape.asks"), code: e.text, detail: t("tape.steps", { n: e.tape.length, s: Math.round(e.dur / 1000) }) }),
   confirm: (e) => ({
     title: t("confirm.asks", { what: t((TOOLS[e.name] || {}).label || "tool.unknown") }),
     detail: e.arg || null, yes: "confirm.yes", no: "confirm.no",
@@ -2123,18 +2333,19 @@ function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lan
         <button type="button" class="console-btn" onClick=${onDevices} title=${t("devices.title")}>
           ◈ ${t("devices.button")} ${clients.length}
         </button>`}
-      <button type="button" class=${"console-btn" + (consoleOpen ? " is-active" : "")}
-        onClick=${onConsole} aria-pressed=${consoleOpen} title=${t("serial.toggleTitle")}>
-        ▤ ${t("drawer.console")}
-      </button>
+      ${!VIEWER && html`
+        <button type="button" class=${"console-btn" + (consoleOpen ? " is-active" : "")}
+          onClick=${onConsole} aria-pressed=${consoleOpen} title=${t("serial.toggleTitle")}>
+          ▤ ${t("drawer.console")}
+        </button>`}
     </header>`;
 }
 
 const SAVERS = ["saverOff", "matrix", "saverBounce", "saverStars", "saverTetris"];
 
-function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, enabled, onTutorial, saver, onSaver, moves, onMoves, confirm, onConfirm, buzz, onBuzz }) {
+function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, onAnalyze, onNote, enabled, onTutorial, saver, onSaver, moves, onMoves, confirm, onConfirm, buzz, onBuzz, demo, onDemo }) {
   if (!open) return null;
-  const tabs = [["logs", t("zone.logs")], ["findings", t("zone.analysis")], ["serial", t("zone.serial")], ["motor", t("colo.motor")]];
+  const tabs = [["logs", t("zone.logs")], ["findings", t("zone.analysis")], ["serial", t("zone.serial")], ["motor", t("colo.motor")], ["tapes", "Tapes"]];
   return html`
     <div class=${"drawer" + (open === "closing" ? " is-closing" : "")} role="region" aria-label=${t("drawer.console")}>
       <div class="drawer-bar">
@@ -2154,6 +2365,11 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
           ${t("drawer.confirm")}: ${t(confirm ? "drawer.on" : "drawer.off")}
         </button>
         ${""}
+        <button type="button" class=${"serial-btn drawer-demo" + (demo ? " is-on" : "")}
+          aria-pressed=${!!demo} onClick=${onDemo} title=${t("drawer.demoTitle")}>
+          ${t("drawer.demo")}: ${t(demo ? "drawer.on" : "drawer.off")}
+        </button>
+        ${""}
         <button type="button" class=${"serial-btn drawer-buzz" + (buzz ? " is-on" : "")}
           aria-pressed=${!!buzz} onClick=${onBuzz} title=${t("drawer.buzzTitle")}>
           ${t("drawer.buzz")}: ${t(buzz ? "drawer.on" : "drawer.off")}
@@ -2170,6 +2386,7 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
         ${tab === "logs" ? html`<${Logs} logs=${logs} />`
         : tab === "findings" ? html`<${Memory} chat=${chat} />`
         : tab === "serial" ? html`<${SerialMonitor} lines=${serialLines} onClear=${onClearSerial} />`
+        : tab === "tapes" ? html`<${Tapes} onCmd=${onCmd} onAnalyze=${onAnalyze} onNote=${onNote} enabled=${enabled} />`
         : html`<${MotorDebug} onCmd=${onCmd} enabled=${enabled} />`}
       </div>
     </div>`;
@@ -2689,6 +2906,7 @@ function App() {
     if (!chat) return;
     const item = { id: Date.now() + Math.random(), time: new Date().toLocaleTimeString(), ...e };
     setChats(cs => cs.map(c => c.id === chat.id ? { ...c, feed: [...(c.feed || []), item].slice(-80) } : c));
+    socketRef.current?.emit("feed", item);
   }, []);
 
   const patchFeed = useCallback((id, patch) => {
@@ -2696,6 +2914,7 @@ function App() {
     if (!chat) return;
     setChats(cs => cs.map(c => c.id === chat.id
       ? { ...c, feed: (c.feed || []).map(f => f.id === id ? { ...f, ...patch } : f) } : c));
+    socketRef.current?.emit("feed", { id, patch });
   }, []);
 
   const [confirm, setConfirm] = useState(() => localStorage.getItem("sageConfirm") !== "false");
@@ -2717,6 +2936,10 @@ function App() {
     }).catch(() => {});
   }, []);
 
+  // what the judge tablet shows: the host's transcript, relayed. Own state because
+  // chats live in the host's localStorage and never reach another browser.
+  const [mirrorFeed, setMirrorFeed] = useState([]);
+
   const socketRef = useRef(null);
   const ttsRef = useRef(localStorage.getItem("tts") !== "false");
   const lastObstacle = useRef(0);
@@ -2730,7 +2953,16 @@ function App() {
     const id = setInterval(() => setFresh(Date.now() - lastPkt.current < PKT_STALE_MS), 1000);
     return () => clearInterval(id);
   }, []);
-  const view = fresh ? packet : null;
+  const [demo, setDemo] = useState(() => localStorage.getItem("demoMode") === "1");
+  const toggleDemo = useCallback(() => setDemo(d => { localStorage.setItem("demoMode", d ? "0" : "1"); return !d; }), []);
+  const [demoTick, setDemoTick] = useState(0);
+  useEffect(() => {
+    if (!demo) return;
+    const id = setInterval(() => setDemoTick(n => n + 1), 1000);  // stale packets stop re-rendering; keep the wander alive
+    return () => clearInterval(id);
+  }, [demo]);
+
+  const view = demo ? demoFill(fresh ? packet : {}, Date.now()) : fresh ? packet : null;
   const live = connected && fresh;
   useEffect(() => { packetRef.current = view; }, [view]);
 
@@ -2889,6 +3121,9 @@ function App() {
     socket.on("cam-resume", () => window.dispatchEvent(new Event("cam:resume")));
     socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, t("log.missionAck"), "ai", d.status); });
 
+    socket.on("feed", d => setMirrorFeed(f => !d ? f : d.patch
+      ? f.map(x => x.id === d.id ? { ...x, ...d.patch } : x)
+      : [...f, d].slice(-40)));
     socket.on("cmd", w => { if (bleRef.current.device?.gatt?.connected) sendCmdRef.current?.(w); });
     addLog(t("log.booted"), "system");
     return () => socket.close();
@@ -2943,6 +3178,15 @@ function App() {
       return;
     }
 
+    // the board's black box, dumped on every connect: why the LAST link died
+    if (line.startsWith("E:log")) {
+      if (!line.startsWith("E:logend")) {
+        const [, ms, ...rest] = line.split(",");
+        addLog(`board ${(+ms / 1000).toFixed(1)}s — ${rest.join(",")}`, "system");
+      }
+      return;
+    }
+
     if (line.startsWith("E:blk")) { window.dispatchEvent(new CustomEvent("blk:evt", { detail: line })); return; }
     fetch("/api/mega/sensor", { method: "POST", headers: { "Content-Type": "text/plain" }, body: line })
       .then((r) => { if (!r.ok) console.error("BLE forward failed:", r.status); })
@@ -2959,6 +3203,7 @@ function App() {
   const sendCmd = useCallback(async (word) => {
     if (!grantedRef.current && word !== "stop") { toast(t("toast.mirrorOnly"), "warn"); return false; }
     if (word.startsWith("go,")) presentingRef.current = word === "go,presentation";
+    tapeWatch(word);
     const { device, cmd } = bleRef.current;
 
     if (!device?.gatt?.connected) {
@@ -3081,6 +3326,9 @@ function App() {
           fetch("/api/bridge/stop", { method: "POST" }).catch(() => {});
         });
         bleRef.current = { device, char, cmd };
+        // ask for the black box now that notifications are subscribed: the reason
+        // for the last disconnect lands in the log before the next run starts
+        cmd?.writeValue(new TextEncoder().encode("log,")).catch(() => {});
         const r = await fetch("/api/bridge/start", { method: "POST" });
         const d = await r.json();
         if (d.ok) { setBridge({ running: true, busy: false }); toast(t("toast.bridgeOn"), "ok"); }
@@ -3119,6 +3367,12 @@ function App() {
     // same shape armrec.py records — so this card is one press away from the pad.
     if (sage && sage.arm && movesRef.current)
       pushFeed({ kind: "arm", text: sage.arm.text, tape: sage.arm.tape, state: "pending" });
+    // A recorded run: the server resolved the name into the same {ms, cmd} tape
+    // the drawer plays, so this card is the TAPES tab's play button with a YES
+    // in front of it.
+    if (sage && sage.tape && movesRef.current)
+      pushFeed({ kind: "tape", text: sage.tape.text, tape: sage.tape.tape, state: "pending",
+        dur: sage.tape.tape[sage.tape.tape.length - 1].ms });
     if (speak && ttsRef.current) speakTimed(textv);
   }, [speakTimed, pushFeed]);
 
@@ -3166,6 +3420,13 @@ function App() {
     }
     if (!yes) return patchFeed(item.id, { state: "declined" });
 
+    if (item.kind === "tape") {
+      patchFeed(item.id, { state: "running" });
+      addLog(`playing recorded run "${item.text}"`, "ai");
+      const ms = tapePlay(item.tape, { onCmd: sendCmd, onAnalyze: analyze, onNote: (n) => addLog(n, "ai") });
+      setTimeout(() => patchFeed(item.id, { state: "done" }), ms);
+      return;
+    }
     if (item.kind === "arm") {
       patchFeed(item.id, { state: "running" });
       addLog(t("log.armRun"), "ai");
@@ -3476,7 +3737,7 @@ function App() {
 
         ${!VIEWER && flashBoards.status !== "none" && html`<${UpdateBar} boards=${flashBoards} onUpdate=${openUpdate} />`}
 
-        ${judge ? html`<${JudgeView} packet=${view} connected=${live} ai=${ai} />` : html`
+        ${judge ? html`<${JudgeView} packet=${view} connected=${live} ai=${ai} feed=${mirrorFeed} />` : html`
         <main class="cockpit" id="sensors">
           <div class="col-main">
             <div class="stage-row">
@@ -3500,9 +3761,10 @@ function App() {
 
         ${!judge && html`<${Drawer} open=${drawer} tab=${drawerTab} onTab=${setDrawerTab} onClose=${closeDrawer}
           logs=${logs} serialLines=${serialLines} onClearSerial=${clearSerial}
-          chat=${activeChat} onCmd=${sendCmd} enabled=${canDrive} onTutorial=${restartTour}
+          chat=${activeChat} onCmd=${sendCmd} onAnalyze=${analyze} onNote=${(n) => addLog(n, "system")}
+          enabled=${canDrive} onTutorial=${restartTour}
           saver=${saver} onSaver=${pickSaver} moves=${moves} onMoves=${toggleMoves} confirm=${confirm} onConfirm=${toggleConfirm}
-            buzz=${buzz} onBuzz=${toggleBuzz} />`}
+            buzz=${buzz} onBuzz=${toggleBuzz} demo=${demo} onDemo=${toggleDemo} />`}
       </div>
 
       <${Toasts} items=${toasts} />

@@ -27,23 +27,25 @@
                            // because pulse width is speed AND torque at once and
                            // these six joints carry very different loads.
                            // Buzzing at rest = saturated, go back down.
-#define ARM_JOG_MS 800     // a held 360 dies this long after the last command
+#define ARM_JOG_MS 3000    // a held 360 dies this long after the last command.
+                           // Raised from 800 2026-09-05 by operator request: the
+                           // pad re-sends every ARM_REPEAT_MS (300), so 800 was
+                           // never what a held jog hit — but a stuttering repeat
+                           // could. This is the LAST stop on the arm now that the
+                           // travel budget is gone, so it is longer, not absent:
+                           // a dropped link leaves a joint driving for 3s, and
+                           // that is the trade.
 #define ARM_HOLD_MAX 35    // biggest hold bias the trim will set. Above this it
                            // is a jog, not a hold, and an unheld joint that
                            // climbs is exactly what winds into the frame. Was 25,
                            // a guess: the elbow measured -20 against it, so a
                            // loaded joint had no headroom left.
-#define ARM_TRAVEL_MS 2500 // default per-joint travel budget, in MILLISECONDS AT
-                           // FULL SPEED, measured either way from wherever the
-                           // arm was last zeroed — so a joint's usable range is
-                           // 2x this wide. There is no encoder on any of these
-                           // joints, so a limit cannot be an angle: the only
-                           // thing that can be counted is how long the joint was
-                           // driven and how hard, which is dead reckoning and
-                           // DRIFTS. It is a stop against winding into the frame,
-                           // never a position. MEASURE IT per joint: jog one way
-                           // until it reaches the mechanical end, and take the
-                           // seconds it took. 0 in the table = no limit.
+// REMOVED 2026-09-05, by operator request: the per-joint travel budget. It was
+// dead reckoning with no encoder behind it, it drifted, and a joint that parked
+// itself at a phantom stop read as an arm that "refuses to move". armTravel[]
+// stays — the sag trim reads it as its only estimate of pose, and armz, still
+// re-homes it. The stop against winding into the frame is now the operator on
+// the button and the ARM_JOG_MS deadman behind them.
 
 // Every joint is a 360: an angle sent to one is full speed, not a position, so
 // there is no "go to 45deg" — only "move while somebody holds the button", and
@@ -69,21 +71,15 @@
 // 0 = the old flat bias. MEASURE IT the same way, at two poses: trim hold at
 // home (that is `hold`), jog the joint out 2s, trim it again (call it B), and
 // sag = (B - hold) / 2. Both are live off `armh,<joint>,<hold>,<sag>`.
-// It is open loop and it is wrong after a stall or a shove — armz, is the fix,
-// same as the travel budget it reads.
-//
-// limit is the travel budget above, per joint, and every one of them is a GUESS
-// until it is measured on the bench (armrec.py prints the run-time of a take).
-struct ArmJoint { uint8_t ch; bool cont; int neutral; int span; int hold; int sag; long limit; const char *name; };
+// It is open loop and it is wrong after a stall or a shove — armz, is the fix.
+struct ArmJoint { uint8_t ch; bool cont; int neutral; int span; int hold; int sag; const char *name; };
 ArmJoint armSv[] = {
-  { 6,  true, 1490, ARM_SPAN_US, 0, 0, ARM_TRAVEL_MS, "base"      },   // measured on the bench 2026-08-24
-  { 5,  true, 1500, ARM_SPAN_US, 0, 0, ARM_TRAVEL_MS, "shoulder"  },   // untrimmed; sags — needs a hold
-  { 4,  true, 1500, ARM_SPAN_US, 0, 0, ARM_TRAVEL_MS, "elbow"     },   // untrimmed; sags — needs a hold
-  { 3,  true, 1500, ARM_SPAN_US, 0, 0, ARM_TRAVEL_MS, "wrist"     },   // untrimmed
-  { 12, true, 1500, 1000,        0, 0, ARM_TRAVEL_MS, "gripwrist" },   // short of full travel at 700
-  { 1,  true, 1500, ARM_SPAN_US, 0, 0, 1200,          "gripper"   },   // 360, stripped pot — a gripper
-                                                                    // closes on a thing and then stalls,
-                                                                    // so it gets the shortest budget
+  { 6,  true, 1490, ARM_SPAN_US, 0, 0, "base"      },   // measured on the bench 2026-08-24
+  { 5,  true, 1500, ARM_SPAN_US, 0, 0, "shoulder"  },   // untrimmed; sags — needs a hold
+  { 4,  true, 1500, ARM_SPAN_US, 0, 0, "elbow"     },   // untrimmed; sags — needs a hold
+  { 3,  true, 1500, ARM_SPAN_US, 0, 0, "wrist"     },   // untrimmed
+  { 12, true, 1500, 1000,        0, 0, "gripwrist" },   // short of full travel at 700
+  { 1,  true, 1500, ARM_SPAN_US, 0, 0, "gripper"   },   // 360, stripped pot
 };
 const uint8_t ARM_N = sizeof(armSv) / sizeof(armSv[0]);
 
@@ -91,14 +87,13 @@ bool armOk = false;                  // false = chip never answered, all no-ops
 unsigned long armLastCmd[ARM_N];     // 0 = that joint is not moving
 
 // Dead-reckoned travel, in ms-at-full-speed, signed, from the last armZero().
-// This is the ONLY thing standing between a 360 and the frame it is bolted to:
-// no joint on this arm can report where it is, so the budget is integrated from
-// what was commanded. It drifts (stall, sag, a hand moving the arm), which is
-// why armZero() exists and why the operator re-homes by eye.
+// The sag trim's only estimate of pose: no joint on this arm can report where it
+// is, so it is integrated from what was commanded. It drifts (stall, sag, a hand
+// moving the arm), which is why armZero() exists and why the operator re-homes
+// by eye.
 long armTravel[ARM_N];
 int armSpeed[ARM_N];                 // what the joint is being driven at, for the integral
 unsigned long armTravelT[ARM_N];     // when armTravel[i] was last brought up to date
-bool armLimits = true;               // arml,0 turns the stops off — bench only
 
 // Every Wire call is guarded on armOk: a browned-out PCA9685 clamps SDA low and
 // then a blocking transaction looks exactly like a bricked board — silent from
@@ -211,11 +206,6 @@ void armJog(uint8_t i, int speed) {
   unsigned long now = millis();
   armAccum(i, now);
   speed = constrain(speed, -100, 100);
-  // At the stop, this direction becomes a park and the other one still works —
-  // refusing both would trap the arm at its own limit with no way back.
-  if (armLimits && armSv[i].limit && speed &&
-      (speed > 0 ? armTravel[i] >= armSv[i].limit : armTravel[i] <= -armSv[i].limit))
-    speed = 0;
   armOutputs(true);                  // a stop latches OE off; moving lifts it
   if (speed == 0) { armPark(i); return; }
   armSetUs(armSv[i].ch, armPulse(i, speed));
@@ -253,9 +243,6 @@ void armTick() {
   for (uint8_t i = 0; i < ARM_N; i++) {
     if (armLastCmd[i] && now - armLastCmd[i] > ARM_JOG_MS) { armPark(i); continue; }
     if (!armSpeed[i]) continue;
-    armAccum(i, now);                // a button held down has to hit the stop
-    if (armLimits && armSv[i].limit &&                       // mid-hold, not only
-        (armSpeed[i] > 0 ? armTravel[i] >= armSv[i].limit    // on the next repeat
-                         : armTravel[i] <= -armSv[i].limit)) armPark(i);
+    armAccum(i, now);                // keep the pose estimate current mid-hold
   }
 }

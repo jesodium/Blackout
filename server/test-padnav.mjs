@@ -73,4 +73,13 @@ for (const [name, val] of [["DEADZONE", DEADZONE], ["MIN_PWM", MIN_PWM], ["MANUA
   assert.equal(+m[1], val, `${name} drifted from app.js — this test's copy of the mix is stale`);
 }
 
+// the R2 boost chips: a cap over 255 clips silently in the L298N, one under
+// MANUAL_PWM makes the boost slower than no boost
+const boosts = app.match(/const BOOSTS = \[(.+)\];/);
+assert.ok(boosts, "BOOSTS gone from app.js");
+for (const [, v] of boosts[1].matchAll(/,\s*(\d+)\]/g)) {
+  assert.ok(+v >= MANUAL_PWM && +v <= 255, `boost chip ${v} outside ${MANUAL_PWM}..255`);
+}
+assert.ok(/turbo \? boostRef\.current/.test(app), "R2 boost no longer reads the operator's setting");
+
 console.log("padnav + arcade mix ok");
