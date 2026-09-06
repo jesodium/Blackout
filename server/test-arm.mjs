@@ -13,14 +13,17 @@ const def = (name) => {
 };
 
 const HZ = def("ARM_HZ"), SPAN = def("ARM_SPAN_US"), JOG = def("ARM_JOG_MS");
-const HOLD_MAX = def("ARM_HOLD_MAX"), TRAVEL = def("ARM_TRAVEL_MS");
+const HOLD_MAX = def("ARM_HOLD_MAX");
+// how far out the sag trim is still expected to hold, in ms at full speed.
+// No travel budget to read it off any more — 5s is past the mechanical end
+// of every joint on this arm.
+const SAG_REACH = 5000;
 
 // the joint table, as the firmware holds it
-const joints = [...h.matchAll(/\{\s*(\d+),\s*(true|false),\s*(\d+),\s*(\w+),\s*(-?\d+),\s*(-?\d+),\s*(\w+),\s*"(\w+)"/g)]
-  .map(([, ch, cont, neutral, span, hold, sag, limit, name]) =>
+const joints = [...h.matchAll(/\{\s*(\d+),\s*(true|false),\s*(\d+),\s*(\w+),\s*(-?\d+),\s*(-?\d+),\s*"(\w+)"/g)]
+  .map(([, ch, cont, neutral, span, hold, sag, name]) =>
     ({ ch: +ch, cont: cont === "true", neutral: +neutral,
-       span: span === "ARM_SPAN_US" ? SPAN : +span, hold: +hold, sag: +sag,
-       limit: limit === "ARM_TRAVEL_MS" ? TRAVEL : +limit, name }));
+       span: span === "ARM_SPAN_US" ? SPAN : +span, hold: +hold, sag: +sag, name }));
 assert.equal(joints.length, 6, "expected six joints");
 assert.ok(joints.every((j) => j.cont), "every joint on this arm is a 360 — an angle sent to one is full speed");
 assert.equal(new Set(joints.map((j) => j.ch)).size, 6, "two joints share a channel");
@@ -62,7 +65,7 @@ for (const j of joints) {
   // means the trim goes dead partway out and the operator is turning a knob that
   // stopped doing anything, which is worse than a flat hold.
   const lean = (travel) => j.hold + Math.trunc((j.sag * travel) / 1000);
-  for (const far of [j.limit || 5000, -(j.limit || 5000)]) {
+  for (const far of [SAG_REACH, -SAG_REACH]) {
     assert.ok(Math.abs(lean(far)) <= HOLD_MAX,
       `${j.name}: hold leans to ${lean(far)} at ${far}ms — it saturates inside its own travel`);
     const hp = pulse(j, clamp(lean(far), -HOLD_MAX, HOLD_MAX));
@@ -117,6 +120,13 @@ assert.ok(ino.indexOf('startsWith("armh,")') < ino.indexOf('startsWith("arm,")')
 const app = readFileSync(new URL("public/js/app.js", import.meta.url), "utf8");
 const rep = +(app.match(/ARM_REPEAT_MS\s*=\s*(\d+)/) || [])[1];
 assert.ok(rep > 0 && rep < JOG, `arm repeat ${rep}ms must be under the ${JOG}ms deadman`);
+// A tap shorter than this is a burst nobody can see, so release holds the stop
+// back to it. It has to stay under the deadman: past that the board stops the
+// joint on its own and the delay would be a lie.
+const minJog = +(app.match(/ARM_MIN_JOG_MS\s*=\s*(\d+)/) || [])[1];
+assert.ok(minJog > 0 && minJog < JOG, `arm min jog ${minJog}ms must be under the ${JOG}ms deadman`);
+assert.ok(/ARM_MIN_JOG_MS - \(Date\.now\(\) - downRef\.current\)/.test(app),
+  "release() no longer holds the stop back to ARM_MIN_JOG_MS — a tap is a burst too short to see");
 // The hold/sag trim came off the dashboard pad: no armh, from the browser, so
 // there is no second copy of the table left to drift. The firmware half still
 // has to work (armSetHold + its clamp, checked above) — the bench recorder is
@@ -128,35 +138,21 @@ for (const j of joints)
     `${j.name}: armSv[] has a hold/sag but nothing on the dashboard can trim it`);
 
 
-// ---- travel budget ----
-// The only stop a 360 can have: no encoder anywhere on this arm, so the limit is
-// integrated run-time and a sign or scale error here is a joint that either
-// never stops or refuses to move at all.
-for (const j of joints) assert.ok(j.limit >= 0, `${j.name}: negative travel budget`);
+// ---- travel integral ----
+// Not a stop any more (the budget was removed 2026-09-05) — it is the sag trim's
+// only estimate of pose, so a sign or scale error here is a hold bias leaning the
+// wrong way as the joint moves out.
 const accum = (travel, speed, dt) => travel + (speed * dt) / 100;
 assert.equal(accum(0, 100, 1000), 1000, "full speed for a second must be 1000ms of budget");
 assert.equal(accum(0, -100, 1000), -1000, "the budget is signed");
 assert.equal(accum(0, 50, 1000), 500, "half speed must spend half the budget");
-assert.equal(accum(0, 0, 9e9), 0, "an idle joint must not spend budget");
-// the stop is one-directional: the way back is always open, or the arm traps
-// itself at its own limit with nothing that can retrieve it
-const blocked = (j, travel, speed) =>
-  !!j.limit && speed !== 0 && (speed > 0 ? travel >= j.limit : travel <= -j.limit);
-for (const j of joints.filter((x) => x.limit)) {
-  assert.equal(blocked(j, j.limit, 100), true, `${j.name}: runs past its stop`);
-  assert.equal(blocked(j, j.limit, -100), false, `${j.name}: trapped at its own stop`);
-  assert.equal(blocked(j, -j.limit, -100), true, `${j.name}: runs past its stop the other way`);
-  assert.equal(blocked(j, 0, 100), false, `${j.name}: cannot move from home`);
-  assert.equal(blocked(j, j.limit, 0), false, "a stop is never blocked");
-}
+assert.equal(accum(0, 0, 9e9), 0, "an idle joint must not move the estimate");
 
 // the firmware has to actually do all of that
 assert.ok(/armAccum\(i, now\)/.test(h) && /armTravel\[i\] \+= \(long\)armSpeed\[i\]/.test(h),
   "arm.h no longer integrates travel");
-assert.ok(/void armJog[^]*?armLimits && armSv\[i\]\.limit[^]*?speed = 0;/.test(h),
-  "armJog() does not check the travel budget");
 assert.ok(/void armTick[^]*?armAccum\(i, now\)/.test(h),
-  "armTick() does not keep the integral live — a held button never reaches its stop");
+  "armTick() does not keep the integral live — the sag bias goes stale mid-hold");
 // a hold is a joint standing still against gravity; counting it drains the whole
 // budget off a parked arm
 assert.ok(/static void armPark[^]*?armSpeed\[i\] = 0;/.test(h),
@@ -164,22 +160,21 @@ assert.ok(/static void armPark[^]*?armSpeed\[i\] = 0;/.test(h),
 assert.ok(/void armZero\(int i\)/.test(h), "no way to re-home a dead-reckoned count");
 assert.ok(/^\s*armZero\(-1\);/m.test(h), "armBegin() does not zero the travel clock");
 assert.ok(/startsWith\("armz,"\)[^]{0,300}?armZero\(/.test(ino), "armz, is not wired to armZero()");
-assert.ok(/startsWith\("arml,"\)[^]{0,200}?armLimits =/.test(ino), "arml, does not toggle the stops");
-for (const c of ["armz,", "arml,"])
+// The travel budget is GONE (2026-09-05, operator request): no limit column, no
+// armLimits flag, no arml, command, and nothing on the dashboard turning it off.
+// armTravel[] stays — the sag trim reads it as its only estimate of pose.
+for (const bad of ["armLimits", "ARM_TRAVEL_MS", "arml,"])
+  assert.ok(!ino.includes(bad) && !h.includes(bad),
+    `the travel budget is back on the board (${bad})`);
+assert.ok(!app.includes("arml,"), "the dashboard still sends arml,");
+assert.ok(/long armTravel\[ARM_N\]/.test(h) && /armZero/.test(ino),
+  "armTravel/armz went with the budget — the sag trim needs both");
+for (const c of ["armz,"])
   assert.ok(ino.indexOf(`startsWith("${c}")`) < ino.indexOf('startsWith("arm,")'),
     `${c} must be tested before arm,`);
 
-// and the browser's mirror has to agree with the table, or the meter shows the
-// operator a stop the board is not holding
-// the dashboard no longer keeps its own copy of the travel budget: it pushes
-// arml,0 on every connect and the arm runs unstopped, which is what the operator
-// asked for. The firmware still HAS the budget (checked above) — that is the way
-// back if it is ever wanted, and RE-HOME still clears the board's count.
-assert.ok(!/ARM_TRAVEL_MS/.test(app), "app.js is keeping a travel budget again");
-assert.ok(/onCmd\("arml,0"\)/.test(app), "the pad does not turn the board's travel stops off");
-
-// every arm command goes through armSend(), or a tapped move — or one of Sage's
-// cards — spends budget the meter never sees
+// every arm command goes through armSend() — one place for anything that has to
+// see every arm command
 const arm = app.match(/function Arm\(\{[^]*?\n\}/)[0];
 assert.equal((arm.match(/onCmd\(`arm,/g) || []).length, 0,
   "the arm pad writes arm, straight to onCmd — it must go through armSend()");
@@ -195,7 +190,7 @@ assert.ok(/armStopTape\(\);\s*\/\/ a queued arm step/.test(app),
 // She does not drive the arm — she names a take the crew recorded on the bench
 // and the operator presses YES. Every arm move she can ask for is one somebody
 // already ran and kept, which is the whole reason the recorder exists.
-const { parseArm, armMovesFor, ARM_REPEAT_MS, ARM_MAX_TAKES } = await import("./sage.js");
+const { parseArm, armMovesFor, ARM_REPEAT_MS } = await import("./sage.js");
 assert.ok(ARM_REPEAT_MS > 0 && ARM_REPEAT_MS < JOG,
   `the gap between chained takes (${ARM_REPEAT_MS}ms) must be under the ${JOG}ms deadman`);
 
@@ -214,9 +209,12 @@ assert.equal(two.tape.at(-1).ms, 400 + ARM_REPEAT_MS + 500, "chained takes overl
 assert.equal(two.text, "Close\nRotate Base [LEFT]");
 // there is deliberately NO joint jog: a freeform burst on a 360 with no encoder
 // is exactly what the recorder exists to keep out of her hands
-for (const bad of ["", "base left 600", "arm,0,-100", "Wave", "Close\nWave",
-                   "Close\n".repeat(ARM_MAX_TAKES + 1)])
+for (const bad of ["", "base left 600", "arm,0,-100", "Wave", "Close\nWave"])
   assert.equal(parseArm(bad, take), null, `parseArm accepted ${JSON.stringify(bad)}`);
+// the count cap came off 2026-09-05 (operator request) — a long chain is still
+// one YES press, and every take in it is one somebody recorded on the bench
+assert.equal(parseArm("Close\n".repeat(8), take).tape.length, 8 * take.Close.length,
+  "chained takes are still capped");
 assert.ok(!/left|right/i.test(readFileSync(new URL("sage.js", import.meta.url), "utf8")
   .match(/function parseArm[^]*?\n\}/)[0]), "parseArm still knows how to jog a joint");
 
@@ -248,7 +246,8 @@ assert.ok(/save_move\(name, wrap\(clean\(REC\["steps"\]\), flags_of\(load_moves\
 // folder there is how the dashboard ends up showing takes that no longer exist.
 assert.ok(/MOVES_D = os\.path\.join\(HERE, "arm_moves"\)/.test(rec) && !/arm_moves\.json/.test(rec),
   "armrec.py still keeps takes in one index file");
-assert.ok(/readdirSync\(ARM_DIR\)/.test(srv0) && !/arm_moves\.json/.test(srv0),
+// (one reader now — a tape in tapes/ is the same file in another folder)
+assert.ok(/readTakes\(ARM_DIR\)/.test(srv0) && /readdirSync\(dir\)/.test(srv0) && !/arm_moves\.json/.test(srv0),
   "the server reads takes from an index file, not the arm_moves/ folder");
 
 // the names come from the folder, so recording a take is all it takes to give
@@ -271,4 +270,4 @@ assert.ok(/armMovesFor\(readArmMoves\(\), "sage_can_use"\)/.test(srv0) &&
 assert.ok(/setTimeout\(\(\) => done\(false\), CONFIRM_MS\)/.test(srv0),
   "an unanswered tool confirmation does not default to no");
 
-console.log("test-arm ok —", joints.map((j) => `${j.name}:ch${j.ch}@${j.span}us${j.hold ? `/hold${j.hold}` : ""}${j.limit ? `/${j.limit}ms` : ""}`).join(" "));
+console.log("test-arm ok —", joints.map((j) => `${j.name}:ch${j.ch}@${j.span}us${j.hold ? `/hold${j.hold}` : ""}`).join(" "));

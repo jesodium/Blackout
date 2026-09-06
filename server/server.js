@@ -170,10 +170,11 @@ app.post("/api/chat", async (req, res) => {
       ...langMsg(lang),
       { role: "system", content: ctx },
       ...(moves ? armLine() : []),
-      ...(moves ? [] : [{ role: "system", content: "MOVE LOCK: your drive and your arm are locked out right now. Never offer to move, and never set \"move\" or \"arm\" this turn." }]),
+      ...(moves ? tapeLine() : []),
+      ...(moves ? [] : [{ role: "system", content: "MOVE LOCK: your drive, your arm and the runs the crew recorded are all locked out right now — say so in your own words as a scout would (\"I'm parked until the crew unlocks me\"), never by naming these fields. Never offer to move, and never set \"move\", \"arm\" or \"tape\" this turn." }]),
       ...mapped,
     ], { maxTokens: 400, confirm: req.body?.confirm === true });
-    if (!moves && reply) { reply.move = null; reply.arm = null; }
+    if (!moves && reply) { reply.move = null; reply.arm = null; reply.tape = null; }
     res.json({ reply, steps });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -327,18 +328,23 @@ app.post("/api/bridge/stop", (req, res) => {
 // opened, diffed, copied to another rig or deleted in Finder without the
 // recorder running, and there is no index file to fall out of step with it.
 const ARM_DIR = path.join(__dirname, "arm_moves");
-function readArmMoves() {
+
+// arm takes and tapes are the same file in two folders — a name, a list of
+// {ms, cmd} steps and the two flags — so one reader and one filter (armMovesFor)
+// serve both. Nothing caches: the folder IS the index.
+function readTakes(dir) {
   const out = {};
   let files;
-  try { files = fs.readdirSync(ARM_DIR).sort(); }
+  try { files = fs.readdirSync(dir).sort(); }
   catch { return out; }              // no folder yet = no moves, not a 500
   for (const f of files) {
     if (!f.endsWith(".json")) continue;
-    try { out[f.slice(0, -5)] = JSON.parse(fs.readFileSync(path.join(ARM_DIR, f), "utf8")); }
+    try { out[f.slice(0, -5)] = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")); }
     catch { }                        // a half-written take is skipped, not fatal
   }
   return out;
 }
+const readArmMoves = () => readTakes(ARM_DIR);
 
 app.get("/api/arm-moves", (req, res) => res.json(armMovesFor(readArmMoves(), "show_in_app")));
 
@@ -351,6 +357,70 @@ function armLine() {
     ? `ARM MOVES the crew recorded — these names, exactly as written, are the only arm moves you can ask for: ${names.map((n) => `"${n}"`).join(", ")}.`
     : "ARM: nothing has been recorded yet, so you have no arm moves at all. Never set \"arm\", and tell the operator there is nothing recorded if they ask for it." }];
 }
+
+// ---- tapes ----
+// A whole manual run written down: every command the dashboard puts on the wire,
+// with its gaps, plus PC-side "@" events (say/analyze/log/led) the operator adds
+// by hand afterwards. Same {ms, cmd} shape as an arm take, so the arm player
+// replays it and drive + arm live in one list. One file per tape, filename = the
+// name — no index to fall out of step with it, editable in any text editor.
+// NOT giga-r1/main/routines.h: those are Step tables compiled into flash and
+// they have no arm op. A tape runs from the PC, which is also the only place
+// analyze/say exist at all.
+const TAPE_DIR = path.join(__dirname, "tapes");
+fs.mkdirSync(TAPE_DIR, { recursive: true });
+
+const tapePath = (name) => {
+  const safe = String(name).replace(/[^a-z0-9 _-]/gi, "").trim().slice(0, 60);
+  return safe ? path.join(TAPE_DIR, safe + ".json") : null;
+};
+
+app.get("/api/tapes", (req, res) => res.json({
+  files: fs.readdirSync(TAPE_DIR).filter(f => f.endsWith(".json")).map(f => f.slice(0, -5)).sort(),
+}));
+
+// The same two flags an arm take carries, read by the same filter: a debug tape
+// is exactly what should not be in Sage's hands during a presentation. There is
+// no toggle in the drawer — the file is the editor, so it is a line of json.
+// `sage_can_use` defaults to true (a bare take counts everywhere), same as arm.
+const sageTapes = () => armMovesFor(readTakes(TAPE_DIR), "sage_can_use");
+
+function tapeLine() {
+  const names = Object.keys(sageTapes());
+  return [{ role: "system", content: names.length
+    ? `RECORDED RUNS the crew drove and kept — these names, exactly as written, are the only runs you can ask to play: ${names.map((n) => `"${n}"`).join(", ")}.`
+    : "RECORDED RUNS: nothing has been recorded, so you have none. Never set \"tape\"." }];
+}
+
+app.get("/api/tapes/:name", (req, res) => {
+  const p = tapePath(req.params.name);
+  if (!p || !fs.existsSync(p)) return res.status(404).json({ error: "not found" });
+  res.type("application/json").send(fs.readFileSync(p, "utf8"));
+});
+
+app.post("/api/tapes/:name", (req, res) => {
+  const p = tapePath(req.params.name);
+  if (!p) return res.status(400).json({ error: "bad name" });
+  const steps = req.body?.steps;
+  // hand-edited json arrives here, so the shape is checked before it can be
+  // saved as a tape the operator will later press play on
+  if (!Array.isArray(steps) || steps.length > 5000) return res.status(400).json({ error: "steps must be an array (max 5000)" });
+  for (const s of steps) {
+    if (!s || !Number.isFinite(s.ms) || s.ms < 0 || typeof s.cmd !== "string" || !s.cmd)
+      return res.status(400).json({ error: "every step needs {ms: number >= 0, cmd: string}" });
+  }
+  const flags = {};
+  for (const k of ["sage_can_use", "show_in_app"]) if (typeof req.body[k] === "boolean") flags[k] = req.body[k];
+  fs.writeFileSync(p, JSON.stringify({ steps, ...flags }, null, 2));
+  res.json({ ok: true });
+});
+
+app.delete("/api/tapes/:name", (req, res) => {
+  const p = tapePath(req.params.name);
+  if (!p || !fs.existsSync(p)) return res.status(404).json({ error: "not found" });
+  fs.unlinkSync(p);
+  res.json({ ok: true });
+});
 
 // ---- workflows ----
 const BLK_DIR = path.join(__dirname, "workflows");
@@ -472,6 +542,42 @@ app.post("/api/blk-find", async (req, res) => {
     res.json(out);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- a tape's spoken lines ----
+// A presentation read off a script is the same words every run, and it sounds
+// like it. A tape's "@sage <cue>" step is a CUE, not a line: she writes the
+// sentence herself, in her own voice, off what the rover can actually read right
+// now — so the run is different every time and grounded in the room instead of
+// in the file. The browser asks for these when the tape STARTS, not when the
+// step fires, because a two-second wait for a model mid-presentation is dead
+// air; if this never answers (the venue has no internet) the cue is spoken as
+// written, so a tape always talks.
+const TAPE_LINE_JOB =
+  "You are mid-run in front of an audience and the crew wrote you a cue for this exact moment. " +
+  "Say ONE short spoken line — 20 words at the most — that covers the cue in your own words, in character, " +
+  "using what you can actually read right now if it fits naturally. Never read the cue back word for word, " +
+  "never mention the cue or that you were given one, never ask a question. Normal JSON, only \"text\" filled in.";
+
+app.post("/api/tape-line", async (req, res) => {
+  if (!hasAI) return res.status(503).json({ error: "AI key not set" });
+  const cue = String(req.body?.cue || "").trim().slice(0, 300);
+  if (!cue) return res.status(400).json({ error: "cue required" });
+  const lang = LANG_INSTRUCT[req.body?.lang] ? req.body.lang : "en";
+  try {
+    const d = freshData();
+    const resp = await chat({ messages: [
+      { role: "system", content: CHAT_SYSTEM },
+      ...langMsg(lang),
+      { role: "system", content: d ? buildChatContext(d) : "No live readings right now — running dark." },
+      { role: "system", content: TAPE_LINE_JOB },
+      { role: "user", content: cue },
+    ], max_tokens: 120 });
+    const text = parseSage(resp.choices[0]?.message?.content).text;
+    res.json({ text: text || null });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
   }
 });
 
@@ -649,7 +755,7 @@ async function askSage(messages, { maxTokens = 400 } = {}) {
     messages,
     max_tokens: maxTokens,
   });
-  const sage = parseSage(resp.choices[0]?.message?.content, armMovesFor(readArmMoves(), "sage_can_use"));
+  const sage = parseSage(resp.choices[0]?.message?.content, armMovesFor(readArmMoves(), "sage_can_use"), sageTapes());
   if (sage.led != null && sage.led !== getLed()) {
     const from = getLed();
 
@@ -1106,6 +1212,10 @@ io.on("connection", (socket) => {
   socket.on("cmd", (w) => {
     if (w === "stop" || clients.get(socket.id)?.granted) socket.broadcast.emit("cmd", w);
   });
+
+  // the operator's agent feed, mirrored to the judge tablets. Relay only — the host
+  // browser owns the transcript (localStorage), the server just repeats it.
+  socket.on("feed", (e) => { if (isHost(socket)) socket.broadcast.emit("feed", e); });
   // whoever answers first wins — the gate is an operator prompt, not a permission
   socket.on("sage-confirm-res", (d) => { if (d && d.id) pendingConfirm.get(d.id)?.(!!d.ok); });
 

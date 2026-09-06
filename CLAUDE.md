@@ -122,21 +122,18 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       all no-ops, because a blocking transaction into a browned-out PCA9685 looks
       exactly like a bricked board — silent from boot, USB still enumerated.
       `armBegin()` prints `PCA9685 ok` / `PCA9685 not found`.
-    - **The travel budget is OFF from the dashboard (2026-09-03), by operator
-      request** — the arm now runs unstopped. The *firmware* still has it and
-      `npm run test:arm` still checks it: `armTravel[]` integrates `speed x ms`,
-      `limit` in `armSv[]` caps it in **ms at full speed** signed either way from
-      the last re-home, and at the stop that direction parks while **the other one
-      still works** (or the arm traps itself with nothing to retrieve it). What
-      went is the dashboard half — the `ARM_TRAVEL_MS`/`ARM_LIMIT` copy, the
-      `<meter>` per row, the greyed-out arrow — and the pad now pushes **`arml,0`
-      on every connect**, so the board's stops are off too. The `?armlimits=off`
-      debug arg is gone with it; that is the default now. **The way back is that
-      one line** (`onCmd("arml,0")` in `<Arm/>`'s enabled effect) plus a browser
-      copy of the budget, and `test-arm.mjs` asserts the line is there so it
-      cannot rot silently. RE-HOME stays a button: a board reset boots with the
-      stops back ON until the next connect, and `armz,` clears the count.
-      **The hold bias was never counted** — `armPark()` zeroes `armSpeed[]`,
+    - **The travel budget is GONE (2026-09-05), by operator request** — off the
+      dashboard 2026-09-03 and out of the firmware now: no `limit` column in
+      `armSv[]`, no `ARM_TRAVEL_MS`, no `armLimits`, no `arml,` command, and the
+      `<meter>` per row and greyed-out arrow went with the dashboard half. It was
+      dead reckoning with no encoder behind it, so it drifted, and a joint that
+      parked itself at a phantom stop read as an arm that refuses to move. What
+      stands between a 360 and the frame is now the operator on the button and the
+      `ARM_JOG_MS` deadman behind them. `test-arm.mjs` asserts all four names stay
+      out, so it cannot creep back one file at a time.
+      **`armTravel[]` and RE-HOME stayed**: the sag trim reads the travel count as
+      its only estimate of pose, and `armz,` re-zeroes it after a stall or a shove.
+      **The hold bias is not integrated** — `armPark()` zeroes `armSpeed[]`,
       because a hold that balances gravity moves nothing.
       Every arm command still goes through the one choke point (`armSend()` in
       `app.js`), which is what the test asserts and where anything that has to see
@@ -216,7 +213,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       recorder maths without a board.
     - **`armJog()` has exactly one call site: the BLE `arm,<joint>,<speed>` command.**
       The dashboard's `Arm` pad (`app.js`) holds a button and re-sends every 300ms
-      against the board's 800ms deadman; releasing sends `arm,<joint>,0`, and a bare
+      against the board's 3s deadman; releasing sends `arm,<joint>,0`, and a bare
       `arm,` is all joints off. Don't wire it to a routine or anything unheld — a 360
       with nobody on the button winds itself into the frame, which is what happened
       on the bench. `npm run test:arm` (`server/test-arm.mjs`) re-runs the pulse
@@ -242,15 +239,14 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       `armSv[]` is that same -100..100 bias again *per 1000ms of travel*, and
       `armHoldAt()` applies `hold + sag * armTravel[i]/1000`, clamped to
       `ARM_HOLD_MAX` either way. `armTravel[]` is the only estimate of pose this
-      arm has (the travel budget's own dead-reckoning count, which is why it
-      keeps integrating with the budget switched off) — so it **drifts, and a
-      stall or a shove makes it wrong**; RE-HOME (`armz,`) is the fix, exactly as
-      it is for the budget. `sag` 0 is the old flat bias and is right for
+      arm has (dead reckoning: `speed x ms` since the last re-home — it outlived
+      the travel budget it was built for) — so it **drifts, and a stall or a shove
+      makes it wrong**; RE-HOME (`armz,`) is the fix. `sag` 0 is the old flat bias and is right for
       anything unloaded. **Measure it at two poses**: trim `hold` at home, jog the
       joint out ~2s, trim again — half the difference is `sag`. The test rejects a
-      `sag` steep enough to saturate the clamp inside the joint's own travel
-      budget, because past that point the trim is a knob that has stopped doing
-      anything. The cap is **35**. **Measure it, never guess** — jog the joint up at 3, then 5, then 8
+      `sag` steep enough to saturate the clamp within 5s of full-speed travel
+      (`SAG_REACH`, past the mechanical end of every joint here), because at that
+      point the trim is a knob that has stopped doing anything. The cap is **35**. **Measure it, never guess** — jog the joint up at 3, then 5, then 8
       until it stops sagging, and put that number in with the sign that lifts. Too high
       is a slow unattended climb into the frame, which is why the test caps `hold` at
       25. The trade is current: a held joint drives until the next jog or a panic stop.
@@ -269,7 +265,10 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       BLE like anything else. **The jog buttons stay at full ±100** — a gentle pulse is
       a weak one, and a variable-speed jog is how four working joints once read as
       nothing; the slider trims the hold only, never the jog.
-      `ARM_JOG_MS` 800 is the same deadman the bench page refreshes every 300ms.
+      `ARM_JOG_MS` is 3000 (was 800, raised 2026-09-05 by operator request now that
+      the travel budget is gone) — the same deadman the bench page refreshes every
+      300ms. It is the LAST stop on this arm: a dropped link leaves a joint
+      driving for 3s, which is the trade that was taken.
     - **The pad is driveable from the gamepad** (2026-09-03): **LB/RB** step the
       selected joint (six joints, one stick) and the **right stick Y** jogs it —
       a direction, not a throttle, so it is the same full ±100 the arrows send;
@@ -485,6 +484,17 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     zero — `dist` (nothing in range), `alt` (level with the start) and `lux` (a
     genuinely dark room); everything else shows NOT READING. Add the flag when a
     sensor's zero becomes real, not when a tile looks empty.
+  - **CONSOLE → DEMO DATA is the emergency stand-in for a sensor that dies mid-run**
+    (`DEMO_RANGE`/`demoFill()` in `app.js`, `localStorage.demoMode`, default OFF): every
+    tile `reads()` calls dead gets a plausible wandering number instead of NOT READING,
+    so a wire that falls off in front of the judges doesn't turn the whole board red. It
+    fills a **stale packet too** — the numbers keep moving on a dropped link, which is why
+    the toggle is a deliberate act and not a fallback. **`dist` is never faked**: the sonar
+    is what `until dist <` steers on, and an invented wall is worse than a blank tile.
+    Browser-side only — nothing fake reaches `/api/mega/sensor`, `dataHistory`, a snapshot
+    or Sage, so her readings stay honest while the tiles read pretty.
+    `npm run test:demo` checks the ranges, the untouched live readings and that `dist`
+    stays out.
   - **Stale telemetry is treated as no telemetry** — `PKT_STALE_MS` (3s) in `app.js`.
     The board streams at 10Hz (2Hz behind a screensaver), so the sensor stream *is* the
     heartbeat and no ping command was added. Nothing for 3s and `view` goes null: every
@@ -641,7 +651,8 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     rather than writing cards the dashboard would hide.
   - **Sage can move the arm, but only when the operator asks for it in words, and
     only from the takes the crew recorded** — `"arm"` in her json is a take's
-    NAME, one per line, at most three; `parseArm()` in `sage.js` resolves them
+    NAME, one per line, any number of them (`ARM_MAX_TAKES` came off 2026-09-05
+    — a long chain is still one YES press); `parseArm()` in `sage.js` resolves them
     against `arm_moves/` **server-side** into the flat `{ms, cmd}` tape the
     pad already replays, so the browser needs no second copy of anything. **There
     is deliberately no joint jog**: a freeform burst on a 360 with no encoder is
@@ -653,7 +664,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     **"Only when asked" is a prompt rule, not a gate** — the gate is the YES
     press, exactly like a drive move, and SAGE MOVES off locks the arm too.
     `armJog()` still has one call site; the tape goes out as ordinary `arm,`
-    commands, so the deadman and the travel budget apply unchanged.
+    commands, so the deadman applies unchanged.
   - **Each take carries its own two flags** — the bench fills up with debug takes,
     and a debug take is exactly what should not be one tap away on comp day or in
     Sage's hands. A take in `arm_moves/<name>.json` is either a bare list of steps
@@ -718,6 +729,72 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
 - `OUTDATED/` — retired Mega 2560 + Uno R3 two-board setup, kept only for
   porting reference. Not part of the current build.
 - `cad/`, `step/` — mechanical
+
+## Tapes
+
+A whole manual run written down and replayed as one tap — CONSOLE → **TAPES**.
+`server/tapes/<name>.json`, one file per tape, filename = the name, same rules
+as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
+
+- **A tape is the arm take's `{ms, cmd}`, deliberately** — same shape, same
+  player, so drive, arm, lights and routines live in ONE list and there is no
+  second format to keep in step. `tapePlay()` in `app.js` is `armPlay()` with one
+  branch added, and it runs on `armLedger.tape`, so the panic key kills a tape
+  mid-run exactly as it kills an arm take. It parks the robot at the end (`stop`
+  then `arm,`) — the last step of a recording is whatever the operator's finger
+  was doing, which is not necessarily "stopped".
+- **Recording is a tap in `sendCmd()`, not a per-widget hook** — that is the one
+  place every command leaves the browser (drive, gamepad, arm pad, lights,
+  routines, Sage's cards), so everything is caught with one line and nothing new
+  has to remember to register itself. `blk,` upload chatter is the one thing
+  dropped: a workflow is already its own file.
+- **The clock starts at the first step, not at REC** — the same dead-air-at-the-
+  head bug `armrec.py`'s `clean()` fixes, for the same reason. The **gaps are the
+  take** (the board's deadman lives on them), the operator's reaction time is not.
+- **`@` steps never reach the board**: `@sage <cue>`, `@say <text>`,
+  `@analyze [focus]`, `@log <text>`, `@led <0-255>` are the things only the PC
+  has, and they are the reason a presentation run is a tape and not a `Step`
+  table in `routines.h`. They are typed in by hand when the JSON is edited —
+  nothing records them, because there is no button on the dashboard that means
+  "say this here". Adding a kind is a case in `tapeStep()` plus its name in
+  `TAPE_EVENTS`.
+- **`@sage <cue>` is a cue, `@say <text>` is a script** — and a presentation read
+  off a script is the same words every run and sounds like it. A cue goes to
+  `/api/tape-line`, where she writes the sentence herself in her own voice off
+  the live readings, so a rehearsed run comes out different every time and
+  grounded in the room ("Hello everyone! I'm Sage…" was 0.75s and never twice the
+  same). **The ask goes out when the tape STARTS, not when the step fires** —
+  waiting seconds for a model mid-presentation is dead air — and whatever has not
+  landed by then **falls back to speaking the cue as written**. The venue has no
+  internet, so that fallback is the normal case, not the unhappy one: write the
+  cue as a sentence that is fine to hear out loud, and the model only ever
+  improves on it. One request per distinct cue, `TAPE_LINE_MS` (6s) to answer.
+- **Editing is a textarea of the raw JSON**, and the file on disk is the same
+  thing — trimming a botched approach, retiming a gap, or dropping a `@say` in
+  is a text edit, not a timeline GUI. The server re-checks the shape on save
+  (`{ms >= 0, cmd}`), because hand-edited JSON is a trust boundary.
+- **Not `giga-r1/main/routines.h`** — those are `Step` tables compiled into
+  flash, they have **no arm op**, and `analyze`/`say` do not exist on the board.
+  A tape runs from the PC. The cost is the PC: a BLE drop mid-tape strands it the
+  way a routine or an uploaded BLK program would not.
+- **Sage can ask to play one, and only one, and only when asked in words** —
+  `"tape"` in her json is a name, resolved server-side (`parseTape()` in
+  `sage.js`) into the same `{ms, cmd}` tape the drawer plays, and it lands in the
+  feed as a card with YES/NO exactly like an arm take. Chaining two is refused: a
+  tape is a whole run, so a pair is a routine nobody rehearsed. The names come
+  from the folder (`tapeLine()`), so recording a run is all it takes to give her
+  one — nothing to edit in `chat.md`. CONSOLE → SAGE MOVES locks it with the
+  drive and the arm.
+- **A tape carries the same two flags an arm take does** (`sage_can_use`,
+  `show_in_app`) and the same filter reads them (`armMovesFor()` — one reader,
+  `readTakes(dir)`, for both folders). There is deliberately **no toggle in the
+  drawer**: the file is the editor, so hiding a debug tape from Sage is a line of
+  json. Missing flag = usable, same as arm.
+- English-only strings in the drawer, on purpose: it is a bench tool, and the
+  drawer is not something a judge sees (the feed card is translated).
+  `npm run test:tape` pulls the player out of `app.js` and re-runs the
+  head-shift, the `@` split, the cue prefetch and its offline fallback, and the
+  end-of-tape park off-browser.
 
 ## BLK
 
@@ -792,6 +869,39 @@ than a connection interval has to pump**, the same rule as the draw tick.
 Writes-with-response are ATT-acked from inside `poll()`, so their round-trip time
 is a direct read of whether polling is starved — that is what the bench probe
 measures.
+
+### The board's black box
+
+Why the link died, read back AFTER the fact — `main.ino`'s `logRing` (48 events,
+`{ms, code, arg}`) plus `RCC->RSR`, dumped as `E:log,<ms>,<text>` lines on the
+notify characteristic. The dashboard asks for it on **every connect** (one
+`log,` write right after `startNotifications`), so the reason for the *last*
+drop is in the log panel before the next run starts. `log,clear` wipes it.
+
+- **The ring and the reset register answer different halves of the same
+  question.** A BLE drop leaves the sketch running, so the ring holds it (`ble
+  down`, `loop stall <ms>`, `notify failed`); a **reset wipes the ring**, and
+  the only thing that survives is `RCC->RSR`, read and cleared first thing in
+  `setup()` and logged as the boot event's arg. So: events present = the board
+  stayed up and the link died; ring empty + `last reset brownout` = the motors
+  browned it out and no host-side fix will ever touch it. **Clearing RSR is not
+  optional** — the flags latch, so a boot that skips `RCC_RSR_RMVF` reports the
+  reset from three power-ups ago.
+- **The reset-flag names are the dual-core ones** — `RCC_RSR_SFT1RSTF`,
+  `RCC_RSR_LPWR1RSTF`, `RCC_RSR_IWDG1RSTF` (core 1's). The single-core spellings
+  (`RCC_RSR_SFTRSTF`) do not exist on the H747 and are a compile error.
+- **`loop stall` is the BLE-starvation symptom with a number on it** — a pass
+  over `LOOP_STALL_MS` (150, ~10 connection intervals) means `BLE.poll()` went
+  unfed and inbound packets were *dropped*, which reads as a dead link that comes
+  back. See "BLE stalls" above; the log names it so the ring never just says
+  "ble down" with no cause.
+- Text is formatted **on the board** (`logName()`, `resetWhy()`), so there is no
+  second code table on the dashboard to drift. `npm run test:blackbox` re-runs
+  the ring wrap and the lost-event count off-board and fails if either side
+  loses its half.
+- **RAM only** — a power cut takes the ring (the boot line survives, it is a
+  register). The upgrade if that ever matters is the RTC backup registers (32
+  words that survive reset), not a bigger ring.
 
 ## Screensavers
 
@@ -908,6 +1018,8 @@ conventions:
   recorded takes live in `server/arm_moves/` on the PC, not in flash. A
   routine that works the arm means a new op plus getting the take onto the board;
   today the arm only ever moves from an `arm,` command over BLE/USB.
+  **A run that needs the arm, or `analyze`/`say`, is a tape, not a routine** —
+  see "Tapes" above: recorded off the operator driving, replayed from the PC.
 - Add/update the table, then wire it into `startRoutine()` in `main.ino` and
   (if it's a new named routine, not an edit to `RUN`) a dashboard button, per
   the file's own "Adding a routine" note.

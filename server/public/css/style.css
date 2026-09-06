@@ -1724,6 +1724,20 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 }
 .judge-val i { font: 500 13px/1 var(--mono); font-style: normal; color: var(--ink-3); margin-left: 4px; }
 .judge-cell.is-dead .judge-val { font-size: 13px; color: var(--warn); letter-spacing: 0.1em; }
+/* the operator's agent transcript on the judge tablet. column-reverse over a
+   reversed list pins it to the newest line with no scroll effect. Read-only:
+   a yes/no card is the operator's to press. */
+.judge-chat {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  padding: 12px 14px;
+}
+.judge-chat-log {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column-reverse; gap: 8px;
+}
+.judge-chat .fl-btns { display: none; }
+
 .judge-say {
   font: 500 14px/1.5 var(--mono); color: var(--ink-2);
   border: 1px solid var(--line); border-radius: var(--r);
@@ -1741,3 +1755,21 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 
 .device-mode { cursor: pointer; }
 .device-mode.is-on { color: var(--go); border-color: var(--go); }
+
+/* ---- tapes (console drawer) ---- */
+.tapes { display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow: auto; }
+.tapes-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tapes-name { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
+  font: 500 12px/1 var(--mono, monospace); padding: 8px 10px; min-width: 160px; }
+.tapes-hint { color: var(--ink-2); font: 500 11px/1.4 var(--grotesk); }
+.tapes-err { color: var(--abort); font: 500 11.5px/1.4 var(--grotesk); }
+.btn.is-rec { color: var(--bg); background: var(--abort); border-color: var(--abort); }
+.tapes-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.tapes-row { display: flex; align-items: center; gap: 6px; }
+.tapes-row-name { flex: 1; font: 500 12px/1 var(--mono, monospace); color: var(--ink); }
+.tapes-edit { display: flex; flex-direction: column; gap: 8px; }
+.tapes-json { width: 100%; min-height: 300px; resize: vertical; background: var(--panel-2);
+  border: 1px solid var(--line); color: var(--ink); font: 500 11.5px/1.5 var(--mono, monospace); padding: 10px; }
+
+.boost-row { align-items: center; margin-top: 8px; }
+.boost-row .label { margin-right: 2px; }
