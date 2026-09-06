@@ -1823,8 +1823,8 @@ function AskCard({ e, onAnswer }) {
       ${e.detail ? html`<p class="fl-detail">└ ${e.detail}</p>` : null}
       ${e.warn ? html`<p class="fl-detail fl-guard"><${Icon} n="warn" /> ${e.warn}</p>` : null}
       ${st === "pending" ? html`<div class="fl-btns">
-        <button type="button" class="term-chip is-go" onClick=${() => onAnswer(e, true)}>▶ ${t(e.yes || "move.yes")}</button>
-        <button type="button" class="term-chip" onClick=${() => onAnswer(e, false)}>${t(e.no || "move.no")}</button>
+        <button type="button" class="term-chip is-go" onClick=${() => onAnswer(e, true)}>▶ ${t(e.yes || "move.yes")} <i class="fl-pad">✕</i></button>
+        <button type="button" class="term-chip" onClick=${() => onAnswer(e, false)}>${t(e.no || "move.no")} <i class="fl-pad">○</i></button>
       </div>` : html`<p class=${"fl-detail fl-st is-" + st}>└ ${t("move.st." + st)}${e.note ? ` · ${e.note}` : ""}</p>`}
     </div></div>`;
 }
@@ -1891,7 +1891,7 @@ function Feed({ feed, ai, onAsk, onAnswer }) {
     </div>`;
 }
 
-function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, chats, activeChat, feed, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onToggleTtsProvider, onMock, onAsk, onReport, onAnswer }) {
+function Agent({ ai, tts, ttsProv, hasDeepgram, confirm, onConfirm, packet, connected, speaking, chats, activeChat, feed, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onToggleTtsProvider, onMock, onAsk, onReport, onAnswer }) {
   const intent = deriveIntent(ai, packet, connected);
   const v = assess(packet);
   const briefed = activeChat && activeChat.mission;
@@ -1918,6 +1918,12 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, packet, connected, speaking, cha
           <b class="term-who">SAGE</b>
           <span class="term-state">${t(intent.label)}</span>
           <span class=${"term-verdict is-" + v.kind} title=${v.cause}>${v.label}</span>
+          ${""}
+          <button type="button" class=${"term-perm is-" + (confirm ? "ask" : "bypass")}
+            onClick=${onConfirm} aria-pressed=${!!confirm} title=${t("agent.permTitle")}>
+            <${Icon} key=${confirm} n=${confirm ? "shield" : "shield-off"} />
+            <span class="term-perm-t" key=${"t" + confirm}>${t(confirm ? "agent.permAsk" : "agent.permBypass")}</span>
+          </button>
           <select class="agent-voice-sel" title=${t("agent.voiceTitle")} aria-label=${t("agent.voiceTitle")}
             value=${!tts ? "off" : (hasDeepgram && ttsProv === "deepgram" ? "deepgram" : "edge")}
             onChange=${e => {
@@ -2343,7 +2349,7 @@ function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lan
 
 const SAVERS = ["saverOff", "matrix", "saverBounce", "saverStars", "saverTetris"];
 
-function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, onAnalyze, onNote, enabled, onTutorial, saver, onSaver, moves, onMoves, confirm, onConfirm, buzz, onBuzz, demo, onDemo }) {
+function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, onAnalyze, onNote, enabled, onTutorial, saver, onSaver, moves, onMoves, buzz, onBuzz, demo, onDemo }) {
   if (!open) return null;
   const tabs = [["logs", t("zone.logs")], ["findings", t("zone.analysis")], ["serial", t("zone.serial")], ["motor", t("colo.motor")], ["tapes", "Tapes"]];
   return html`
@@ -2358,11 +2364,6 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
         <button type="button" class=${"serial-btn drawer-moves" + (moves ? " is-on" : "")}
           aria-pressed=${!!moves} onClick=${onMoves} title=${t("drawer.movesTitle")}>
           ${t("drawer.moves")}: ${t(moves ? "drawer.on" : "drawer.off")}
-        </button>
-        ${""}
-        <button type="button" class=${"serial-btn drawer-ask" + (confirm ? " is-on" : "")}
-          aria-pressed=${!!confirm} onClick=${onConfirm} title=${t("drawer.confirmTitle")}>
-          ${t("drawer.confirm")}: ${t(confirm ? "drawer.on" : "drawer.off")}
         </button>
         ${""}
         <button type="button" class=${"serial-btn drawer-demo" + (demo ? " is-on" : "")}
@@ -3445,6 +3446,14 @@ function App() {
     patchFeed(item.id, { state: cancelled ? "stopped" : "done", note: where });
   }, [patchFeed, addLog, sendCmd, analyze]);
 
+  // The newest unanswered card is the one the gamepad and the FPV popup act on:
+  // ✕ accepts, ○ declines, same faces padnav already presses and backs out with.
+  const pendingAsk = (activeChat?.feed || NO_FEED).filter(e => ASK_KINDS[e.kind] && (e.state || "pending") === "pending").slice(-1)[0] || null;
+  const pendingAskRef = useRef(null);
+  pendingAskRef.current = pendingAsk;
+  const onAnswerRef = useRef(onAnswer);
+  onAnswerRef.current = onAnswer;
+
   const fpvMic = useMic(ask);
   const fpvMicRef = useRef(fpvMic);
   fpvMicRef.current = fpvMic;
@@ -3469,6 +3478,13 @@ function App() {
 
       const now = [!!pad.buttons[3]?.pressed, !!pad.buttons[1]?.pressed, !!pad.buttons[9]?.pressed,
         !!pad.buttons[0]?.pressed, !!pad.buttons[8]?.pressed];
+      // a card waiting on the operator owns ✕/○ outright — rec and mic can wait
+      if (pendingAskRef.current) {
+        if (now[3] && !was[3]) onAnswerRef.current(pendingAskRef.current, true);
+        else if (now[1] && !was[1]) onAnswerRef.current(pendingAskRef.current, false);
+        was = now;
+        return;
+      }
       if (now[0] && !was[0]) toggleFpvRef.current();
       if (now[1] && !was[1] && fpvRef.current) fpvMicRef.current.toggle();
       if (now[2] && !was[2] && fpvRef.current) cycleZoomRef.current?.();
@@ -3557,7 +3573,7 @@ function App() {
   toggleDrawerRef.current = toggleDrawer;
   useEffect(() => {
     const id = initPadNav({
-      blocked: () => fpvRef.current || tourOpen,
+      blocked: () => fpvRef.current || tourOpen || !!pendingAskRef.current,
       onMenu: () => toggleDrawerRef.current(),
     });
     return () => clearInterval(id);
@@ -3726,6 +3742,9 @@ function App() {
               <button type="button" class="hud-btn" onClick=${openReplays}>⧉ REPLAYS</button>
               <button type="button" class="hud-btn" onClick=${() => toggleFpv(false)}>△ / ESC</button>
             </div>
+            ${pendingAsk && html`<div class="fpv-ask" role="alertdialog">
+              <${FeedLine} e=${pendingAsk} onAnswer=${onAnswer} />
+            </div>`}
             ${recErr && !rec && html`<p class="rec-err" role="alert">✕ ${recErr}</p>`}
           <//>`}
         ${window.blackout?.platform === "darwin" && html`<div class="mac-titlebar"></div>`}
@@ -3747,7 +3766,7 @@ function App() {
             <${SensorStrip} packet=${view} />
           </div>
           <aside class="col-rail">
-            <${Agent} ai=${ai} tts=${tts} ttsProv=${ttsProv} hasDeepgram=${hasDeepgram} packet=${view} connected=${live} speaking=${speaking}
+            <${Agent} ai=${ai} tts=${tts} ttsProv=${ttsProv} hasDeepgram=${hasDeepgram} confirm=${confirm} onConfirm=${toggleConfirm} packet=${view} connected=${live} speaking=${speaking}
               chats=${chats} activeChat=${activeChat} feed=${activeChat?.feed || NO_FEED} onNewChat=${newChat} onSelectChat=${selectChat}
               onDeleteChat=${deleteChat} onBrief=${briefMission} onSpeak=${speakBrief}
               onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onMock=${mockData} onAsk=${ask}
@@ -3763,7 +3782,7 @@ function App() {
           logs=${logs} serialLines=${serialLines} onClearSerial=${clearSerial}
           chat=${activeChat} onCmd=${sendCmd} onAnalyze=${analyze} onNote=${(n) => addLog(n, "system")}
           enabled=${canDrive} onTutorial=${restartTour}
-          saver=${saver} onSaver=${pickSaver} moves=${moves} onMoves=${toggleMoves} confirm=${confirm} onConfirm=${toggleConfirm}
+          saver=${saver} onSaver=${pickSaver} moves=${moves} onMoves=${toggleMoves}
             buzz=${buzz} onBuzz=${toggleBuzz} demo=${demo} onDemo=${toggleDemo} />`}
       </div>
 

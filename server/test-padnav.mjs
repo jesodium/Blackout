@@ -82,4 +82,15 @@ for (const [, v] of boosts[1].matchAll(/,\s*(\d+)\]/g)) {
 }
 assert.ok(/turbo \? boostRef\.current/.test(app), "R2 boost no longer reads the operator's setting");
 
+// a card waiting on the operator owns the two face buttons: ✕ accepts, ○
+// declines, padnav is blocked so it can't also press whatever has focus, and
+// the card is rendered over FPV so it is never invisible.
+assert.ok(/pendingAskRef\.current\) \{[\s\S]{0,240}?now\[3\][\s\S]{0,60}?onAnswerRef\.current\(pendingAskRef\.current, true\)/.test(app),
+  "✕ no longer accepts the pending card");
+assert.ok(/now\[1\][\s\S]{0,60}?onAnswerRef\.current\(pendingAskRef\.current, false\)/.test(app),
+  "○ no longer declines the pending card");
+assert.ok(/blocked: \(\) =>[^\n]*pendingAskRef\.current/.test(app),
+  "padnav still roams while a card waits — ✕ would press two things at once");
+assert.ok(/class="fpv-ask"/.test(app), "the confirm popup is gone from the FPV view");
+
 console.log("padnav + arcade mix ok");

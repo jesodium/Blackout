@@ -66,5 +66,15 @@ assert.ok(!wantsTool(sage, 2, 3), "loop would reach for a tool it can never use"
 assert.ok(!wantsTool({ tool: null }, 0, 3));
 assert.ok(!wantsTool(sage, 0, 1), "a one-pass budget is answer-only");
 
+// ASK FIRST covers every tool she reaches for, not just the loop's two: the
+// lamp, a finding and a snapshot fire as side effects inside askSage.
+const src = require("fs").readFileSync(require("path").join(__dirname, "server.js"), "utf8");
+const askBody = src.slice(src.indexOf("async function askSage"), src.indexOf("const MAX_TOOL_STEPS"));
+for (const [name, field] of [["lamp", "sage.led"], ["finding", "sage.finding"], ["snapshot", "sage.snapshot"]]) {
+  const line = askBody.split("\n").find((l) => l.trim().startsWith("if (") && l.includes(field));
+  assert.ok(line && line.includes(`allow("${name}"`), `${name} fires without the confirm gate`);
+}
+assert.ok(/askSage\(msgs, \{ maxTokens, confirm \}\)/.test(src), "agentLoop must hand askSage the confirm flag");
+
 console.log("test-auto: ok");
 process.exit(0);

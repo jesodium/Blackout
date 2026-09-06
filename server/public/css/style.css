@@ -19,6 +19,7 @@
   --go:   #3fcf8e;  --go-bg:    rgba(63, 207, 142, 0.14);
   --warn: #f3b62b;  --warn-bg:  rgba(243, 182, 43, 0.14);
   --abort: #ff3b2f; --abort-bg: rgba(255, 59, 47, 0.16);
+  --ask:  #5ea9f5;  --ask-bg:   rgba(94, 169, 245, 0.14);
 
   --display: 'JetBrains Mono', 'Archivo', sans-serif;
 
@@ -173,7 +174,7 @@ body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
 /* ---- layout ---- */
 .cockpit {
   flex: 1; min-height: 0;
-  display: grid; grid-template-columns: minmax(0, 1fr) clamp(330px, 27vw, 404px);
+  display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 30vw, 460px);
   gap: var(--gap); padding: var(--gap);
 }
 .col-main, .col-rail { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; min-height: 0; }
@@ -492,6 +493,7 @@ input[type="range"]:focus { box-shadow: none; }
 .term-who { font: 800 11px/1 var(--grotesk); letter-spacing: 0.18em; color: var(--ink); }
 .term-state {
   font: 500 9px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3);
+  min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .term-verdict {
@@ -502,7 +504,29 @@ input[type="range"]:focus { box-shadow: none; }
 .term-verdict.is-go    { border-left-color: var(--go);     background: var(--go-bg);    color: var(--go); }
 .term-verdict.is-warn  { border-left-color: var(--warn);   background: var(--warn-bg);  color: var(--warn); }
 .term-verdict.is-abort { border-left-color: var(--accent); background: var(--abort-bg); color: var(--accent); }
-.term-bar .agent-voice-sel { flex: none; min-height: 26px; max-width: 92px; font-size: 10px; padding: 0 20px 0 6px; background-color: transparent; }
+/* the bar's controls give width back before anything clips */
+.term-bar select { flex: 0 1 auto; min-width: 0; min-height: 26px; max-width: 108px; font-size: 10px; padding: 0 18px 0 5px; background-color: transparent; }
+/* permissions: one tap, and the colour is the state — blue asks, red goes straight through */
+.term-perm {
+  flex: none; display: inline-flex; align-items: center; gap: 5px; overflow: hidden;
+  min-height: 26px; padding: 0 8px; cursor: pointer;
+  border: 1px solid var(--line); border-left-width: 2px; border-radius: var(--r);
+  font: 700 9px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase;
+  transition: color 0.22s ease, background-color 0.22s ease, border-color 0.22s ease;
+}
+.term-perm .icn { width: 12px; height: 12px; }
+.term-perm.is-ask    { color: var(--ask);   border-left-color: var(--ask);   background: var(--ask-bg); }
+.term-perm.is-bypass { color: var(--abort); border-left-color: var(--abort); background: var(--abort-bg); }
+.term-perm:hover { border-color: var(--line-2); border-left-color: currentColor; }
+.term-perm:active { transform: translateY(1px); }
+/* both children are keyed on the state, so a tap remounts them and the animation replays */
+.term-perm .icn { animation: permIcon 0.32s cubic-bezier(0.2, 0.9, 0.25, 1) both; }
+.term-perm-t { animation: permText 0.32s ease both; }
+@keyframes permIcon { from { transform: rotate(-90deg) scale(0.4); opacity: 0; } }
+@keyframes permText { from { transform: translateX(-6px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .term-perm .icn, .term-perm-t { animation: none; }
+}
 
 .term-hero {
   flex: none; display: grid; place-items: center; padding: 26px 0 24px;
@@ -557,12 +581,13 @@ input[type="range"]:focus { box-shadow: none; }
 .fl-btns { display: flex; gap: 6px; margin-top: 8px; }
 .fl-btns .term-chip:hover { transform: none; }
 .term-chip.is-go { color: var(--go); border-color: var(--go); }
+.fl-pad { opacity: 0.55; font-style: normal; margin-left: 3px; }
 .fl-st.is-done { color: var(--go); }
 .fl-st.is-failed, .fl-st.is-stopped { color: var(--abort); }
 .fl-move.is-declined .fl-body { border-left-color: var(--line); opacity: 0.6; }
 .fl-move.is-running .fl-body { border-left-color: var(--accent); }
 
-.drawer-moves.is-on, .drawer-ask.is-on, .drawer-buzz.is-on { color: var(--go); border-color: var(--go); }
+.drawer-moves.is-on, .drawer-buzz.is-on { color: var(--go); border-color: var(--go); }
 
 .fl-work .fl-mark { color: var(--accent); animation: spin 1.1s linear infinite; }
 .fl-work .fl-t { font: 700 10px/1.6 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
@@ -1642,6 +1667,17 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 }
 .hud-btn.is-rec.is-err { color: var(--abort); border-color: var(--abort); }
 
+/* the same feed card, floated over the FPV view — a confirm must never be
+   invisible just because the operator is flying the camera. */
+.fpv-ask {
+  position: fixed; z-index: 21; top: 56px; left: 50%; transform: translateX(-50%);
+  width: min(520px, calc(100vw - 40px));
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--r-s); padding: 4px 12px;
+  background: rgba(6, 6, 7, 0.86); backdrop-filter: blur(6px);
+  animation: fpv-rise 240ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
 .rep-list-frame { width: min(560px, 92vw); height: auto; max-height: 80dvh; }
 .rep-list { overflow-y: auto; padding: 10px 14px 16px; }
 .rep-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line-2); }
@@ -1678,6 +1714,8 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .icn-timer { --icn: url("/icons/timer.svg"); }
 .icn-warn { --icn: url("/icons/warn.svg"); }
 .icn-gear { --icn: url("/icons/gear.svg"); }
+.icn-shield { --icn: url("/icons/shield.svg"); }
+.icn-shield-off { --icn: url("/icons/shield-off.svg"); }
 
 /* ---- judge view ---- */
 .judge {

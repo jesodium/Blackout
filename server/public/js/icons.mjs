@@ -3,6 +3,7 @@
 
 export const ICON_NAMES = [
   "mic", "camera", "trash", "volume", "mute", "pause", "step", "timer", "warn", "gear",
+  "shield", "shield-off",
 ];
 
 export const prefixIcon = (node, name) => {

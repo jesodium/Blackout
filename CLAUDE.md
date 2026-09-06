@@ -685,10 +685,22 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     already at its stop. Sage's arm cards fire from the agent feed with no pad on
     screen at all. `armSend()` is the choke point the test still asserts on, and
     the panic key kills the tape from the app root.
-  - **CONSOLE → ASK FIRST gates every tool Sage reaches for** (`sageConfirm` in
-    localStorage, default ON): the flag rides on `/api/chat`, `askConfirm()` in
+  - **PERMISSIONS is two modes, ASK or BYPASS** — one tap-to-flip pill in the
+    agent tab's own bar next to the voice picker, not in the console drawer where
+    nobody looking at Sage would find it (`sageConfirm` in localStorage, default
+    ASK). **The colour is the state**: blue `--ask` + `shield` for ASK, red
+    `--abort` + `shield-off` for BYPASS, so a glance at the bar says whether she
+    is on a leash. Both children are keyed on the flag, so a tap remounts them
+    and the swap animation replays — there is no js animation to schedule: the flag rides on `/api/chat`, `askConfirm()` in
     `server.js` parks the agent loop and emits `sage-confirm`, and the browser
-    answers over the socket. **A silent browser reads as NO** after 60s, same rule
+    answers over the socket. **ASK gates every tool, not just the loop's two** —
+    `camera`/`sensors` are gated in `agentLoop()`, and the lamp, a `finding` and a
+    `snapshot` are side effects of the *reply* so they are gated inside
+    `askSage()` (`allow()`); a declined side effect is skipped silently, because
+    it changed nothing there is anything to tell her about. Anything new that
+    fires off a parsed field belongs behind `allow()` too — `npm run test:auto`
+    fails if one of the three loses it. Sage's move/arm/tape cards keep their own
+    YES/NO in the feed and are not part of this. **A silent browser reads as NO** after 60s, same rule
     as blk's `ask`/`find`. It only ever gates the operator's own turns — gating
     the autonomous analysis would park the loop for a minute with nobody watching
     the feed. A declined tool is told to her as "the operator turned that down"

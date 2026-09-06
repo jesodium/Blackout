@@ -750,13 +750,17 @@ function takeSnapshot(reason) {
   recorder.mark("finding", text);
 }
 
-async function askSage(messages, { maxTokens = 400 } = {}) {
+async function askSage(messages, { maxTokens = 400, confirm = false } = {}) {
   const resp = await chat({
     messages,
     max_tokens: maxTokens,
   });
   const sage = parseSage(resp.choices[0]?.message?.content, armMovesFor(readArmMoves(), "sage_can_use"), sageTapes());
-  if (sage.led != null && sage.led !== getLed()) {
+  // the lamp, a finding and a snapshot are side effects of the reply, not loop
+  // steps — they get the same gate as the tools or ASK FIRST only covers half of
+  // what she reaches for. Declined = skipped, silently: it changed nothing.
+  const allow = (name, arg) => (confirm ? askConfirm(name, arg) : true);
+  if (sage.led != null && sage.led !== getLed() && await allow("lamp", String(sage.led))) {
     const from = getLed();
 
     setLed(sage.led)
@@ -766,8 +770,8 @@ async function askSage(messages, { maxTokens = 400 } = {}) {
         emitStep({ kind: "tool", name: "lamp", detail: `${from} → ${sage.led} · failed: ${e.message}` });
       });
   }
-  if (sage.finding) recordFinding(sage.finding, lastImage(messages));
-  if (sage.snapshot) takeSnapshot(sage.snapshot);
+  if (sage.finding && await allow("finding", sage.finding)) recordFinding(sage.finding, lastImage(messages));
+  if (sage.snapshot && await allow("snapshot", sage.snapshot)) takeSnapshot(sage.snapshot);
   return sage;
 }
 
@@ -837,7 +841,7 @@ async function agentLoop(messages, { maxTokens = 400, confirm = false } = {}) {
   const steps = [];
   let sage;
   for (let i = 0; i < MAX_TOOL_STEPS; i++) {
-    sage = await askSage(msgs, { maxTokens });
+    sage = await askSage(msgs, { maxTokens, confirm });
     if (!wantsTool(sage, i, MAX_TOOL_STEPS)) break;
     if (confirm && !(await askConfirm(sage.tool, sage.toolArg))) {
       const step = { kind: "tool", name: sage.tool, arg: sage.toolArg || null,
