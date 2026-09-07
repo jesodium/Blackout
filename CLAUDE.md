@@ -567,6 +567,25 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     **Only one `/stream` at a time exists** — the cam runs a second httpd on :81 whose
     handler never returns — so a reconnect must tear down before opening, and two
     CamViews mounted at once would deadlock.
+    **Sage's stills are BORROWED off that same stream, not fetched from `/capture`**
+    (2026-09-07): one camera, `fb_count` 2, and a `/capture` alongside a saturating
+    stream starves the shared frame buffers — `esp_camera_fb_get` returns NULL or a
+    chunk send trips `send_wait_timeout`, `stream_handler` returns, and *that socket
+    is the only stream*. The old fix was to tear the feed down first (`cam-yield` →
+    grab → `cam-resume`, all deleted now), which cost a black screen on every client
+    and both cams for the ~12s a reopened stream takes to come back. Now
+    `setFrameSource()` (`vision.js`) lets `server.js` ask a browser for its newest
+    frame over the socket — a socket.io **ack with `.timeout(800)`**, so there is no
+    correlation id or pending map to keep, and the bytes ride as binary with no
+    base64 anywhere. `camFrames[]` lives **outside `<CamView/>`** for the same reason
+    `armLedger` does (the component unmounts on a tab switch), and a frame older than
+    `FRAME_LEND_MS` (2s) is refused: a stalled feed must answer *nothing* rather than
+    hand her a frozen picture to report on as now. **`/capture` is still the
+    fallback** and must stay — with no browser there is no stream and nothing to
+    contend with, which is exactly the headless case. `upright()` applies either way;
+    the borrowed bytes are raw, since the feed only ever un-rotates in css.
+    `npm run test:cam` replays the lend rule off `app.js`'s own source and fails if
+    the yield handshake comes back.
   - **Object detection on the feed** — DETECT OBJECTS next to CAMERA SETTINGS draws
     labelled boxes over the live frame (coco-ssd / ssdlite-mobilenet-v2 on tfjs,
     `public/js/detect.mjs`). **Not opencv+yolo**: `model.detect(img)` returns the 80

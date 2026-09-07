@@ -90,4 +90,29 @@ const server = readFileSync("server.js", "utf8");
 assert.match(server, /k\.startsWith\(p\.dir \+ "@"\)/, "flash status ignores the per-chip keys flash.sh writes");
 assert.match(server, /found\[hit\.key\]\+\+/, "flash status counts boards as flags again, so a second cam is invisible");
 
-console.log("cam ok — chip table, slot hosts, claim_cam byte order, two-board plumbing");
+// ---- the borrowed frame ----
+// The cam serves ONE /stream, so Sage's still comes off the dashboard's own feed.
+// Two ways that goes silently wrong: the browser lends a frozen frame from a dead
+// feed (she then reports on a picture of the past), or the server stops preferring
+// the borrow and goes back to /capture, which kills the feed it competes with.
+const vision = readFileSync("vision.js", "utf8");
+assert.match(vision, /if \(frameSource\) \{[\s\S]*?return upright\(b, cam\);/,
+  "grabFrame no longer tries the borrowed frame first — every look reopens /capture");
+assert.match(vision, /return overCam\(cam, \(url\) => grabFrameFrom/,
+  "grabFrame lost its /capture fallback — a headless run now has no vision at all");
+assert.doesNotMatch(server + app, /cam-yield|cam-resume/,
+  "the yield handshake is back: the feed is being torn down for a still again");
+
+// the freshness rule, run off app.js's own source
+const lend = app.match(/socket\.on\("cam-frame", \(cam, ack\) => \{([\s\S]*?)\n    \}\);/)[1];
+const LEND = Number(app.match(/const FRAME_LEND_MS = (\d+)/)[1]);
+assert.ok(LEND <= STALL_MS_OF(app), "a frame may be lent for longer than the feed's own stall watchdog");
+const answer = new Function("camFrames", "FRAME_LEND_MS", "cam", "ack", `const Date = { now: () => 1000 };${lend}`);
+const ask = (frames, cam = 0) => { let got; answer(frames, LEND, cam, (v) => { got = v; }); return got; };
+assert.equal(ask([{ bytes: "fresh", at: 1000 - LEND + 1 }]), "fresh", "a live frame isn't being lent");
+assert.equal(ask([{ bytes: "old", at: 1000 - LEND }]), null, "a stale frame is lent as if it were live");
+assert.equal(ask([]), null, "an unmounted feed answers with something");
+assert.equal(ask([null, { bytes: "arm", at: 1000 }], 1), "arm", "the arm cam's frame is looked up on the wrong index");
+function STALL_MS_OF(src) { return Number(src.match(/const STALL_MS = (\d+)/)[1]); }
+
+console.log("cam ok — chip table, slot hosts, claim_cam byte order, two-board plumbing, borrowed frames");

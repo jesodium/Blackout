@@ -1421,6 +1421,13 @@ const CAM_PICKS = [
 ];
 
 const STALL_MS = 5000;
+// The newest bytes off each feed, so the server can borrow one for Sage instead of
+// opening a second stream the cam can't serve (setFrameSource in vision.js). Lives
+// outside CamView for the same reason armLedger does -- the component unmounts on
+// every tab switch. Stamped, so a stalled feed answers nothing rather than handing
+// her a frozen frame to report on.
+const camFrames = [];
+const FRAME_LEND_MS = 2000;
 
 const DET_MS = 100;
 const DET_MIN_SCORE = 0.5;
@@ -1428,7 +1435,6 @@ const DET_MIN_SCORE = 0.5;
 function CamView({ cam = 0, pip = false, onSwap }) {
   const [state, setState] = useState("loading");
   const [nonce, setNonce] = useState(0);
-  const [yielded, setYielded] = useState(false);
   const [host, setHost] = useState(camHost(cam));
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detect, setDetect] = useState(() => localStorage.getItem("camDetect") === "1");
@@ -1443,20 +1449,10 @@ function CamView({ cam = 0, pip = false, onSwap }) {
   const imgRef = useRef(null);
   const boxRef = useRef(null);
 
-  useEffect(() => {
-    const y = () => { imgRef.current?.removeAttribute("src"); setYielded(true); };
-
-    const r = () => { setYielded(false); setState("loading"); setNonce(n => n + 1); };
-    window.addEventListener("cam:yield", y);
-    window.addEventListener("cam:resume", r);
-    return () => { window.removeEventListener("cam:yield", y); window.removeEventListener("cam:resume", r); };
-  }, []);
-
   const fail = useCallback(() => setState("offline"), []);
   const lastFrame = useRef(0);
 
   useEffect(() => {
-    if (yielded) return;
     const img = imgRef.current;
     if (!img) return;
     const ctl = new AbortController();
@@ -1469,6 +1465,7 @@ function CamView({ cam = 0, pip = false, onSwap }) {
       if (shown) URL.revokeObjectURL(shown);
       shown = url;
       lastFrame.current = Date.now();
+      camFrames[cam] = { bytes, at: lastFrame.current };
       if (first) {
         first = false;
         setState("live");
@@ -1498,14 +1495,14 @@ function CamView({ cam = 0, pip = false, onSwap }) {
       }
     })();
     return () => { alive = false; ctl.abort(); if (shown) URL.revokeObjectURL(shown); };
-  }, [yielded, nonce, host]);
+  }, [nonce, host]);
 
   // one detector, on whichever feed is big: the pip is for lining the gripper up
   // by eye, and a second model doubles 25ms/frame on webgl but 280ms on the cpu
   // fallback, which is past the feed's own ~10fps.
   const canDetect = detect && !pip;
   useEffect(() => {
-    if (!canDetect || yielded || state !== "live") { setDetState("off"); return; }
+    if (!canDetect || state !== "live") { setDetState("off"); return; }
     let alive = true, model = null, busy = false;
     setDetState("loading");
     loadDetector().then((m) => { if (alive) { model = m; setDetState("on"); } })
@@ -1523,27 +1520,27 @@ function CamView({ cam = 0, pip = false, onSwap }) {
       finally { busy = false; }
     }, DET_MS);
     return () => { alive = false; clearInterval(id); };
-  }, [canDetect, yielded, state, rot]);
+  }, [canDetect, state, rot]);
 
   useEffect(() => {
-    if (yielded || state !== "live") return;
+    if (state !== "live") return;
     const id = setInterval(() => {
       if (Date.now() - lastFrame.current > STALL_MS) setNonce(n => n + 1);
     }, 1000);
     return () => clearInterval(id);
-  }, [state, yielded]);
+  }, [state]);
 
   useEffect(() => {
-    if (yielded || state !== "loading") return;
+    if (state !== "loading") return;
     const id = setTimeout(fail, 12000);
     return () => clearTimeout(id);
-  }, [state, yielded, nonce, host, fail]);
+  }, [state, nonce, host, fail]);
 
   useEffect(() => {
-    if (yielded || state !== "offline") return;
+    if (state !== "offline") return;
     const id = setTimeout(() => { setState("loading"); setNonce(n => n + 1); }, 5000);
     return () => clearTimeout(id);
-  }, [state, yielded]);
+  }, [state]);
 
   const base = camUrl(host);
 
@@ -1587,10 +1584,7 @@ function CamView({ cam = 0, pip = false, onSwap }) {
 
   return html`
     <div class=${"stage-view stage-view--cam" + (pip ? " is-pip" : "")}>
-      ${yielded
-        ? html`<div class="viewport-fallback">${t("cam.scanning")}</div>`
-        : state !== "offline"
-
+      ${state !== "offline"
         ? html`<${React.Fragment}>
             <img ref=${imgRef} alt="" class="cam-feed" style=${{ "--cam-rot": rot + "deg" }} />
             ${canDetect ? html`<canvas ref=${boxRef} class="cam-feed cam-boxes" aria-hidden="true" style=${{ "--cam-rot": rot + "deg" }} />` : null}
@@ -1603,10 +1597,10 @@ function CamView({ cam = 0, pip = false, onSwap }) {
               onBlur=${(e) => applyHost(e.target.value)} /><br/>
             <button type="button" class="btn" onClick=${() => { setState("loading"); setNonce(n => n + 1); }}>${t("cam.retry")}</button>
           </div>`}
-      <span class="stage-chip">${t(yielded ? "cam.tag.scanning" : "cam.tag." + state)}</span>
+      <span class="stage-chip">${t("cam.tag." + state)}</span>
       ${pip ? html`<button type="button" class="cam-swap" onClick=${onSwap}
         title=${t("cam.swap")} aria-label=${t("cam.swap")}></button>` : null}
-      ${state === "live" && !yielded && !pip ? html`
+      ${state === "live" && !pip ? html`
         <div class="cam-tools">
           <button type="button" class=${"hud-btn" + (detect ? " is-active" : "")} aria-pressed=${detect}
             onClick=${() => { const v = !detect; setDetect(v); localStorage.setItem("camDetect", v ? "1" : "0"); }}>
@@ -3293,8 +3287,12 @@ function App() {
     });
     socket.on("agent-blurt", d => { if (d?.text && activeRef.current?.mission) sayAgent(d.text, d.timestamp, t("log.blurt", { text: d.text }), "warn"); });
 
-    socket.on("cam-yield", () => window.dispatchEvent(new Event("cam:yield")));
-    socket.on("cam-resume", () => window.dispatchEvent(new Event("cam:resume")));
+    // the server borrows Sage's still off the live feed rather than opening a
+    // second stream on a cam that only serves one
+    socket.on("cam-frame", (cam, ack) => {
+      const f = camFrames[cam || 0];
+      ack(f && Date.now() - f.at < FRAME_LEND_MS ? f.bytes : null);
+    });
     socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, t("log.missionAck"), "ai", d.status); });
 
     socket.on("feed", d => setMirrorFeed(f => !d ? f : d.patch
