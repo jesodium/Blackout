@@ -11,7 +11,7 @@ const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
-const { eyeParts, grabFrames, setLed, getLed, pingCam, rampTo, setCamRot, LAMP_MAX } = require("./vision");
+const { eyeParts, grabFrames, setLed, getLed, pingCam, rampTo, setCamRot, camCount, LAMP_MAX } = require("./vision");
 const { parseSage, snapSummary, wantsTool, armMovesFor } = require("./sage");
 const recorder = require("./recorder");
 
@@ -172,6 +172,7 @@ app.post("/api/chat", async (req, res) => {
       ...(moves ? armLine() : []),
       ...(moves ? tapeLine() : []),
       ...(moves ? [] : [{ role: "system", content: "MOVE LOCK: your drive, your arm and the runs the crew recorded are all locked out right now — say so in your own words as a scout would (\"I'm parked until the crew unlocks me\"), never by naming these fields. Never offer to move, and never set \"move\", \"arm\" or \"tape\" this turn." }]),
+      ...camLine(),
       ...mapped,
     ], { maxTokens: 400, confirm: req.body?.confirm === true });
     if (!moves && reply) { reply.move = null; reply.arm = null; reply.tape = null; }
@@ -422,6 +423,15 @@ app.delete("/api/tapes/:name", (req, res) => {
   res.json({ ok: true });
 });
 
+// A rig with one camera in CAM_URL has no gripper eye, and chat.md hands her the
+// "armcam" tool either way -- so tell her, or she reaches for it and reports her
+// gripper view as dark. Once, though: repeating it every turn is how it ends up
+// in an answer nobody asked for.
+function camLine() {
+  return camCount > 1 ? [] : [{ role: "system", content:
+    "NO GRIPPER EYE: this rig has only the forward camera. Never set \"tool\" to \"armcam\". If the operator asks about the arm camera, say once, plainly, that you have no eye down on the arm — then drop it and never mention it again." }];
+}
+
 // ---- workflows ----
 const BLK_DIR = path.join(__dirname, "workflows");
 fs.mkdirSync(BLK_DIR, { recursive: true });
@@ -593,8 +603,9 @@ app.post("/api/led", async (req, res) => {
 app.post("/api/cam-rot", (req, res) => {
   const v = Number(req.body?.value);
   if (!Number.isFinite(v)) return res.status(400).json({ error: "value in degrees required" });
-  setCamRot(v);
-  res.json({ ok: true, value: v });
+  const cam = Number(req.body?.cam) || 0;
+  setCamRot(v, cam);
+  res.json({ ok: true, value: v, cam });
 });
 
 // ---- sage ----
@@ -822,13 +833,16 @@ async function runTool(name, arg) {
 
     return { arg, detail: `${d.dist} cm ahead · ${d.temp}°C`, text: `Readings as of right now:\n${readingLines(d)}${trendLine(d)}` };
   }
-  if (name === "camera") {
+  if (name === "camera" || name === "armcam") {
+    const cam = name === "armcam" ? 1 : 0;
+    const what = cam ? "gripper eye" : "eye";
     io.emit("cam-yield");
     try {
       await new Promise((r) => setTimeout(r, 400));
-      const eyes = await eyeParts();
-      if (!eyes.length) return { detail: "eye came back dark", text: "Your eye came back dark — no view. Answer from the readings alone and don't mention the camera." };
-      return { detail: "fresh view", img: saveShot(eyes), images: eyes, text: "This is what your eye sees right now. Answer the operator from it, in your own voice." };
+      const eyes = await eyeParts(cam);
+      if (!eyes.length) return { detail: `${what} came back dark`, text: `Your ${what} came back dark — no view. Answer from the readings alone and don't mention the camera.` };
+      return { detail: cam ? "gripper view" : "fresh view", img: saveShot(eyes), images: eyes,
+        text: `This is what your ${what} sees right now — ${cam ? "the arm and whatever is in front of the gripper" : "the passage ahead"}. Answer the operator from it, in your own voice.` };
     } finally {
       io.emit("cam-resume");
     }
@@ -1118,7 +1132,9 @@ const headRef = () => {
 
 app.get("/api/flash/boards", (req, res) => {
   execFile("arduino-cli", ["board", "list", "--format", "json"], { timeout: 5000 }, (err, stdout) => {
-    const found = { giga: false, esp32cam: false, unor4: false };
+    // counts, not flags: two esp32-cams are two boards, and "is one plugged in"
+    // can't tell you the second one was never flashed.
+    const found = { giga: 0, esp32cam: 0, unor4: 0 };
     let ports = [];
     if (!err) {
       try {
@@ -1133,15 +1149,19 @@ app.get("/api/flash/boards", (req, res) => {
       const hit = BOARD_PROFILES.find(p => fqbns.length
         ? fqbns.some(f => f.startsWith(p.fqbnPrefix))
         : p.ports.some(pat => addr.includes(pat)));
-      if (hit) found[hit.key] = true;
+      if (hit) found[hit.key]++;
     }
 
     const flashed = lastFlash();
     const head = headRef();
     const live = BOARD_PROFILES.filter(p => found[p.key]);
+    // flash.sh keys the cams by chip id (dir@chip) so one flashed cam can't mark
+    // the other current — fewer entries than live boards means one is unaccounted for
+    const refs = (p) => Object.entries(flashed)
+      .filter(([k]) => k === p.dir || k.startsWith(p.dir + "@")).map(([, v]) => v);
     const status = live.length === 0 ? "none"
-      : live.some(p => !flashed[p.dir]) ? "unknown"
-      : live.some(p => flashed[p.dir] !== (p.ref || head)) ? "stale"
+      : live.some(p => refs(p).length < found[p.key]) ? "unknown"
+      : live.some(p => refs(p).some(r => r !== (p.ref || head))) ? "stale"
       : "current";
     res.json({ ...found, status, head });
   });

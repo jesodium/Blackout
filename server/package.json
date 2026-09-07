@@ -28,6 +28,7 @@
     "test:auto": "node test-auto.js",
     "test:mjpeg": "node test-mjpeg.mjs",
     "test:detect": "node test-detect.mjs",
+    "test:cam": "node test-cam.mjs",
     "test:arm": "node test-arm.mjs",
     "test:tape": "node test-tape.mjs",
     "test:armrec": "python3 armrec.py --selftest",

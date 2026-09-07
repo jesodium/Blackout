@@ -3,7 +3,7 @@
 
 const SAGE_STATUS = new Set(["clear", "caution", "danger"]);
 
-const SAGE_TOOLS = new Set(["camera", "sensors"]);
+const SAGE_TOOLS = new Set(["camera", "armcam", "sensors"]);
 
 function parseTool(o) {
   const raw = typeof o.tool === "string" ? o.tool.trim() : "";
