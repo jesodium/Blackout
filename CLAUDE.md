@@ -755,6 +755,52 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     **Backwards, not forwards** — `dataHistory` already holds ~100s, so the moment
     that made her unsure is already in hand and there's nothing to wait for.
     `npm run test:auto` covers both (lamp step + convergence, snapshot summary).
+  - **The room's LED strip is the robot's status light** — `ledstrip.js` +
+    `ledd.py`. A Steren SHOME-1282 (whitelabel Tuya 3.5) on the LAN, **not on the
+    Giga**: the three relay channels are the robot's own lights, this one is
+    mains-powered scenery the PC reaches over wifi, so it never touches BLE.
+    Device id, local key and the cached-ip/broadcast-scan connect all live in
+    `~/led.py`, which `ledd.py` imports rather than copying (`LED_PY` overrides
+    the path). `LED_STRIP=0` turns the whole thing off.
+    - **`frame(state, now)` is the entire behaviour and it is pure** — state in,
+      `{h, s, v}` out, phase off the wall clock so nothing is scheduled or reset
+      between states. **Colour says what, motion and depth say how urgent**: blue
+      breathe = waiting on the rover, blackout orange solid = clear, dark red
+      breathe = caution, bright red blink = danger, purple = Sage thinking.
+      Speaking flaps the brightness and **keeps the mood colour**, so the strip
+      never forgets a hazard to animate a sentence.
+      **The two reds are one hue and the gap between them is load-bearing** —
+      caution's *brightest* stays under danger's *dimmest* (400 vs 450), so there
+      is no moment where the two are the same brightness and only the animation
+      phase tells them apart. Widen one range and that stops being true, which is
+      why `npm run test:led` asserts it rather than checking a constant.
+      **Clear is `--accent` (#e1a95f, hue 34) with the saturation lifted to 900**,
+      not the literal 578: there is no white channel to mix, so the brand orange
+      at its own saturation reads as washed-out peach on a strip.
+    - **Everything it shows is already known server-side**, which is why there is
+      one hook per fact and no widget has to remember to update a light:
+      `pushHud()` for the sensor level — **with `dist` NEAR pushed up to red**,
+      which the board's own `hud,` level deliberately does not do (there `warn`
+      is an intermittent beep and `bad` is a held tone, and a wall at 10cm is not
+      worth a held tone) — `askSage()` for both "thinking" and her
+      verdict (one choke point, so chat, analysis and the autonomous loop all
+      come free), a 1s tick on `latestData` for the link. The one exception is
+      **TTS ending, which only the browser knows** — `speakTimed()` emits
+      `speaking` over the socket, host only.
+    - **A one-shot `led.py` call is ~250ms** (every one reconnects and reads
+      status back), so a 5fps pulse needs the socket held: `ledd.py` is a stdin
+      line pipe holding the device, ~50-250ms a write. Frames are **coalesced,
+      not queued** — the reader thread keeps only the newest — so a slow write
+      drops frames instead of accumulating lag, and `push()` skips a repeat.
+      That is also why `v` is quantised to 25.
+    - **The strip parks itself off when stdin closes**, in the daemon rather than
+      in node: `process.on("exit")` never fires on a SIGINT'd server, but the
+      pipe closing is unconditional.
+    - **It may be parked in `music` or `scene` mode** (dps 21) — the app leaves
+      it there — so the daemon writes `colour` on connect or every dps 24 write
+      is ignored. Brightness is the V field of dps 24, because this strip has no
+      dps 22/23.
+    - `POST /api/strip {frame:{h,s,v}}` pins it; `{frame:null}` hands it back.
   - **Cloud pills** (SAGE / VOICE in the topbar) are a reachability probe, not a health
     check: `/api/cloud` HEADs the two api roots, cached ~25s, and the dashboard polls it
     every 30s. The venue has no internet and both Gemini and Deepgram fail quietly

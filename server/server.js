@@ -12,6 +12,7 @@ const { ReadlineParser } = require("@serialport/parser-readline");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
 const { eyeParts, grabFrames, setLed, getLed, pingCam, rampTo, setCamRot, camCount, LAMP_MAX } = require("./vision");
+const ledStrip = require("./ledstrip");
 const { parseSage, snapSummary, wantsTool, armMovesFor } = require("./sage");
 const recorder = require("./recorder");
 
@@ -591,6 +592,18 @@ app.post("/api/tape-line", async (req, res) => {
   }
 });
 
+// the room strip, held or released. {hue 0-359, sat/val 0-1000} pins it there,
+// null hands it back to the status colours.
+app.post("/api/strip", (req, res) => {
+  const b = req.body || {};
+  if (b.fx !== undefined) return res.json({ ok: true, fx: ledStrip.fx(b.fx), fxNames: ledStrip.fxNames });
+  if (b.frame === null || b.frame === undefined) { ledStrip.manual(null); return res.json({ ok: true, manual: null }); }
+  const n = (v, hi) => Math.max(0, Math.min(hi, Math.round(Number(v) || 0)));
+  const f = { h: n(b.frame.h, 359), s: n(b.frame.s ?? 1000, 1000), v: n(b.frame.v ?? 1000, 1000) };
+  ledStrip.manual(f);
+  res.json({ ok: true, manual: f });
+});
+
 app.post("/api/led", async (req, res) => {
   const v = Math.max(0, Math.min(255, Math.round(Number(req.body?.value))));
   if (isNaN(v)) return res.status(400).json({ error: "value 0-255 required" });
@@ -762,10 +775,18 @@ function takeSnapshot(reason) {
 }
 
 async function askSage(messages, { maxTokens = 400, confirm = false } = {}) {
-  const resp = await chat({
-    messages,
-    max_tokens: maxTokens,
-  });
+  // one choke point for every model call, so the strip's "thinking" and her
+  // verdict colour come for free in chat, analysis and the autonomous loop
+  ledStrip.busy(true);
+  let resp;
+  try {
+    resp = await chat({
+      messages,
+      max_tokens: maxTokens,
+    });
+  } finally {
+    ledStrip.busy(false);
+  }
   const sage = parseSage(resp.choices[0]?.message?.content, armMovesFor(readArmMoves(), "sage_can_use"), sageTapes());
   // the lamp, a finding and a snapshot are side effects of the reply, not loop
   // steps — they get the same gate as the tools or ASK FIRST only covers half of
@@ -781,6 +802,7 @@ async function askSage(messages, { maxTokens = 400, confirm = false } = {}) {
         emitStep({ kind: "tool", name: "lamp", detail: `${from} → ${sage.led} · failed: ${e.message}` });
       });
   }
+  if (sage.status) ledStrip.sage(sage.status);
   if (sage.finding && await allow("finding", sage.finding)) recordFinding(sage.finding, lastImage(messages));
   if (sage.snapshot && await allow("snapshot", sage.snapshot)) takeSnapshot(sage.snapshot);
   return sage;
@@ -939,6 +961,10 @@ function pushHud(d) {
   const level = ["ok", "warn", "bad"][Math.max(...Object.values(s).map(v => RANK[v] ?? 0))];
 
   const dist = d.dist >= 999 ? "CLEAR" : `${Math.round(d.dist)}cm`;
+  // a wall inside 10cm is amber to the board (warn = intermittent beep, not a
+  // held tone) but RED on the room strip: the strip is what an operator across
+  // the room is watching, and proximity is the one thing they can act on.
+  ledStrip.level(s.dist === "NEAR" ? "bad" : level);
   const msg = `hud,${level},${Math.round(d.temp)}C ${Math.round(d.humid)}%|${dist}`;
   const now = Date.now();
   if (now - lastHudAt < HUD_MIN_GAP) return;
@@ -1243,6 +1269,9 @@ io.on("connection", (socket) => {
   // whoever answers first wins — the gate is an operator prompt, not a permission
   socket.on("sage-confirm-res", (d) => { if (d && d.id) pendingConfirm.get(d.id)?.(!!d.ok); });
 
+  // the only strip input the server can't derive: TTS ends in the browser
+  socket.on("speaking", (b) => { if (isHost(socket)) ledStrip.speaking(!!b); });
+
   socket.on("set-language", (code) => {
     currentLanguage = (code === "es") ? "es" : "en";
     console.log("Language set:", currentLanguage);
@@ -1277,6 +1306,12 @@ mdnsServer.on("query", (q) => {
     answers: [{ name: MDNS_HOST, type: "A", ttl: 120, data: ip }],
   });
 });
+
+// stale telemetry is no telemetry (PKT_STALE_MS in app.js) — same 3s here, so
+// the strip goes back to the "waiting on the rover" blue when the link drops
+setInterval(() => ledStrip.link(!!latestData && Date.now() - latestData.timestamp < 3000), 1000).unref();
+ledStrip.start();
+process.on("exit", () => ledStrip.stop());
 
 server.listen(PORT, () => {
   console.log(`Server at http://localhost:${PORT}`);
