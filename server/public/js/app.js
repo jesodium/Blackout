@@ -700,6 +700,7 @@ const armStopTape = () => { armLedger.tape.forEach(clearTimeout); armLedger.tape
 // timeouts off one clock, never a loop with waits.
 function armPlay(steps, onCmd) {
   armStopTape();
+  clawClear();
   const last = steps.length ? steps[steps.length - 1].ms : 0;
   armLedger.tape = steps.map((st) => setTimeout(() => armSend(st.cmd, onCmd), st.ms));
   armLedger.tape.push(setTimeout(() => armSend("arm,", onCmd), last + ARM_REPEAT_MS));
@@ -708,6 +709,100 @@ function armPlay(steps, onCmd) {
 
 function armRehome(onCmd) {
   armSend("armz,", onCmd);
+}
+
+// ---- claw ----
+// The gripper is not a jog like the other five. It has two jaw stops and a job
+// (hold the thing), so the arrows on its row are OPEN and CLOSE, not <>. The
+// shape is the Uno R4 bench rig's (claw_cmd.ino + claw_web.py, 2026-09-07):
+//
+//   OPEN  — a one-shot burst that parks itself. THAT is the open limit: a 360
+//           has no end stop to find, so the only thing that can stop it opening
+//           is a clock. Holding the button longer does not open it further, and
+//           it LATCHES OPEN: a second burst just opens further with nothing to
+//           catch it, so the button is dead until CLOSE takes the joint back.
+//   CLOSE — latches. Full pace into the jaw stop to grab, then it stays latched
+//           at CLAW_HOLD so the thing does not drop. Press it again to release.
+//
+// The latch lives out here with armLedger and NOT in <Arm/>, for the reason the
+// ledger does: the pad unmounts on every tab switch, and closing on an object
+// and then flipping to MOTORS to drive is the normal case — a latch that died
+// with the component would open the claw the moment you went to move.
+// IMPORTANT NOTE: a latched claw draws current until it is released. That is
+// the trade for a claw that holds; the panic key and STOP are the release.
+const CLAW_JOINT = 5;
+const CLAW_OPEN_MS = 200;    // one-shot open travel at full pace. 300 on the
+                             // bench, trimmed down twice on the real claw.
+const CLAW_GRAB_MS = 800;    // bench: full pace long enough to reach the stop
+const CLAW_HOLD = 35;        // then hold at this. Pulse width is force here, so
+                             // it is enough torque to keep the jaws shut and not
+                             // enough to sit stalled flat out. MEASURE IT on the
+                             // bench with the actual payload — too low drops it,
+                             // too high cooks the servo.
+// One PCA9685 frame at ARM_HZ (50Hz) = 20ms, and that is the floor on any burst
+// here: the chip only reloads its outputs on a frame boundary, so a burst
+// shorter than one frame is a coin flip on whether the servo sees it at all.
+// The pulse-width floor is the chip's own 12-bit step, 20000us/4096 = 4.88us —
+// but that is NOT the knob to turn. Pulse width is speed AND torque on a 360, so
+// a gentler nudge is a weaker one and a loaded claw will not break away at all;
+// the nudge runs at FULL power and gets small by being SHORT. (The 360's own
+// deadband around neutral is 50-100us wide, tens of chip steps, which is why
+// trimming us to make a small move does nothing until suddenly it does.)
+// Sitting on top of that: the browser's setTimeout and the ~15ms BLE connection
+// interval, so a single frame is about as fine as this link can honestly resolve.
+// test-arm.mjs cross-checks CLAW_FRAME_MS against ARM_HZ in arm.h.
+const CLAW_FRAME_MS = 20;
+const CLAW_NUDGE_MAX = 200;
+const CLAW_NUDGE_KEY = "clawNudgeMs";
+const clawLatch = { on: "", timer: null, repeat: null };
+
+// Timers only — the caller decides whether a stop command still has to go out.
+// The panic key does not need one (the board's `stop` already killed the arm),
+// but a leftover interval would restart it a moment later.
+function clawClear() {
+  clearTimeout(clawLatch.timer); clearInterval(clawLatch.repeat);
+  clawLatch.timer = clawLatch.repeat = null;
+  clawLatch.on = "";
+}
+
+function clawStop(onCmd) {
+  clawClear();
+  armSend(`arm,${CLAW_JOINT},0`, onCmd);
+}
+
+// One deliberate twitch, for letting go of something without flinging the jaws
+// open into their stop. Full power for `ms` and then park — see CLAW_FRAME_MS
+// for why this is timed and not throttled. It drops the latch: the claw is now
+// somewhere between open and closed and neither button should claim it.
+function clawNudge(dir, ms, onCmd) {
+  clawClear();
+  armSend(`arm,${CLAW_JOINT},${dir < 0 ? -100 : 100}`, onCmd);
+  clawLatch.timer = setTimeout(() => armSend(`arm,${CLAW_JOINT},0`, onCmd),
+                               Math.max(CLAW_FRAME_MS, ms));
+}
+
+// dir < 0 opens, > 0 closes — same sign the rest of the pad uses.
+function clawGo(dir, onCmd) {
+  const want = dir < 0 ? "open" : "close";
+  if (clawLatch.on === want) {
+    if (want === "open") return;               // already open: only CLOSE clears it
+    return void clawStop(onCmd);               // press the live CLOSE again = let go
+  }
+  clawClear();
+  clawLatch.on = want;
+  armSend(`arm,${CLAW_JOINT},${dir < 0 ? -100 : 100}`, onCmd);
+  if (dir < 0) {
+    // park the joint but keep the latch lit — the claw IS open, and that is what
+    // the dead OPEN button is telling the operator
+    clawLatch.timer = setTimeout(() => armSend(`arm,${CLAW_JOINT},0`, onCmd), CLAW_OPEN_MS);
+    return;
+  }
+  // grabbed: ease off to the hold and keep it alive against the board's deadman
+  clawLatch.timer = setTimeout(() => {
+    const hold = () => armSend(`arm,${CLAW_JOINT},${CLAW_HOLD}`, onCmd);
+    hold();
+    clawLatch.repeat = setInterval(hold, ARM_REPEAT_MS);
+  }, CLAW_GRAB_MS);
 }
 
 // ---- tapes ----
@@ -777,6 +872,7 @@ function tapeStep(cmd, io, cues) {
 // as it kills an arm take.
 function tapePlay(steps, io) {
   armStopTape();
+  clawClear();
   const cues = new Map();
   for (const st of steps) {
     const cue = st.cmd.startsWith("@sage") ? st.cmd.slice(5).trim() : null;
@@ -916,6 +1012,8 @@ function Arm({ onCmd, enabled }) {
   // one at a time; the on-screen arrows still work on any row and set this too.
   const [sel, setSel] = useState(0);
   const [labels, setLabels] = useState(armLabelsLoad);
+  const [claw, setClaw] = useState(clawLatch.on);   // the ledger is the truth, this only paints it
+  const [nudge, setNudge] = useState(() => +localStorage.getItem(CLAW_NUDGE_KEY) || CLAW_FRAME_MS * 2);
   const [spd, setSpd] = useState(() => +localStorage.getItem(ARM_SPD_KEY) || 100);
   const spdRef = useRef(100);
   spdRef.current = spd;
@@ -932,6 +1030,7 @@ function Arm({ onCmd, enabled }) {
   useEffect(() => {
     if (!enabled) { armStopTape(); return; }
     const id = setInterval(() => {
+      setClaw(() => clawLatch.on);   // released by the panic key while we were unmounted?
       const h = heldRef.current;
       if (!h) return;
       armSend(`arm,${h[0]},${h[1]}`, onCmd);
@@ -962,7 +1061,10 @@ function Arm({ onCmd, enabled }) {
       if (want === w.want) return;   // held: the 300ms repeat keeps it alive
       if (w.want) { heldRef.current = null; armSend(`arm,${w.want.split(",")[0]},0`, onCmd); }
       w.want = want;
-      if (want) { heldRef.current = [i, dir]; armSend(`arm,${want}`, onCmd); }
+      if (want) {
+        if (i === CLAW_JOINT) clawClear();   // a jog takes the joint; two repeats on one channel is a fight
+        heldRef.current = [i, dir]; armSend(`arm,${want}`, onCmd);
+      }
     }, 60);
     return () => { clearInterval(id); if (w.want) armSend(`arm,${w.want.split(",")[0]},0`, onCmd); };
   }, [enabled, onCmd]);
@@ -1014,19 +1116,62 @@ function Arm({ onCmd, enabled }) {
         <div class=${"arm-row" + (i === sel ? " is-sel" : "")} key=${name}>
           <button type="button" class="arm-name" onClick=${() => setSel(i)}
             aria-pressed=${i === sel} title="pick this joint for the gamepad">${name}</button>
-          ${[["\u25c0", -100], ["\u25b6", 100]].map(([glyph, dir]) => html`
+          ${[["\u25c0", -100], ["\u25b6", 100]].map(([glyph, dir]) => {
+            // the claw is a latch, not a jog — see clawGo(). One tap, no holding.
+            const isClaw = i === CLAW_JOINT;
+            const lit = isClaw && claw === (dir < 0 ? "open" : "close");
+            // a second OPEN burst has nothing to stop it, so the button goes dead
+            // until CLOSE. aria-disabled + a class, never disabled: a disabled
+            // button emits no pointer events, and shift-click still names it.
+            const dead = lit && dir < 0;
+            const held = isClaw ? {
+              onClick: (e) => {
+                setSel(i);
+                if (e.shiftKey) return void setRen({ i, dir });
+                if (enabled) { clawGo(dir, onCmd); setClaw(clawLatch.on); }
+              },
+            } : {
+              onPointerDown: press(i, dir, true), onPointerUp: release(i),
+              onPointerLeave: release(i), onPointerCancel: release(i),
+            };
+            return html`
             <button type="button" key=${dir}
-              class=${"pad-btn arm-btn" + (enabled ? "" : " is-off")}
-              aria-disabled=${!enabled}
-              aria-label=${`${name} ${labels[`${i}:${dir}`] || (dir < 0 ? "reverse" : "forward")}`}
-              title="hold to jog — shift-click to name this direction"
-              onPointerDown=${press(i, dir, true)} onPointerUp=${release(i)}
-              onPointerLeave=${release(i)} onPointerCancel=${release(i)}
+              class=${"pad-btn arm-btn" + (enabled && !dead ? "" : " is-off") + (lit ? " is-live" : "")}
+              aria-disabled=${!enabled || dead} aria-pressed=${isClaw ? lit : undefined}
+              aria-label=${`${name} ${labels[`${i}:${dir}`] || (isClaw ? (dir < 0 ? "open" : "close") : (dir < 0 ? "reverse" : "forward"))}`}
+              title=${isClaw
+                ? (dir < 0 ? (dead ? "already open — press CLOSE to take the joint back"
+                                   : "one burst, parks itself — how far it opens is CLAW_OPEN_MS")
+                           : "latches closed and holds — press again to let go")
+                : "hold to jog — shift-click to name this direction"}
+              ...${held}
               onContextMenu=${(e) => e.preventDefault()}>
               <span class="pad-glyph" aria-hidden="true">${glyph}</span>
-              ${labels[`${i}:${dir}`] && html`<small class="arm-lbl">${labels[`${i}:${dir}`]}</small>`}
-            </button>`)}
+              ${(labels[`${i}:${dir}`] || (isClaw && (dir < 0 ? "open" : "close"))) &&
+                html`<small class="arm-lbl">${labels[`${i}:${dir}`] || (dir < 0 ? "open" : "close")}</small>`}
+            </button>`;
+          })}
         </div>`)}
+      <div class="arm-row claw-nudge">
+        <label>
+          <span class="arm-name">nudge</span>
+          <input type="range" min=${CLAW_FRAME_MS} max=${CLAW_NUDGE_MAX} step=${CLAW_FRAME_MS / 2}
+            value=${nudge} disabled=${!enabled}
+            title="how long one nudge drives — full power, so short IS small"
+            onInput=${(e) => { const v = +e.target.value; setNudge(v); localStorage.setItem(CLAW_NUDGE_KEY, v); }} />
+          <small class="claw-ms">${nudge}ms</small>
+        </label>
+        ${[["\u25c0", -100], ["\u25b6", 100]].map(([glyph, dir]) => html`
+          <button type="button" key=${dir}
+            class=${"pad-btn arm-btn" + (enabled ? "" : " is-off")}
+            aria-disabled=${!enabled}
+            aria-label=${`nudge gripper ${dir < 0 ? "open" : "closed"} ${nudge}ms`}
+            title=${`one ${nudge}ms twitch ${dir < 0 ? "open" : "closed"} — for letting go without slamming the jaws`}
+            onClick=${() => enabled && (clawNudge(dir, nudge, onCmd), setClaw(""))}>
+            <span class="pad-glyph" aria-hidden="true">${glyph}</span>
+            <small class="arm-lbl">${dir < 0 ? "open" : "close"}</small>
+          </button>`)}
+      </div>
       </div>
       <small class="drive-hint">${t("drive.armPad")}</small>
       ${ren && html`
@@ -3274,6 +3419,7 @@ function App() {
       blkCancel();
       armStopTape();          // a queued arm step would restart the arm the
                               // instant the panic key stopped it
+      clawClear();            // and so would the claw's hold repeat
       sendCmdRef.current("stop");
     };
     window.addEventListener("keydown", onKey);
