@@ -358,8 +358,10 @@ input[type="range"]:focus { box-shadow: none; }
 
 /* ---- stage: 3d + camera ---- */
 .stage-row { display: flex; flex: 1; min-height: 0; gap: var(--gap); }
+/* the camera is what the operator actually flies on, so it gets the width; the
+   3d attitude view is a glance, not a picture. */
 .stage-3d { flex: 1; min-width: 0; }
-.stage-cam { flex: 1; min-width: 0; }
+.stage-cam { flex: 1.8; min-width: 0; }
 .stage-body { position: relative; flex: 1; min-height: 0; background: var(--inset); }
 
 .stage-view { position: absolute; inset: 0; overflow: hidden; container-type: size; }
@@ -375,6 +377,22 @@ input[type="range"]:focus { box-shadow: none; }
 }
 
 .cam-boxes { pointer-events: none; z-index: 1; }
+
+/* the arm cam rides in the corner of the front one. it stays a container-type:size
+   box, so .cam-feed's 100cqh sizing and the mount rotation work in it unchanged.
+   bottom-LEFT: cam-tools is bottom-right and hud-tele owns the strip below. */
+.stage-view--cam.is-pip {
+  inset: auto auto 56px 10px; z-index: 5;
+  width: min(30%, 190px); height: auto; aspect-ratio: 4 / 3;
+  background: #000; border: 1px solid var(--line-2); border-radius: var(--r-s);
+}
+.cam-swap { position: absolute; inset: 0; z-index: 1; cursor: pointer; background: none; border: 0; }
+.cam-swap:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.is-pip .stage-chip { top: 4px; right: 4px; padding: 4px 6px; font-size: 8px; }
+.is-pip .viewport-fallback { gap: 5px; font-size: 9px; }
+.is-pip .viewport-fallback .btn { min-height: 26px; padding: 0 8px; font-size: 9px; }
+.is-pip .cam-host { width: 88%; min-height: 26px; font-size: 10px; }
+.is-fpv .stage-view--cam.is-pip { bottom: 18px; left: 18px; z-index: 12; }
 
 .viewport-fallback {
   position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column;
@@ -1365,9 +1383,9 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   .cockpit { display: flex; flex-direction: column; }
   .stage-row { flex-direction: column; flex: none; }
   .stage-3d { flex: none; }
-  .stage-3d .stage-body { height: min(44dvh, 440px); flex: none; }
+  .stage-3d .stage-body { height: min(28dvh, 220px); flex: none; }
   .stage-cam { flex: none; }
-  .stage-cam .stage-body { height: min(28dvh, 220px); flex: none; }
+  .stage-cam .stage-body { height: min(44dvh, 440px); flex: none; }
   .agent { flex: none; }
   .agent-body { overflow: visible; }
 
@@ -1381,8 +1399,8 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   .brand img { height: 18px; }
   .lamp-label { display: none; }
   .top-lang { display: none; }
-  .stage-3d .stage-body { height: min(36dvh, 340px); }
-  .stage-cam .stage-body { height: min(24dvh, 180px); }
+  .stage-3d .stage-body { height: min(24dvh, 180px); }
+  .stage-cam .stage-body { height: min(36dvh, 340px); }
   .hud-tele { gap: 4px 14px; padding: 8px 10px; }
   .pad-btn { min-height: 62px; }
 }

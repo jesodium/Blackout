@@ -1,10 +1,30 @@
-// esp32-cam stills and the headlamp. the cam is mounted on its side, so anything
-// a model looks at goes through upright() first.
+// esp32-cam stills and the headlamp. the cams are mounted on their sides, so
+// anything a model looks at goes through upright() first.
 
-const CAM_URLS = (process.env.CAM_URL || "http://192.168.1.111/capture")
-  .split(",").map(s => s.trim()).filter(Boolean);
-let camIdx = 0;
+// CAM_URL holds one group per camera: `;` between cameras, `,` between the
+// addresses one camera answers on (home / hotspot / school). Cam 0 is the front
+// eye and owns the headlamp; cam 1 is the arm/gripper view.
+const CAM_GROUPS = (process.env.CAM_URL || "http://192.168.1.111/capture")
+  .split(";").map(g => g.split(",").map(s => s.trim()).filter(Boolean)).filter(g => g.length);
+const camIdx = CAM_GROUPS.map(() => 0);
+const camCount = CAM_GROUPS.length;
 const sharp = require("sharp");
+
+// try one camera's addresses in turn, sticking to whichever answered last
+async function overCam(cam, fn) {
+  const c = CAM_GROUPS[cam] ? cam : 0;
+  const list = CAM_GROUPS[c];
+  let lastErr = new Error("no camera configured");
+  for (let i = 0; i < list.length; i++) {
+    const idx = (camIdx[c] + i) % list.length;
+    try {
+      const out = await fn(list[idx]);
+      camIdx[c] = idx;
+      return out;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
 
 // ---- mdns ----
 // the cam answers to blackout-cam.local, which node won't resolve on its own
@@ -41,10 +61,13 @@ async function resolveCamUrl(url) {
 
 // ---- frames ----
 // The mount angle, clockwise degrees, same number the dashboard's ROTATE button
-// holds. env is the boot default; the button overrides it at runtime so a cam
-// flipped mid-session doesn't leave Sage reading sideways stills.
-let CAM_ROTATE = parseInt(process.env.CAM_ROTATE ?? "270", 10);
-const setCamRot = (deg) => { CAM_ROTATE = ((Math.round(deg / 90) * 90 % 360) + 360) % 360; };
+// holds. Per camera — the two are mounted differently. env is the boot default;
+// the button overrides it at runtime so a cam flipped mid-session doesn't leave
+// Sage reading sideways stills.
+const CAM_ROTATE = CAM_GROUPS.map(() => parseInt(process.env.CAM_ROTATE ?? "270", 10));
+const setCamRot = (deg, cam = 0) => {
+  CAM_ROTATE[CAM_GROUPS[cam] ? cam : 0] = ((Math.round(deg / 90) * 90 % 360) + 360) % 360;
+};
 
 const SOI = Buffer.from([0xff, 0xd8]);
 const EOI = Buffer.from([0xff, 0xd9]);
@@ -56,30 +79,21 @@ function carveJpeg(buf) {
   return buf.subarray(start, end + 2);
 }
 
-async function upright(jpeg) {
-  if (!CAM_ROTATE) return jpeg;
+async function upright(jpeg, cam = 0) {
+  const deg = CAM_ROTATE[cam] || 0;
+  if (!deg) return jpeg;
   try {
-    return await sharp(jpeg).rotate(CAM_ROTATE).jpeg().toBuffer();
+    return await sharp(jpeg).rotate(deg).jpeg().toBuffer();
   } catch (err) {
     console.error("vision rotate failed, using raw frame:", err.message);
     return jpeg;
   }
 }
 
-async function grabFrame(timeoutMs = 8000) {
-  let lastErr;
-  for (let i = 0; i < CAM_URLS.length; i++) {
-    const idx = (camIdx + i) % CAM_URLS.length;
-    try {
-      const frame = await grabFrameFrom(CAM_URLS[idx], timeoutMs);
-      camIdx = idx;
-      return frame;
-    } catch (e) { lastErr = e; }
-  }
-  throw lastErr;
-}
+const grabFrame = (cam = 0, timeoutMs = 8000) =>
+  overCam(cam, (url) => grabFrameFrom(url, timeoutMs, cam));
 
-async function grabFrameFrom(url, timeoutMs) {
+async function grabFrameFrom(url, timeoutMs, cam = 0) {
   const resolved = await resolveCamUrl(url);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -93,7 +107,7 @@ async function grabFrameFrom(url, timeoutMs) {
       if (done) break;
       buf = Buffer.concat([buf, Buffer.from(value)]);
       const frame = carveJpeg(buf);
-      if (frame) { ctrl.abort(); return upright(frame); }
+      if (frame) { ctrl.abort(); return upright(frame, cam); }
 
       if (buf.length > 1024 * 1024) throw new Error("no full frame in 1MB");
     }
@@ -103,19 +117,17 @@ async function grabFrameFrom(url, timeoutMs) {
   }
 }
 
-async function pingCam(timeoutMs = 3000) {
-  for (let i = 0; i < CAM_URLS.length; i++) {
-    const idx = (camIdx + i) % CAM_URLS.length;
-    try {
-      const resolved = await resolveCamUrl(CAM_URLS[idx]);
-      const u = new URL(resolved);
+async function pingCam(timeoutMs = 3000, cam = 0) {
+  try {
+    return await overCam(cam, async (url) => {
+      const u = new URL(await resolveCamUrl(url));
       u.pathname = "/control";
       u.search = "";
       const resp = await fetch(u, { signal: AbortSignal.timeout(timeoutMs) });
-      if (resp.ok) { camIdx = idx; return true; }
-    } catch {  }
-  }
-  return false;
+      if (!resp.ok) throw new Error(`cam HTTP ${resp.status}`);
+      return true;
+    });
+  } catch { return false; }
 }
 
 // ---- headlamp ----
@@ -123,21 +135,16 @@ let ledLevel = 0;
 
 async function setLed(val) {
   const v = Math.max(0, Math.min(255, Math.round(val)));
-  let lastErr;
-  for (let i = 0; i < CAM_URLS.length; i++) {
-    const idx = (camIdx + i) % CAM_URLS.length;
-    try {
-      const u = new URL(await resolveCamUrl(CAM_URLS[idx]));
-      u.pathname = "/control";
-      u.search = `var=led&val=${v}`;
-      const resp = await fetch(u, { signal: AbortSignal.timeout(3000) });
-      if (!resp.ok) throw new Error(`cam HTTP ${resp.status}`);
-      camIdx = idx;
-      ledLevel = v;
-      return v;
-    } catch (e) { lastErr = e; }
-  }
-  throw lastErr;
+  // the headlamp is cam 0's — the arm cam has no lamp worth driving
+  return overCam(0, async (url) => {
+    const u = new URL(await resolveCamUrl(url));
+    u.pathname = "/control";
+    u.search = `var=led&val=${v}`;
+    const resp = await fetch(u, { signal: AbortSignal.timeout(3000) });
+    if (!resp.ok) throw new Error(`cam HTTP ${resp.status}`);
+    ledLevel = v;
+    return v;
+  });
 }
 const getLed = () => ledLevel;
 
@@ -174,7 +181,7 @@ async function autoLamp() {
   lampAt = Date.now();
 
   if (lampQuiet && lampAt - lampMoved > LAMP_FORGET) { lampLo = 0; lampHi = 255; }
-  const jpeg = await grabFrame(4000);
+  const jpeg = await grabFrame(0, 4000);
   const mean = (await sharp(jpeg).greyscale().stats()).channels[0].mean;
   const from = ledLevel;
   const { next, lo, hi } = lampStep(mean, from, lampLo, lampHi);
@@ -185,39 +192,42 @@ async function autoLamp() {
 }
 
 // ---- what sage sees ----
-let frameCache = { data: "", at: 0 };
+const frameCache = CAM_GROUPS.map(() => ({ data: "", at: 0 }));
 const FRESH_TTL = parseInt(process.env.VISION_FRESH_MS || "1500", 10);
 
 const FAIL_THROTTLE = parseInt(process.env.VISION_TTL || "30", 10) * 1000;
 
 const MAX_FRAME_AGE = parseInt(process.env.VISION_MAX_AGE_MS || "30000", 10);
-let lastFail = 0;
-async function eyeParts() {
-  const stale = Date.now() - frameCache.at >= FRESH_TTL;
-  if (stale && Date.now() - lastFail >= FAIL_THROTTLE) {
+const lastFail = CAM_GROUPS.map(() => 0);
+async function eyeParts(cam = 0) {
+  const c = CAM_GROUPS[cam] ? cam : 0;
+  const cache = frameCache[c];
+  const stale = Date.now() - cache.at >= FRESH_TTL;
+  if (stale && Date.now() - lastFail[c] >= FAIL_THROTTLE) {
     try {
-      const f = await grabFrame();
-      frameCache = { data: f.toString("base64"), at: Date.now() };
-      lastFail = 0;
+      const f = await grabFrame(c);
+      cache.data = f.toString("base64");
+      cache.at = Date.now();
+      lastFail[c] = 0;
     } catch (err) {
       console.error("vision error:", err.message);
-      lastFail = Date.now();
+      lastFail[c] = Date.now();
     }
   }
-  if (frameCache.data && Date.now() - frameCache.at >= MAX_FRAME_AGE) {
-    frameCache = { data: "", at: 0 };
+  if (cache.data && Date.now() - cache.at >= MAX_FRAME_AGE) {
+    cache.data = ""; cache.at = 0;
   }
-  return frameCache.data
-    ? [{ type: "image_url", image_url: { url: `data:image/jpeg;base64,${frameCache.data}` } }]
+  return cache.data
+    ? [{ type: "image_url", image_url: { url: `data:image/jpeg;base64,${cache.data}` } }]
     : [];
 }
 
-async function grabFrames(count = 4, gapMs = 1000) {
+async function grabFrames(count = 4, gapMs = 1000, cam = 0) {
   const parts = [];
   for (let i = 0; i < count; i++) {
     if (i) await new Promise((r) => setTimeout(r, gapMs));
     try {
-      const f = await grabFrame();
+      const f = await grabFrame(cam);
       parts.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${f.toString("base64")}` } });
     } catch (err) {
       console.error("vision grabFrames:", err.message);
@@ -226,4 +236,4 @@ async function grabFrames(count = 4, gapMs = 1000) {
   return parts;
 }
 
-module.exports = { carveJpeg, upright, setCamRot, grabFrame, eyeParts, grabFrames, setLed, getLed, pingCam, autoLamp, lampStep, rampTo, LAMP_MAX };
+module.exports = { carveJpeg, upright, setCamRot, camCount, grabFrame, eyeParts, grabFrames, setLed, getLed, pingCam, autoLamp, lampStep, rampTo, LAMP_MAX };
