@@ -27,7 +27,13 @@ const VIEWER = (() => {
 
 const CAM_HOSTS = ["172.20.10.10", "192.168.1.111", "blackout-cam.local"];
 const CAM_HOST_DEFAULT = CAM_HOSTS[0];
-const camHost = () => localStorage.getItem("camHost") || CAM_HOST_DEFAULT;
+// Cam 0 is the front cam and keeps the old unsuffixed keys, so a rig that already
+// has a host or an angle saved doesn't lose it. Cam 1 is the arm/gripper view --
+// the headlamp is still cam 0's alone, but Sage can ask for cam 1 ("armcam"), so
+// both cams push their angle to the server, each tagged with its index.
+const CAM_DEFAULTS = [CAM_HOST_DEFAULT, "172.20.10.11"];
+const camKey = (base, cam) => base + (cam || "");
+const camHost = (cam = 0) => localStorage.getItem(camKey("camHost", cam)) || CAM_DEFAULTS[cam];
 const camUrl = (host) => `http://${host}:81/stream`;
 
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
@@ -289,7 +295,7 @@ function CamBox({ packet, onFpv }) {
         <button type="button" class="tag fpv-enter" onClick=${onFpv}>△ FPV</button>
       </div>
       <div class="stage-body">
-        <${CamView} />
+        <${CamStage} />
         <dl class="hud-tele">
           <div><dt>${t("hud.dist")}</dt><dd>${fmt(packet?.dist, 0)} cm</dd></div>
         </dl>
@@ -1274,18 +1280,18 @@ const STALL_MS = 5000;
 const DET_MS = 100;
 const DET_MIN_SCORE = 0.5;
 
-function CamView() {
+function CamView({ cam = 0, pip = false, onSwap }) {
   const [state, setState] = useState("loading");
   const [nonce, setNonce] = useState(0);
   const [yielded, setYielded] = useState(false);
-  const [host, setHost] = useState(camHost());
+  const [host, setHost] = useState(camHost(cam));
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detect, setDetect] = useState(() => localStorage.getItem("camDetect") === "1");
   const [detState, setDetState] = useState("off");
   // Mount angle, kept per rig. It drives three things at once: the css transform on
   // the feed, the frame detect.mjs hands the model, and the still Sage is shown --
   // flip the cam and rotate only the picture and her vision quietly goes sideways.
-  const [rot, setRot] = useState(() => camNorm(Number(localStorage.getItem("camRot") ?? CAM_ROT_DEFAULT)));
+  const [rot, setRot] = useState(() => camNorm(Number(localStorage.getItem(camKey("camRot", cam)) ?? CAM_ROT_DEFAULT)));
 
   const [sliders, setSliders] = useState({ brightness: -1, contrast: -1, saturation: 0, ae_level: 0, led: 15 });
   const [picks, setPicks] = useState({ wb_mode: 0, framesize: 8 });
@@ -1321,7 +1327,7 @@ function CamView() {
       if (first) {
         first = false;
         setState("live");
-        localStorage.setItem("camHost", host);
+        localStorage.setItem(camKey("camHost", cam), host);
         forceAwbRef.current();
       }
     };
@@ -1349,8 +1355,12 @@ function CamView() {
     return () => { alive = false; ctl.abort(); if (shown) URL.revokeObjectURL(shown); };
   }, [yielded, nonce, host]);
 
+  // one detector, on whichever feed is big: the pip is for lining the gripper up
+  // by eye, and a second model doubles 25ms/frame on webgl but 280ms on the cpu
+  // fallback, which is past the feed's own ~10fps.
+  const canDetect = detect && !pip;
   useEffect(() => {
-    if (!detect || yielded || state !== "live") { setDetState("off"); return; }
+    if (!canDetect || yielded || state !== "live") { setDetState("off"); return; }
     let alive = true, model = null, busy = false;
     setDetState("loading");
     loadDetector().then((m) => { if (alive) { model = m; setDetState("on"); } })
@@ -1368,7 +1378,7 @@ function CamView() {
       finally { busy = false; }
     }, DET_MS);
     return () => { alive = false; clearInterval(id); };
-  }, [detect, yielded, state, rot]);
+  }, [canDetect, yielded, state, rot]);
 
   useEffect(() => {
     if (yielded || state !== "live") return;
@@ -1393,8 +1403,8 @@ function CamView() {
   const base = camUrl(host);
 
   const applyHost = (v) => {
-    const h = v.trim() || CAM_HOST_DEFAULT;
-    localStorage.setItem("camHost", h);
+    const h = v.trim() || CAM_DEFAULTS[cam];
+    localStorage.setItem(camKey("camHost", cam), h);
     setHost(h); setState("loading"); setNonce(n => n + 1);
   };
 
@@ -1416,9 +1426,11 @@ function CamView() {
   const turn = () => {
     const v = ROTS[(ROTS.indexOf(rot) + 1) % ROTS.length];
     setRot(v);
-    localStorage.setItem("camRot", v);
-    // Sage grabs her own stills server-side, so the angle has to go with it
-    fetch("/api/cam-rot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) }).catch(() => {});
+    localStorage.setItem(camKey("camRot", cam), v);
+    // Sage grabs her own stills server-side, so the angle has to go with it --
+    // for both cams now that she can ask for the gripper view. Posting it without
+    // the cam index is exactly how her vision goes sideways.
+    fetch("/api/cam-rot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v, cam }) }).catch(() => {});
   };
 
   const pick = (varName, val) => {
@@ -1429,25 +1441,27 @@ function CamView() {
   };
 
   return html`
-    <div class="stage-view stage-view--cam">
+    <div class=${"stage-view stage-view--cam" + (pip ? " is-pip" : "")}>
       ${yielded
         ? html`<div class="viewport-fallback">${t("cam.scanning")}</div>`
         : state !== "offline"
 
         ? html`<${React.Fragment}>
             <img ref=${imgRef} alt="" class="cam-feed" style=${{ "--cam-rot": rot + "deg" }} />
-            ${detect ? html`<canvas ref=${boxRef} class="cam-feed cam-boxes" aria-hidden="true" style=${{ "--cam-rot": rot + "deg" }} />` : null}
+            ${canDetect ? html`<canvas ref=${boxRef} class="cam-feed cam-boxes" aria-hidden="true" style=${{ "--cam-rot": rot + "deg" }} />` : null}
           <//>`
         : html`<div class="viewport-fallback">${t("cam.offline")}<br/>
             <small>${base}</small><br/>
             <input type="text" class="cam-host" defaultValue=${host} aria-label=${t("zone.camera")}
-              placeholder=${CAM_HOST_DEFAULT}
+              placeholder=${CAM_DEFAULTS[cam]}
               onKeyDown=${(e) => { if (e.key === "Enter") applyHost(e.target.value); }}
               onBlur=${(e) => applyHost(e.target.value)} /><br/>
             <button type="button" class="btn" onClick=${() => { setState("loading"); setNonce(n => n + 1); }}>${t("cam.retry")}</button>
           </div>`}
       <span class="stage-chip">${t(yielded ? "cam.tag.scanning" : "cam.tag." + state)}</span>
-      ${state === "live" && !yielded ? html`
+      ${pip ? html`<button type="button" class="cam-swap" onClick=${onSwap}
+        title=${t("cam.swap")} aria-label=${t("cam.swap")}></button>` : null}
+      ${state === "live" && !yielded && !pip ? html`
         <div class="cam-tools">
           <button type="button" class=${"hud-btn" + (detect ? " is-active" : "")} aria-pressed=${detect}
             onClick=${() => { const v = !detect; setDetect(v); localStorage.setItem("camDetect", v ? "1" : "0"); }}>
@@ -1474,6 +1488,20 @@ function CamView() {
             </div>` : null}
         </div>` : null}
     </div>`;
+}
+
+// Both feeds run at once -- the arm cam is for lining the gripper up, which you do
+// while driving. The two CamViews stay mounted in a fixed order and only swap a
+// class: keying them on which one is big would tear down and reopen both streams
+// on every tap, and a reopened stream is ~12s of "loading".
+function CamStage() {
+  const [main, setMain] = useState(() => Number(localStorage.getItem("camMain")) || 0);
+  const swap = (cam) => { setMain(cam); localStorage.setItem("camMain", String(cam)); };
+  return html`
+    <${React.Fragment}>
+      ${[0, 1].map(cam => html`
+        <${CamView} key=${cam} cam=${cam} pip=${cam !== main} onSwap=${() => swap(cam)} />`)}
+    <//>`;
 }
 
 // ---- fpv ----
@@ -1802,6 +1830,7 @@ function Stopwatch({ since }) {
 // ---- agent feed ----
 const TOOLS = {
   camera:   { icon: "camera", label: "tool.camera",  of: "tool.lookAt" },
+  armcam:   { icon: "camera", label: "tool.armcam",  of: "tool.lookAt" },
   sensors:  { icon: "timer",  label: "tool.sensors",  of: "tool.readingsOf" },
   snapshot: { icon: "step",   label: "tool.snapshot" },
   finding:  { icon: "warn",   label: "tool.finding" },
@@ -2465,7 +2494,8 @@ function UpdateModal({ open, phase, boards, log, code, onFlash, onClose }) {
         ${phase === "detect" && html`
           <p>${anyBoard(boards) ? t("update.st." + boards.status) : t("update.plugin")}</p>
           <div class="flash-boards">
-            ${board(t("update.esp32cam"), boards.esp32cam)}
+            ${board(t("update.esp32cam"), boards.esp32cam,
+              boards.esp32cam > 1 ? t("update.detectedN", { n: boards.esp32cam }) : null)}
             ${board(t("update.mainboard"), boards.giga || boards.unor4,
               boards.giga ? "Giga R1 · V3" : boards.unor4 ? "Uno R4 · V2" : null)}
           </div>`}

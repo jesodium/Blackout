@@ -31,13 +31,51 @@ static void ledUpdate() {
   }
 }
 
-// ---- wifi ----
-#define MDNS_NAME "blackout-cam"
+// ---- identity ----
+// THE SAME SKETCH GOES ON BOTH BOARDS. The eFuse MAC is burned at the factory and
+// is unique per chip, so each board looks itself up here rather than carrying a
+// hand-set id that gets flashed to the wrong one -- two boards answering the same
+// mDNS name is a collision the server's 60s resolve cache turns into "cam 2
+// silently serves cam 1's frames", which reads as a dead second cam.
+//
+// Adding a board: flash it, watch serial. An unknown chip prints
+//   chip a1b2c3d4e5f6 -> UNCLAIMED
+// and comes up on DHCP as blackout-cam-e5f6. That id is the eFuse MAC read as one
+// integer -- its bytes run the other way round from the MAC the hotspot's client
+// list shows, so read it off serial and don't try to match the two by eye.
+// Paste that id into the slot you want
+// and reflash. After that the boards are self-sorting forever -- upload to
+// whichever one is plugged in, it knows which camera it is.
+static const uint64_t CAM_CHIPS[] = {
+  0x000000000000ULL,  // slot 1 -- front cam: Sage's stills and the headlamp
+  0x000000000000ULL,  // slot 2 -- arm/gripper cam; Sage sees it only via the "armcam" tool
+};
+static const int CAM_SLOTS = sizeof(CAM_CHIPS) / sizeof(CAM_CHIPS[0]);
 
+int camSlot = 0;          // 1..CAM_SLOTS, or 0 for a chip that isn't in the table
+char camName[24] = "blackout-cam";
+
+static void camIdentify() {
+  uint64_t chip = ESP.getEfuseMac();
+  for (int i = 0; i < CAM_SLOTS; i++)
+    if (CAM_CHIPS[i] && CAM_CHIPS[i] == chip) { camSlot = i + 1; break; }
+
+  if (camSlot == 1)      snprintf(camName, sizeof camName, "blackout-cam");
+  else if (camSlot > 1)  snprintf(camName, sizeof camName, "blackout-cam%d", camSlot);
+  // an unclaimed board still has to come up and be reachable, or you can't read
+  // its id off the network to claim it
+  else snprintf(camName, sizeof camName, "blackout-cam-%04x", (unsigned)(chip & 0xFFFF));
+
+  Serial.printf("chip %012llx -> %s (%s)\n", chip,
+                camSlot ? camName : "UNCLAIMED", camSlot ? "static IP" : "DHCP");
+}
+
+// ---- wifi ----
 #define CAM_NETWORK SECRET_SSID_HOTSPOT
 
-#define CAM_USE_STATIC true
-IPAddress CAM_IP (172, 20, 10, 10);
+// slot 1 -> .10, slot 2 -> .11. Keep in step with CAM_DEFAULTS in the dashboard's
+// app.js -- npm run test:detect fails if the two drift.
+#define CAM_OCTET_BASE 9
 IPAddress CAM_GW (172, 20, 10, 1);
 IPAddress CAM_MASK(255, 255, 255, 240);
 
@@ -163,6 +201,7 @@ void startServer() {
 void setup() {
   Serial.begin(115200);
   ledcAttach(LED_PIN, 5000, 8); ledcWrite(LED_PIN, 0);
+  camIdentify();   // before the camera init, so a bad ribbon can't hide the id
 
   camera_config_t c = {};
   c.ledc_channel = LEDC_CHANNEL_0; c.ledc_timer = LEDC_TIMER_0;
@@ -200,9 +239,12 @@ void setup() {
     ssid == SECRET_SSID_SCHOOL  ? SECRET_PASS_SCHOOL :
     ssid == SECRET_SSID_HOTSPOT ? SECRET_PASS_HOTSPOT :
     (Serial.println("UNKNOWN SSID — check CAM_NETWORK define"), "");
-  Serial.printf("joining [%s]%s\n", ssid, CAM_USE_STATIC ? " (static IP)" : " (DHCP)");
-  if (CAM_USE_STATIC && !WiFi.config(CAM_IP, CAM_GW, CAM_MASK, CAM_GW))
-    Serial.println("WiFi.config failed — falling back to DHCP");
+  Serial.printf("joining [%s]%s\n", ssid, camSlot ? " (static IP)" : " (DHCP)");
+  if (camSlot) {
+    IPAddress ip(172, 20, 10, CAM_OCTET_BASE + camSlot);
+    if (!WiFi.config(ip, CAM_GW, CAM_MASK, CAM_GW))
+      Serial.println("WiFi.config failed — falling back to DHCP");
+  }
   WiFi.begin(ssid, pass);
   for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
     for (int j = 0; j < 10; j++) { delay(50); ledUpdate(); }
@@ -222,9 +264,10 @@ void setup() {
     for (int i = 0; i < 40; i++) { delay(50); ledUpdate(); }
   }
   ledcWrite(LED_PIN, 0);
-  MDNS.begin(MDNS_NAME);
-  Serial.printf("\nnet up: http://%s  cam=%s\n",
-                WiFi.localIP().toString().c_str(), camOk ? "OK" : "FAIL");
+  MDNS.begin(camName);
+  Serial.printf("\nnet up: http://%s (%s.local)  cam=%s\n",
+                WiFi.localIP().toString().c_str(), camName, camOk ? "OK" : "FAIL");
+  if (!camSlot) Serial.println("UNCLAIMED — paste the chip id above into CAM_CHIPS and reflash");
   if (camOk) Serial.println("stream: :81/stream   capture: /capture");
   startServer();
 }
