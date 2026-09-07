@@ -11,7 +11,7 @@ const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
-const { eyeParts, grabFrames, setLed, getLed, pingCam, rampTo, setCamRot, camCount, LAMP_MAX } = require("./vision");
+const { eyeParts, grabFrames, setFrameSource, setLed, getLed, pingCam, rampTo, setCamRot, camCount, LAMP_MAX } = require("./vision");
 const ledStrip = require("./ledstrip");
 const { parseSage, snapSummary, wantsTool, armMovesFor } = require("./sage");
 const recorder = require("./recorder");
@@ -858,16 +858,10 @@ async function runTool(name, arg) {
   if (name === "camera" || name === "armcam") {
     const cam = name === "armcam" ? 1 : 0;
     const what = cam ? "gripper eye" : "eye";
-    io.emit("cam-yield");
-    try {
-      await new Promise((r) => setTimeout(r, 400));
-      const eyes = await eyeParts(cam);
-      if (!eyes.length) return { detail: `${what} came back dark`, text: `Your ${what} came back dark — no view. Answer from the readings alone and don't mention the camera.` };
-      return { detail: cam ? "gripper view" : "fresh view", img: saveShot(eyes), images: eyes,
-        text: `This is what your ${what} sees right now — ${cam ? "the arm and whatever is in front of the gripper" : "the passage ahead"}. Answer the operator from it, in your own voice.` };
-    } finally {
-      io.emit("cam-resume");
-    }
+    const eyes = await eyeParts(cam);
+    if (!eyes.length) return { detail: `${what} came back dark`, text: `Your ${what} came back dark — no view. Answer from the readings alone and don't mention the camera.` };
+    return { detail: cam ? "gripper view" : "fresh view", img: saveShot(eyes), images: eyes,
+      text: `This is what your ${what} sees right now — ${cam ? "the arm and whatever is in front of the gripper" : "the passage ahead"}. Answer the operator from it, in your own voice.` };
   }
   return null;
 }
@@ -1067,7 +1061,6 @@ async function runAiAnalysis(mode, focus) {
     return;
   }
 
-  io.emit("cam-yield");
   try {
     const eyes = await eyeParts();
     emitStep({ kind: "tool", name: "analysis", arg: focus || null, img: saveShot(eyes),
@@ -1088,8 +1081,6 @@ async function runAiAnalysis(mode, focus) {
     console.error("AI analysis error:", err.message);
     io.emit("ai-analysis", { error: err.message, timestamp: Date.now() });
     recorder.mark("analysis", "analysis failed: " + err.message);
-  } finally {
-    io.emit("cam-resume");
   }
 }
 
@@ -1215,6 +1206,20 @@ const clients = new Map();
 
 const grants = new Map();
 const isHost = (s) => ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(s.handshake.address);
+
+// Sage borrows her still off a dashboard's live feed instead of opening a second
+// stream the cam can't serve -- see setFrameSource in vision.js. The host first, any
+// other client second (a judge tablet's feed is still a feed); no client, no frame,
+// or no answer inside 800ms all resolve null and fall through to /capture.
+const frameSocket = () => {
+  const all = [...io.sockets.sockets.values()];
+  return all.find(isHost) || all[0] || null;
+};
+setFrameSource((cam) => new Promise((resolve) => {
+  const s = frameSocket();
+  if (!s) return resolve(null);
+  s.timeout(800).emit("cam-frame", cam, (err, frame) => resolve(err ? null : frame));
+}));
 const kindOf = (ua = "") => /iPad|Tablet/.test(ua) ? "iPad" : /iPhone/.test(ua) ? "iPhone"
   : /Android/.test(ua) ? "Android" : /Macintosh/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "device";
 const pushClients = () => io.emit("clients", [...clients].map(([id, c]) => ({ id, ...c })));

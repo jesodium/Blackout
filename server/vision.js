@@ -90,8 +90,24 @@ async function upright(jpeg, cam = 0) {
   }
 }
 
-const grabFrame = (cam = 0, timeoutMs = 8000) =>
-  overCam(cam, (url) => grabFrameFrom(url, timeoutMs, cam));
+// Sage's stills come off a dashboard's own /stream when one is open. The cam
+// serves exactly ONE stream (its handler never returns) and a concurrent /capture
+// starves the shared frame buffers, which is what used to blink the feed out every
+// time she looked -- the old fix was to tear the feed down first (cam-yield) and
+// pay ~12s of "loading" to reopen it. No browser = no stream = no contention, so
+// with nothing to borrow from we just fall through to /capture.
+let frameSource = null;
+const setFrameSource = (fn) => { frameSource = fn; };
+
+const grabFrame = async (cam = 0, timeoutMs = 8000) => {
+  if (frameSource) {
+    try {
+      const b = await frameSource(cam);
+      if (b?.length) return upright(b, cam);
+    } catch (err) { console.error("borrowed frame:", err.message); }
+  }
+  return overCam(cam, (url) => grabFrameFrom(url, timeoutMs, cam));
+};
 
 async function grabFrameFrom(url, timeoutMs, cam = 0) {
   const resolved = await resolveCamUrl(url);
@@ -236,4 +252,4 @@ async function grabFrames(count = 4, gapMs = 1000, cam = 0) {
   return parts;
 }
 
-module.exports = { carveJpeg, upright, setCamRot, camCount, grabFrame, eyeParts, grabFrames, setLed, getLed, pingCam, autoLamp, lampStep, rampTo, LAMP_MAX };
+module.exports = { carveJpeg, upright, setCamRot, setFrameSource, camCount, grabFrame, eyeParts, grabFrames, setLed, getLed, pingCam, autoLamp, lampStep, rampTo, LAMP_MAX };
