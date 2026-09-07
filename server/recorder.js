@@ -33,7 +33,7 @@ async function tick() {
   rec.busy = true;
   const t = Date.now() - rec.t0;
   try {
-    const jpeg = await grabFrame(4000);
+    const jpeg = await grabFrame(0, 4000);
     if (!rec) return;
     const f = String(rec.frames.length).padStart(4, "0") + ".jpg";
     fs.writeFileSync(path.join(rec.dir, f), jpeg);
