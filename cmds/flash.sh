@@ -99,7 +99,9 @@ INO="$ROOT/esp32-cam/main/main.ino"
 claim_cam() {
   [[ "${CAM_CLAIM:-1}" == "0" ]] && return 1
   local mac
-  mac=$(grep -m1 -oE 'MAC: ([0-9a-f]{2}:){5}[0-9a-f]{2}' "$log" | cut -d' ' -f2) || true
+  # esptool pads this line out with spaces ("MAC:" then a column), so match any
+  # run of whitespace — a single-space pattern silently claimed nothing at all.
+  mac=$(grep -m1 -oiE '([0-9a-f]{2}:){5}[0-9a-f]{2}' "$log") || true
   [[ -z "$mac" ]] && return 1
   python3 - "$INO" "$mac" <<'EOT'
 import re, sys
@@ -166,14 +168,20 @@ while IFS='|' read -r dir fqbn port label; do
     sleep 1
   fi
 
-  # Giga R1 re-enumerates after compile — get fresh port
-  fresh=$(detect_boards | grep "^$dir|" | head -1 | cut -d'|' -f3)
-  port="${fresh:-$port}"
+  # Giga R1 re-enumerates after compile, so its port can move under us. The cams
+  # do not — and two of them share $dir, so a `head -1` here handed cam 2 cam 1's
+  # port and flashed the same board twice while reporting both. Only go looking
+  # if the port we were handed has actually gone away.
+  fresh="$port"
+  if [[ ! -e "$port" ]]; then
+    fresh=$(detect_boards | grep "^$dir|" | grep -v "|$port|" | head -1 | cut -d'|' -f3)
+    port="${fresh:-$port}"
+  fi
 
   # one silent retry: the board is mid-re-enumeration often enough that the first
   # upload hits a port that existed a second ago. anything that fails twice is real.
   ( arduino-cli upload -p "$port" --fqbn "$fqbn" "$src" >"$log" 2>&1 ||
-    { sleep 2; port=$(detect_boards | grep "^$dir|" | head -1 | cut -d'|' -f3 || true)
+    { sleep 2; [[ -e "$port" ]] || port=$(detect_boards | grep "^$dir|" | head -1 | cut -d'|' -f3 || true)
       arduino-cli upload -p "${port:-$fresh}" --fqbn "$fqbn" "$src" >"$log" 2>&1; } ) &
   spin $! "  Upload → $port"
 
@@ -193,6 +201,12 @@ while IFS='|' read -r dir fqbn port label; do
         fi ;;
       full)
         echo "  ⚠  $chip is a third camera and CAM_CHIPS only has two slots — add one in main.ino" >&2 ;;
+      *)
+        # no verdict at all: the MAC never came out of the upload log, so this
+        # board is still unclaimed and will come up on DHCP with no static IP.
+        # Silence here is what made two unclaimed cams look like a clean run.
+        [[ "${CAM_CLAIM:-1}" == "0" ]] ||
+          echo "  ⚠  no MAC in the upload log — cam left UNCLAIMED (no static IP)" >&2 ;;
     esac
   fi
   record "$dir${chip:+@$chip}" "$ref"

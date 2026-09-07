@@ -51,7 +51,12 @@ if (existsSync(".env")) {
 const dir = mkdtempSync(`${tmpdir()}/camtest-`);
 try {
   mkdirSync(`${dir}/esp32-cam/main`, { recursive: true });
-  writeFileSync(`${dir}/esp32-cam/main/main.ino`, ino);
+  // blank the table in the COPY: the real one fills up the moment the cams are
+  // claimed on the bench, and a fixture that reads live repo state turns "both
+  // cams are claimed" into a red test.
+  writeFileSync(`${dir}/esp32-cam/main/main.ino`,
+    ino.replace(/CAM_CHIPS\[\] = \{[\s\S]*?\}/,
+      (t) => t.replace(/0x[0-9A-Fa-f]{12}ULL/g, "0x000000000000ULL")));
   const fn = sh.match(/^claim_cam\(\) \{[\s\S]*?^\}/m)[0];
   const driver = `
 set -uo pipefail

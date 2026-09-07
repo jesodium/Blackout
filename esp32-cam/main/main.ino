@@ -47,8 +47,8 @@ static void ledUpdate() {
 // and reflash. After that the boards are self-sorting forever -- upload to
 // whichever one is plugged in, it knows which camera it is.
 static const uint64_t CAM_CHIPS[] = {
-  0x000000000000ULL,  // slot 1 -- front cam: Sage's stills and the headlamp
-  0x000000000000ULL,  // slot 2 -- arm/gripper cam; Sage sees it only via the "armcam" tool
+  0x98BB31FE8CE0ULL,  // slot 1 -- front cam: Sage's stills and the headlamp
+  0x283830FE8CE0ULL,  // slot 2 -- arm/gripper cam; Sage sees it only via the "armcam" tool
 };
 static const int CAM_SLOTS = sizeof(CAM_CHIPS) / sizeof(CAM_CHIPS[0]);
 
