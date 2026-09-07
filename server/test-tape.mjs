@@ -29,6 +29,7 @@ const sandbox = {
   armStopTape: () => { ledger.tape.forEach(clearTimeout); ledger.tape = []; },
   armLedger: ledger,
   ARM_REPEAT_MS: 250,
+  clawClear: () => {},   // the claw latch is test-arm's; a tape just has to release it
   getLang: () => "en",
   AbortSignal: { timeout: () => null },
   speak: (txt) => sent.push("SAY:" + txt),

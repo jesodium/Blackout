@@ -186,6 +186,76 @@ assert.ok(!/function Arm\([^]*?useState\(\(\) => ARM_JOINTS\.map\(\(\) => 0\)\)/
 assert.ok(/armStopTape\(\);\s*\/\/ a queued arm step/.test(app),
   "a queued playback step survives the panic key and restarts the arm");
 
+// ---- the claw ----
+// OPEN is a one-shot burst that parks itself and CLOSE latches. On a 360 with no
+// end stop the clock IS the open limit, so run the latch off the real constants.
+const num = (k) => +app.match(new RegExp(`^const ${k} = (-?\\d+)`, "m"))[1];
+const CLAW = { j: num("CLAW_JOINT"), open: num("CLAW_OPEN_MS"), grab: num("CLAW_GRAB_MS"), hold: num("CLAW_HOLD") };
+assert.equal(joints[CLAW.j].name, "gripper", "CLAW_JOINT no longer points at the gripper");
+assert.ok(CLAW.grab < JOG, `the grab (${CLAW.grab}ms) outlives the ${JOG}ms deadman — it would park mid-close`);
+assert.ok(CLAW.hold > 0 && CLAW.hold <= 50, "the hold must be a gentle CLOSING push, not a stall or a release");
+assert.ok(pulse(joints[CLAW.j], CLAW.hold) !== joints[CLAW.j].neutral,
+  "the hold rounds away to neutral — the claw would free-wheel open");
+
+// the nudge floor is one PCA9685 frame — the chip only reloads on a frame
+// boundary, so anything shorter is a coin flip on whether the servo sees it
+assert.equal(num("CLAW_FRAME_MS"), 1000 / HZ,
+  `CLAW_FRAME_MS is not one ${HZ}Hz frame — a shorter nudge may not reach the servo at all`);
+// pulse width is speed AND torque on a 360, so a nudge gets small by being SHORT,
+// never by being gentle — a throttled nudge on a loaded claw does not break away
+assert.ok(/function clawNudge[^]*?\$\{dir < 0 \? -100 : 100\}/.test(app),
+  "clawNudge() throttles instead of shortening — a weak pulse will not move a loaded claw");
+
+// replay the latch off app.js's own source, on a fake clock
+const REPEAT = num("ARM_REPEAT_MS");
+const src = app.match(/^const CLAW_JOINT[^]*?^function clawGo[^]*?\n\}/m)[0];
+let now = 0; const timers = []; const sent = [];
+const fake = {
+  setTimeout: (fn, ms) => (timers.push({ at: now + ms, fn, every: 0 }), timers.length),
+  setInterval: (fn, ms) => (timers.push({ at: now + ms, fn, every: ms }), timers.length),
+  clearTimeout: (id) => id && (timers[id - 1] = { at: Infinity, fn: () => {}, every: 0 }),
+};
+fake.clearInterval = fake.clearTimeout;
+const { clawGo, clawStop, clawClear, latch } = new Function("armSend", "ARM_REPEAT_MS",
+  "setTimeout", "setInterval", "clearTimeout", "clearInterval",
+  `${src}; return { clawGo, clawStop, clawClear, latch: clawLatch };`
+)((cmd) => sent.push({ t: now, cmd }), REPEAT,
+  fake.setTimeout, fake.setInterval, fake.clearTimeout, fake.clearInterval);
+const tick = (to) => { for (; now <= to; now++) for (const w of timers) if (w.at === now) { w.at = w.every ? now + w.every : Infinity; w.fn(); } };
+
+clawGo(-100);                       // OPEN
+tick(CLAW.open + 5);
+assert.deepEqual(sent, [{ t: 0, cmd: `arm,${CLAW.j},-100` }, { t: CLAW.open, cmd: `arm,${CLAW.j},0` }],
+  "OPEN is not one burst that parks itself — that burst IS the open limit");
+tick(JOG * 2);
+assert.equal(sent.length, 2, "OPEN kept driving — it must never sit against the jaw stop");
+// it stays LIT after it parks: a second burst opens further with no end stop to
+// catch it, so OPEN is dead until CLOSE takes the joint back
+assert.equal(latch.on, "open", "OPEN did not stay latched — the button would re-fire");
+clawGo(-100); clawGo(-100); tick(now + JOG);
+assert.equal(sent.length, 2, "a second OPEN fired — each burst opens further with nothing to stop it");
+clawGo(100);
+assert.equal(latch.on, "close", "CLOSE did not take the joint back off a latched-open claw");
+clawStop(); clawClear();
+
+sent.length = 0; timers.length = 0; now = 0; clawClear();
+clawGo(100);                        // CLOSE: grab, then hold, forever
+tick(CLAW.grab + REPEAT * 3);
+assert.equal(sent[0].cmd, `arm,${CLAW.j},100`, "CLOSE does not grab at full pace");
+assert.ok(sent.slice(1).every((x) => x.cmd === `arm,${CLAW.j},${CLAW.hold}`),
+  "CLOSE does not ease off to the hold once it has the thing");
+assert.ok(sent.length >= 4, "the hold is not re-sent — the board's deadman would drop the payload");
+for (let i = 2; i < sent.length; i++)
+  assert.ok(sent[i].t - sent[i - 1].t <= JOG, "a gap in the hold repeat is longer than the deadman");
+assert.equal(latch.on, "close", "CLOSE did not latch");
+
+const n = sent.length;
+clawGo(100);                        // pressing the live one again releases
+assert.equal(sent.at(-1).cmd, `arm,${CLAW.j},0`, "pressing CLOSE again does not release");
+tick(now + JOG * 2);
+assert.equal(sent.length, n + 1, "the hold repeat outlived the release");
+assert.equal(latch.on, "");
+
 // ---- sage's arm proposals ----
 // She does not drive the arm — she names a take the crew recorded on the bench
 // and the operator presses YES. Every arm move she can ask for is one somebody

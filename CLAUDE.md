@@ -278,6 +278,50 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       that also rolls the rover off the bench is how a joint gets wound into the
       frame. Chrome hides a gamepad from the page until it sends input, so a
       silent controller reads as no controller.
+    - **The gripper row is a LATCH, not a jog** (`clawGo()` in `app.js`, ported
+      2026-09-07 off the Uno R4 bench rig — `claw_cmd.ino` + `claw_web.py`).
+      **OPEN is a one-shot burst that parks itself after `CLAW_OPEN_MS`, and that
+      burst IS the open limit**: a 360 has no end stop to find, so nothing but a
+      clock can stop it opening, and holding the button longer does not open it
+      further. **It latches open too** — a second burst just opens further with
+      nothing to catch it, so once it has fired the OPEN button is greyed and
+      dead until CLOSE takes the joint back (greyed with a class and
+      `aria-disabled`, never `disabled` — a disabled button emits no pointer
+      events and the shift-click naming would go with it). **CLOSE latches** — full pace for `CLAW_GRAB_MS` to reach the jaw
+      stop, then it eases off to `CLAW_HOLD` (a gentle *closing* push, not a
+      stall) and re-sends that every `ARM_REPEAT_MS` forever. Press the live
+      button again to release; the panic key releases it too.
+      **The latch lives beside `armLedger`, outside `<Arm/>`**, for the same
+      reason the ledger does: the pad unmounts on every tab switch, and closing
+      on something and *then* flipping to MOTORS to drive is the normal case — a
+      latch that died with the component would drop the payload the moment you
+      went to move. Leaving remote/disarming deliberately does NOT release it.
+      A recorded take or a tape does (`armPlay`/`tapePlay` call `clawClear()`) —
+      its own `arm,5,*` steps would fight the hold repeat.
+      **Under the gripper row is a NUDGE slider plus its own two arrows** — one
+      deliberate twitch, for letting go of something without flinging the jaws
+      into their stop and snapping them. **The nudge gets small by being SHORT,
+      never by being gentle**: pulse width is speed *and* torque on a 360, so a
+      throttled nudge on a loaded claw does not break away at all, and the
+      slider is milliseconds at full power. Its floor is `CLAW_FRAME_MS` (20) =
+      one `ARM_HZ` frame — the PCA9685 only reloads its outputs on a frame
+      boundary, so a shorter burst is a coin flip on whether the servo sees it,
+      and the browser's `setTimeout` plus the ~15ms BLE connection interval sit
+      on top of that anyway. (The chip's own pulse step is 20000us/4096 = 4.88us
+      and the 360's deadband is 50-100us wide, tens of steps — which is why
+      trimming *us* to get a small move does nothing until suddenly it does.
+      Don't reach for that knob.) A nudge **drops the latch**: the claw is now
+      between open and closed and neither button should claim it. Kept per rig
+      in `localStorage.clawNudgeMs`; `npm run test:arm` cross-checks
+      `CLAW_FRAME_MS` against `ARM_HZ` in `arm.h` and fails if the nudge starts
+      throttling instead of shortening.
+      **`CLAW_HOLD` is a bench knob and pulse width is force here** — too low
+      drops the payload, too high sits stalled and cooks the servo. Measure it
+      with the actual payload. **A latched claw draws current until released**;
+      that is the trade for a claw that holds. `npm run test:arm` replays the
+      latch off `app.js`'s own source on a fake clock — that OPEN parks and never
+      latches, that CLOSE eases to the hold and never gaps longer than
+      `ARM_JOG_MS`, and that a second press releases.
     - **Shift-click an arrow to name that direction** — "gripper ▶" says nothing
       about which way is open. The word renders inside the square and lives in
       `localStorage.armLabels` (per rig, not in a table anyone has to reflash).
