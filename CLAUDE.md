@@ -498,8 +498,12 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     The tick is 10ms, and that is the floor worth
     having: the ssd1306 refreshes itself at ~100Hz, so anything sent faster is never
     displayed. Anything new that blocks in `loop()` for longer than the draw tick is a
-    dropped frame and a command-latency hit both — the dht11's own 30ms read is one
-    already. There is no `panelDelay()` to hide behind any more: make it non-blocking,
+    dropped frame and a command-latency hit both — the dht11's read is one already.
+    **That read is ~50ms and it was 550ms until 2026-09-08**: the DHT11 library
+    `delay()`s a further 500ms inside every `readTemperatureHumidity()` to enforce
+    the sensor's ~1Hz max rate (`DHT11.cpp:48`, `_delayMS = 500`), which
+    `ENV_INTERVAL` (2s) already does. `dht.setDelay(0)` in `setup()` is what keeps
+    it off; drop that line and the disconnects come straight back. There is no `panelDelay()` to hide behind any more: make it non-blocking,
     the way the sonar now is.
     **Frame rate is not what makes it look animated** — travel is. A move of one pixel,
     or one that only ever lands on two positions, reads as two stills cutting between
@@ -985,11 +989,29 @@ longer than the 30-50ms connection interval.
 `blePump()` in `main.ino` is the fix — `BLE.poll()` guarded on `bleReady`, called
 from inside the known blockers: the u8g2 byte callback's end-of-transfer (~16 a
 frame, so the 23ms blind spot becomes ~1.5ms), either side of `pulseIn()`, and
-after the dht's ~30ms bit-bang. **Anything new that blocks `loop()` for longer
+after the dht's ~50ms read (18ms start pulse + ~30ms bit-bang; see `dht.setDelay(0)`
+below). **Anything new that blocks `loop()` for longer
 than a connection interval has to pump**, the same rule as the draw tick.
 Writes-with-response are ATT-acked from inside `poll()`, so their round-trip time
 is a direct read of whether polling is starved — that is what the bench probe
 measures.
+
+**`blePump()` only reaches blockers it is called from, and two big ones hid behind
+library `delay()` for six weeks** (found 2026-09-08, the ring was *nothing but*
+`loop stall 550ms` every 2s):
+- the **DHT11 library's own 500ms `delay()`** inside every read — see
+  `dht.setDelay(0)` above. 550ms is ~40-70 missed connection events at the
+  7.5-15ms interval.
+- the **panel's 5s re-init**, ~310ms of u8g2's own blocking delays. Those go
+  through u8g2's **gpio/delay callback, not `byte_cb`** — so the `blePump()` in
+  the transfer hook never ran inside them. It is deleted (the failure it guarded
+  against, "a glitch on a no-CS spi bus", left when the panel moved to i2c).
+
+So the rule is sharper than "pump in the blockers": **a library call that blocks
+is a blind spot even when the surrounding code pumps**, because the pump is on
+*your* side of the call. Read the number off the black box rather than reasoning
+about it — after both fixes the worst `loop()` pass measured 145ms against a
+550ms before, and the ring is empty.
 
 ### The board's black box
 
@@ -1020,6 +1042,11 @@ drop is in the log panel before the next run starts. `log,clear` wipes it.
   second code table on the dashboard to drift. `npm run test:blackbox` re-runs
   the ring wrap and the lost-event count off-board and fails if either side
   loses its half.
+- **Read it over USB, not over BLE** — `dumpLog()` prints every line to `Serial`
+  unconditionally and only mirrors to `sensorChar` when connected, so `log,` down
+  the USB cable works when the link is exactly the thing that is broken. That is
+  how the 550ms stall above was found. (Drain the port: the 10Hz CSV buries the
+  dump otherwise — same reason `armrec.py` has `_drain()`.)
 - **RAM only** — a power cut takes the ring (the boot line survives, it is a
   register). The upgrade if that ever matters is the RTC backup registers (32
   words that survive reset), not a bigger ring.
@@ -1041,7 +1068,7 @@ in `app.js` (**the index is the wire value** — same order as the enum), and a
 - **A screensaver drops the sensor cadence to 2Hz** while the rover is otherwise idle
   (`SAVER_SEND_INTERVAL` / `SAVER_ENV_INTERVAL`). Everything below the send gate in
   `loop()` blocks the panel: one sonar ping is
-  ~25ms of dead time and a dht11 read ~30ms, inside a 10ms draw tick — at 10Hz that's a
+  ~25ms of dead time and a dht11 read ~50ms, inside a 10ms draw tick — at 10Hz that's a
   visible run of dropped frames, which is exactly what reads as stutter. Anything moving (routine, blk, live drive) clears `busy` and puts the
   full 10Hz back, so this only ever costs telemetry resolution on a parked rover. If the
   animation ever stutters again, look for something new that blocks in `loop()` — not at
