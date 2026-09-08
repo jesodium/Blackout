@@ -149,15 +149,19 @@ unsigned long connectAt = 0;
 uint8_t oledFrame = 0;
 unsigned long lastOledDraw = 0;
 unsigned long lastOledPhase = 0;
-unsigned long lastOledInit = 0;
 
 #define OLED_DRAW_INTERVAL 40   // ~23ms of i2c a frame at 400k; a shorter tick re-fires on itself
 #define OLED_PHASE_INTERVAL 120
-// the panel is a full-buffer device redrawn every tick, so a dark screen is never a lost
-// buffer -- it is the ssd1306's own config gone: begin() landing before the panel's rail
-// settled, or a glitch on a no-CS spi bus eating a command byte. re-sending the init
-// sequence (no reset pulse, ~25 bytes) puts it back; the next sendBuffer repaints.
-#define OLED_REINIT_INTERVAL 5000
+// There WAS a periodic re-init here (every 5s, re-sending the init sequence to
+// recover a panel whose config had gone). It is deleted: its stated reason was "a
+// glitch on a no-CS spi bus eating a command byte", and the panel moved to i2c on
+// 2026-09-02 -- i2c is addressed and ACKed, so that failure mode left with the spi
+// bus. What it cost was ~310ms of u8g2's own blocking delays every 5s, and those
+// delays go via the gpio/delay callback rather than byte_cb, so blePump() in the
+// transfer hook never runs inside them: ~20-40 missed connection events a pop,
+// dropped inbound packets, a link that dies for no visible reason.
+// If a panel ever comes up dark again, the way back is oled.initDisplay() +
+// setPowerSave(0) + setContrast(255) ONCE on a trigger, never on a timer.
 
 #define MTX_CW 6
 #define MTX_CH 8
@@ -660,17 +664,6 @@ void tickBuzz() {
 
 void tickPanel() {
   unsigned long now = millis();
-  // Only while nothing is linked: initDisplay() is ~310ms of u8g2's own blocking
-  // delays, which BLE.poll() cannot see through (the delays go via the gpio/delay
-  // callback, not byte_cb, so blePump() in the transfer hook never runs). Fired
-  // every 5s it was ~20-40 missed connection events a pop. A dark panel mid-run is
-  // cosmetic; a dropped link is not -- so recovery happens between runs instead.
-  if (!bleConnected && now - lastOledInit >= OLED_REINIT_INTERVAL) {
-    lastOledInit = now;
-    oled.initDisplay();
-    oled.setPowerSave(0);
-    oled.setContrast(255);
-  }
   if (now - lastOledPhase >= OLED_PHASE_INTERVAL) { lastOledPhase = now; oledFrame++; }
   if (now - lastOledDraw >= OLED_DRAW_INTERVAL) {
     lastOledDraw = now;
