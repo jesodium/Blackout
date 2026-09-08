@@ -660,7 +660,12 @@ void tickBuzz() {
 
 void tickPanel() {
   unsigned long now = millis();
-  if (now - lastOledInit >= OLED_REINIT_INTERVAL) {
+  // Only while nothing is linked: initDisplay() is ~310ms of u8g2's own blocking
+  // delays, which BLE.poll() cannot see through (the delays go via the gpio/delay
+  // callback, not byte_cb, so blePump() in the transfer hook never runs). Fired
+  // every 5s it was ~20-40 missed connection events a pop. A dark panel mid-run is
+  // cosmetic; a dropped link is not -- so recovery happens between runs instead.
+  if (!bleConnected && now - lastOledInit >= OLED_REINIT_INTERVAL) {
     lastOledInit = now;
     oled.initDisplay();
     oled.setPowerSave(0);
@@ -692,6 +697,13 @@ void setup() {
   Serial.println(bmeOk ? "BME280 ok" : "BME280 not found");
 
   armBegin();   // pca9685 on Wire (d20/d21); jogged by the ble arm, cmd
+
+  // The DHT11 lib delay()s 500ms inside every read to enforce the sensor's ~1Hz
+  // max rate. ENV_INTERVAL (2s) already paces it, so that delay is pure blind
+  // spot -- 550ms with no BLE.poll(), ~40-70 missed connection events at a
+  // 7.5-15ms interval, which drops inbound packets and reads as a dead link.
+  // The black box logged it as "loop stall 550ms" every 2s, forever.
+  dht.setDelay(0);
 
   Wire2.begin();
   Wire2.beginTransmission(BH1750_ADDR);
