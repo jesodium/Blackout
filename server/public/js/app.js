@@ -25,13 +25,30 @@ const VIEWER = (() => {
     !["localhost", "127.0.0.1", "[::1]", "::1"].includes(location.hostname);
 })();
 
-const CAM_HOSTS = ["172.20.10.10", "192.168.1.111", "blackout-cam.local"];
-const CAM_HOST_DEFAULT = CAM_HOSTS[0];
+// One group per camera, the addresses that cam answers on, tried in order -- the
+// same shape (and the same reason) as CAM_URL / overCam() in vision.js: the cams
+// move between the sim router, the iPhone hotspot and school DHCP, and a feed
+// pinned to one address dies on every move while Sage, who walks the list, keeps
+// working. That asymmetry is exactly what "Sage sees the cam but the feed is
+// blank" looks like.
+const CAM_HOSTS = [
+  ["192.168.1.10", "172.20.10.10", "192.168.1.111", "blackout-cam.local"],
+  ["192.168.1.11", "172.20.10.11", "blackout-cam2.local"],
+];
+const CAM_HOST_DEFAULT = CAM_HOSTS[0][0];
 // Cam 0 is the front cam and keeps the old unsuffixed keys, so a rig that already
 // has a host or an angle saved doesn't lose it. Cam 1 is the arm/gripper view --
 // the headlamp is still cam 0's alone, but Sage can ask for cam 1 ("armcam"), so
 // both cams push their angle to the server, each tagged with its index.
-const CAM_DEFAULTS = [CAM_HOST_DEFAULT, "172.20.10.11"];
+const CAM_DEFAULTS = CAM_HOSTS.map(g => g[0]);
+// The saved host is a starting guess, not a fact -- a working one is written back
+// on the first frame, so the feed re-pins itself to whatever answered.
+// A hand-typed host that isn't in the list gets one try, then the list takes over:
+// an override that doesn't stream is not worth retrying forever.
+const nextCamHost = (cam, h) => {
+  const list = CAM_HOSTS[cam] || CAM_HOSTS[0];
+  return list[(list.indexOf(h) + 1) % list.length];
+};
 const camKey = (base, cam) => base + (cam || "");
 const camHost = (cam = 0) => localStorage.getItem(camKey("camHost", cam)) || CAM_DEFAULTS[cam];
 const camUrl = (host) => `http://${host}:81/stream`;
@@ -1538,9 +1555,12 @@ function CamView({ cam = 0, pip = false, onSwap }) {
 
   useEffect(() => {
     if (state !== "offline") return;
-    const id = setTimeout(() => { setState("loading"); setNonce(n => n + 1); }, 5000);
+    const id = setTimeout(() => {
+      setHost(h => nextCamHost(cam, h));
+      setState("loading"); setNonce(n => n + 1);
+    }, 5000);
     return () => clearTimeout(id);
-  }, [state]);
+  }, [state, cam]);
 
   const base = camUrl(host);
 

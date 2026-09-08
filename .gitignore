@@ -78,3 +78,6 @@ hand_cal.json
 
 # mediapipe model, 7.8MB — hand.py prints the curl line if it is missing
 hand_landmarker.task
+
+# ── Alcatel MW45AF control panel (local tool, holds the modem password) ──
+mw45/

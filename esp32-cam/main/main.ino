@@ -71,13 +71,29 @@ static void camIdentify() {
 }
 
 // ---- wifi ----
-#define CAM_NETWORK SECRET_SSID_HOTSPOT
-
-// slot 1 -> .10, slot 2 -> .11. Keep in step with CAM_DEFAULTS in the dashboard's
+// Pick the network at flash time. Each row carries its own subnet, because a
+// static IP only means anything on the network it was minted for -- flashing
+// HOME while CAM_GW still said 172.20.10.1 used to hand the cam an address its
+// router would never route.
+// ip[3] is the slot base: slot 1 -> .10, slot 2 -> .11, and .1 of the same
+// subnet is the gateway. Keep in step with CAM_DEFAULTS in the dashboard's
 // app.js -- npm run test:detect fails if the two drift.
-#define CAM_OCTET_BASE 9
-IPAddress CAM_GW (172, 20, 10, 1);
-IPAddress CAM_MASK(255, 255, 255, 240);
+// A row with ip {0,0,0,0} is DHCP + mDNS only.
+enum { NET_HOME, NET_SCHOOL, NET_HOTSPOT, NET_ROUTER };
+#define CAM_NETWORK NET_HOTSPOT
+
+static const struct {
+  const char *ssid, *pass;
+  uint8_t ip[4], mask[4];
+} NETS[] = {
+  { SECRET_SSID_HOME,    SECRET_PASS_HOME,    {0,0,0,0},      {0,0,0,0} },
+  { SECRET_SSID_SCHOOL,  SECRET_PASS_SCHOOL,  {0,0,0,0},      {0,0,0,0} },
+  { SECRET_SSID_HOTSPOT, SECRET_PASS_HOTSPOT, {172,20,10,9},  {255,255,255,240} },
+  // MW45AF hotspot: gateway .1, DHCP pool starts high, so .10/.11 are free.
+  // IMPORTANT NOTE: 192.168.1.x is also the school UniFi's subnet -- on the
+  // school wifi blackout-cam.local is the only address that means anything.
+  { SECRET_SSID_ROUTER,  SECRET_PASS_ROUTER,  {192,168,1,9},  {255,255,255,0} },
+};
 
 // ---- ai-thinker pinout ----
 #define PWDN_GPIO_NUM  32
@@ -233,19 +249,16 @@ void setup() {
     s->set_wb_mode(s, 0);
   }
 
-  const char *ssid = CAM_NETWORK;
-  const char *pass =
-    ssid == SECRET_SSID_HOME    ? SECRET_PASS_HOME :
-    ssid == SECRET_SSID_SCHOOL  ? SECRET_PASS_SCHOOL :
-    ssid == SECRET_SSID_HOTSPOT ? SECRET_PASS_HOTSPOT :
-    (Serial.println("UNKNOWN SSID — check CAM_NETWORK define"), "");
-  Serial.printf("joining [%s]%s\n", ssid, camSlot ? " (static IP)" : " (DHCP)");
-  if (camSlot) {
-    IPAddress ip(172, 20, 10, CAM_OCTET_BASE + camSlot);
-    if (!WiFi.config(ip, CAM_GW, CAM_MASK, CAM_GW))
+  const auto &net = NETS[CAM_NETWORK];
+  const bool statik = camSlot && net.ip[3];
+  Serial.printf("joining [%s]%s\n", net.ssid, statik ? " (static IP)" : " (DHCP)");
+  if (statik) {
+    IPAddress ip(net.ip[0], net.ip[1], net.ip[2], net.ip[3] + camSlot);
+    IPAddress gw(net.ip[0], net.ip[1], net.ip[2], 1);
+    if (!WiFi.config(ip, gw, IPAddress(net.mask[0], net.mask[1], net.mask[2], net.mask[3]), gw))
       Serial.println("WiFi.config failed — falling back to DHCP");
   }
-  WiFi.begin(ssid, pass);
+  WiFi.begin(net.ssid, net.pass);
   for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
     for (int j = 0; j < 10; j++) { delay(50); ledUpdate(); }
     Serial.printf("st=%d\n", WiFi.status());
