@@ -1,42 +1,9 @@
-// lamp ramp and snapshot summary
+// snapshot summary, tool parse and the tool-loop bound
+// (the lamp ramp and the bracket walk are gone: nothing adjusts the lamp but
+//  Sage looking at the picture -- see lampLine() in server.js)
 
 const assert = require("assert");
-const { lampStep, rampTo, LAMP_MAX } = require("./vision");
 const { parseSage, snapSummary, wantsTool } = require("./sage");
-
-assert.strictEqual(lampStep(10, 15).next, 135);
-assert.strictEqual(lampStep(100, 15).next, null);
-assert.strictEqual(lampStep(220, 240).next, 120);
-
-assert.strictEqual(lampStep(10, 255).next, null);
-assert.strictEqual(lampStep(250, 0).next, null);
-
-assert.deepStrictEqual(lampStep(100, 80, 64, 96), { next: null, lo: 0, hi: 255 });
-
-const ramp = rampTo(0);
-assert.strictEqual(ramp[ramp.length - 1], LAMP_MAX);
-assert.ok(ramp.length > 1, "a ramp is more than one write");
-assert.ok(ramp.every((v, i) => i === 0 || v > ramp[i - 1]), "ramp must only go up");
-assert.deepStrictEqual(rampTo(LAMP_MAX), []);
-assert.deepStrictEqual(rampTo(0, 30, 10), [10, 20, 30]);
-assert.deepStrictEqual(rampTo(0, 25, 10), [10, 20, 25]);
-
-function walk(frameFor, led = 0) {
-  let lo = 0, hi = 255;
-  for (let i = 0; i < 20; i++) {
-    const r = lampStep(frameFor(led), led, lo, hi);
-    lo = r.lo; hi = r.hi;
-    if (r.next == null) return { led, steps: i };
-    led = r.next;
-  }
-  throw new Error(`lamp hunted, still moving at ${led}`);
-}
-const lin = walk((led) => Math.min(255, led * 0.8));
-assert.ok(lin.led > 0, `settled at ${lin.led}`);
-assert.strictEqual(lampStep(lin.led * 0.8, lin.led).next, null, "settled outside the band");
-
-const cliff = walk((led) => (led < 20 ? 5 : 250));
-assert.ok(cliff.steps < 20, "lamp never settled on a scene with no in-band level");
 
 assert.strictEqual(parseSage('{"text":"hm","snapshot":"readings jumping"}').snapshot, "readings jumping");
 assert.strictEqual(parseSage('{"text":"all good"}').snapshot, null);
@@ -52,6 +19,14 @@ assert.strictEqual(parseSage('{"text":"let me look","tool":"camera"}').tool, "ca
 assert.strictEqual(parseSage('{"text":"checking","tool":"SENSORS"}').tool, "sensors");
 assert.strictEqual(parseSage('{"text":"hm","action":"analyze"}').tool, "camera");
 assert.strictEqual(parseSage('{"text":"hm","tool":"drive"}').tool, null);
+
+// a spanish dashboard makes her translate the KEYS too — every field read null
+const es = parseSage('{"texto":"Recibido","estado":"claro","herramienta":"c\u00e1mara","hallazgo":"grieta","mover":null,"brazo":null,"cinta":null}');
+assert.strictEqual(es.text, "Recibido");
+assert.strictEqual(es.status, "clear");
+assert.strictEqual(es.tool, "camera");
+assert.strictEqual(es.finding, "grieta");
+assert.strictEqual(parseSage('{"texto":"hm","accion":"analizar"}').tool, "camera");
 assert.strictEqual(parseSage('{"text":"hm"}').tool, null);
 
 assert.strictEqual(parseSage('{"text":"want me to?","move":"forward 500"}').move, "forward 500");
@@ -70,11 +45,24 @@ assert.ok(!wantsTool(sage, 0, 1), "a one-pass budget is answer-only");
 // lamp, a finding and a snapshot fire as side effects inside askSage.
 const src = require("fs").readFileSync(require("path").join(__dirname, "server.js"), "utf8");
 const askBody = src.slice(src.indexOf("async function askSage"), src.indexOf("const MAX_TOOL_STEPS"));
-for (const [name, field] of [["lamp", "sage.led"], ["finding", "sage.finding"], ["snapshot", "sage.snapshot"]]) {
+for (const [name, field] of [["finding", "sage.finding"], ["snapshot", "sage.snapshot"]]) {
   const line = askBody.split("\n").find((l) => l.trim().startsWith("if (") && l.includes(field));
   assert.ok(line && line.includes(`allow("${name}"`), `${name} fires without the confirm gate`);
 }
-assert.ok(/askSage\(msgs, \{ maxTokens, confirm \}\)/.test(src), "agentLoop must hand askSage the confirm flag");
+assert.ok(/askSage\(msgs, \{ maxTokens, confirm, lamp \}\)/.test(src), "agentLoop must hand askSage the confirm and lamp flags");
+
+// She writes the headlamp only when CONSOLE -> SAGE LAMP is on or the operator
+// asked for it in words — otherwise the level the crew set is theirs.
+const ledLine = askBody.split("\n").find((l) => l.includes("sage.led != null"));
+assert.ok(ledLine.includes("lamp &&"), "Sage's led write lost its SAGE LAMP gate");
+// and the card is unconditional — BYPASS does not hand her the lamp
+assert.ok(/askConfirm\("lamp", String\(sage\.led\)\)/.test(askBody), "the lamp must always ask, not via allow()");
+assert.ok(!/await allow\("lamp"/.test(askBody), "the lamp is back behind the ASK-only gate");
+const LAMP_ASKED = eval(src.match(/const LAMP_ASKED = (\/.*\/i);/)[1]);
+for (const said of ["SAGE, turn the lamp up", "brighten it a little", "kill the light", "sube la luz"])
+  assert.ok(LAMP_ASKED.test(said), `"${said}" should unlock the lamp`);
+for (const said of ["how hot is it in there?", "what do you see ahead?"])
+  assert.ok(!LAMP_ASKED.test(said), `"${said}" should not unlock the lamp`);
 
 console.log("test-auto: ok");
 process.exit(0);

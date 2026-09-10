@@ -164,49 +164,6 @@ async function setLed(val) {
 }
 const getLed = () => ledLevel;
 
-const LAMP_LO = parseInt(process.env.LAMP_LO || "55", 10);
-const LAMP_HI = parseInt(process.env.LAMP_HI || "165", 10);
-const LAMP_MIN = parseInt(process.env.LAMP_MIN || "8", 10);
-const LAMP_GAP = parseInt(process.env.LAMP_GAP_MS || "4000", 10);
-const LAMP_FORGET = parseInt(process.env.LAMP_FORGET_MS || "60000", 10);
-
-function lampStep(mean, led, lo = 0, hi = 255) {
-  if (mean >= LAMP_LO && mean <= LAMP_HI) return { next: null, lo: 0, hi: 255 };
-  if (mean < LAMP_LO) lo = Math.max(lo, led);
-  else hi = Math.min(hi, led);
-  const next = Math.round((lo + hi) / 2);
-
-  return { next: hi - lo <= LAMP_MIN || next === led ? null : next, lo, hi };
-}
-
-// rampTo() is what actually runs; the bracket walk below is kept but nothing calls it —
-// a fixed ramp and a frame-judged walk would hunt against each other.
-const LAMP_MAX = parseInt(process.env.LAMP_MAX || "250", 10);
-const LAMP_RAMP_STEP = parseInt(process.env.LAMP_RAMP_STEP || "10", 10);
-function rampTo(from, to = LAMP_MAX, step = LAMP_RAMP_STEP) {
-  if (from >= to) return [];
-  const out = [];
-  for (let v = from + step; v < to; v += step) out.push(v);
-  out.push(to);
-  return out;
-}
-
-let lampAt = 0, lampMoved = 0, lampLo = 0, lampHi = 255, lampQuiet = false;
-async function autoLamp() {
-  if (Date.now() - lampAt < (lampQuiet ? LAMP_GAP * 5 : LAMP_GAP)) return null;
-  lampAt = Date.now();
-
-  if (lampQuiet && lampAt - lampMoved > LAMP_FORGET) { lampLo = 0; lampHi = 255; }
-  const jpeg = await grabFrame(0, 4000);
-  const mean = (await sharp(jpeg).greyscale().stats()).channels[0].mean;
-  const from = ledLevel;
-  const { next, lo, hi } = lampStep(mean, from, lampLo, lampHi);
-  lampLo = lo; lampHi = hi;
-  lampQuiet = next == null;
-  if (next != null) { lampMoved = lampAt; await setLed(next); }
-  return { mean: Math.round(mean), from, led: ledLevel, changed: next != null };
-}
-
 // ---- what sage sees ----
 const frameCache = CAM_GROUPS.map(() => ({ data: "", at: 0 }));
 const FRESH_TTL = parseInt(process.env.VISION_FRESH_MS || "1500", 10);
@@ -252,4 +209,4 @@ async function grabFrames(count = 4, gapMs = 1000, cam = 0) {
   return parts;
 }
 
-module.exports = { carveJpeg, upright, setCamRot, setFrameSource, camCount, grabFrame, eyeParts, grabFrames, setLed, getLed, pingCam, autoLamp, lampStep, rampTo, LAMP_MAX };
+module.exports = { carveJpeg, upright, setCamRot, setFrameSource, camCount, grabFrame, eyeParts, grabFrames, setLed, getLed, pingCam };

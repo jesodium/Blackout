@@ -3,14 +3,32 @@
 
 const SAGE_STATUS = new Set(["clear", "caution", "danger"]);
 
+// The language instruction tells her to answer in Spanish and she translates the
+// json KEYS along with the prose: {"texto", "estado":"claro", "herramienta":null}
+// parsed as an all-null reply, so a Spanish dashboard lost every tool, card and
+// status she asked for while the text still read fine. The prompts say the keys
+// stay English; this is the belt, at the one place the json is read. Any word
+// that is already an English key or value maps to itself, so this is a no-op on
+// an English reply.
+const ES = {
+  texto: "text", estado: "status", accion: "action", "acci\u00f3n": "action",
+  herramienta: "tool", hallazgo: "finding", captura: "snapshot",
+  mover: "move", movimiento: "move", brazo: "arm", cinta: "tape", luz: "led",
+  claro: "clear", despejado: "clear", precaucion: "caution",
+  "precauci\u00f3n": "caution", peligro: "danger",
+  camara: "camera", "c\u00e1mara": "camera", sensores: "sensors",
+  analizar: "analyze",
+};
+const deEs = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [ES[k.toLowerCase()] || k, v]));
+
 const SAGE_TOOLS = new Set(["camera", "armcam", "sensors"]);
 
 function parseTool(o) {
   const raw = typeof o.tool === "string" ? o.tool.trim() : "";
   const [head, ...rest] = raw.split(":");
-  const name = head.trim().toLowerCase();
+  const name = ES[head.trim().toLowerCase()] || head.trim().toLowerCase();
   if (SAGE_TOOLS.has(name)) return { tool: name, toolArg: rest.join(":").trim().slice(0, 40) || null };
-  return { tool: o.action === "analyze" ? "camera" : null, toolArg: null };
+  return { tool: (ES[String(o.action).toLowerCase()] || o.action) === "analyze" ? "camera" : null, toolArg: null };
 }
 
 function parseLed(v) {
@@ -63,10 +81,23 @@ function armMovesFor(all, which) {
   return out;
 }
 
+// The third flag, and the only one that is not about hiding a take:
+// `sage_ask_permission_for_this` false means this take needs no YES — a spoken
+// hello is not a thing to ask permission for, and a card in front of it is the
+// pause that makes a greeting land wrong. Missing = true, like the other two, so
+// anything that moves the rover keeps its card until somebody says otherwise.
+// It does NOT ride in the map above: that map's values are steps arrays all the
+// way down (/api/arm-moves hands them to the browser), so the flag is read off
+// the raw take here and returned as its own field on the proposal.
+const askFor = (all, name) => {
+  const v = all?.[name];
+  return Array.isArray(v) ? true : v?.sage_ask_permission_for_this !== false;
+};
+
 // One recorded take per line, by name, into the flat {ms, cmd} tape the pad
 // already replays. An unknown name throws the whole thing out — a half-run arm
 // proposal is a joint turning for a reason nobody wrote down.
-function parseArm(v, moves = {}) {
+function parseArm(v, moves = {}, raw = null) {
   const lines = String(v || "").split("\n").map((s) => s.trim()).filter(Boolean);
   if (!lines.length) return null;
   const names = [], tape = [];
@@ -80,7 +111,7 @@ function parseArm(v, moves = {}) {
     at += steps[steps.length - 1].ms + ARM_REPEAT_MS;
     names.push(key);
   }
-  return { text: names.join("\n"), tape };
+  return { text: names.join("\n"), tape, ask: names.some((n) => askFor(raw || moves, n)) };
 }
 
 // ---- tapes ----
@@ -89,12 +120,12 @@ function parseArm(v, moves = {}) {
 // and for the same reason: the driving was vetted once, when it was recorded.
 // One at a time on purpose — a tape is a whole run, so chaining two is a routine
 // nobody has rehearsed.
-function parseTape(v, tapes = {}) {
+function parseTape(v, tapes = {}, raw = null) {
   const want = String(v || "").trim().replace(/^play\s+/i, "").toLowerCase();
   if (!want || want.includes("\n")) return null;
   const key = Object.keys(tapes).find((k) => k.toLowerCase() === want);
   const steps = key && Array.isArray(tapes[key]) ? tapes[key] : null;
-  return steps && steps.length ? { text: key, tape: steps } : null;
+  return steps && steps.length ? { text: key, tape: steps, ask: askFor(raw || tapes, key) } : null;
 }
 
 function parseFinding(v) {
@@ -104,27 +135,32 @@ function parseFinding(v) {
 
 const wantsTool = (sage, step, max) => !!(sage && sage.tool) && step < max - 1;
 
+// armMoves/tapes are the RAW folders (readTakes), not a filtered map: the
+// flags are read here so `sage_can_use` and `sage_ask_permission_for_this` come
+// off the same take. A map that has already been filtered still works — every
+// value is then a bare steps array, which reads as "usable, and it asks".
 function parseSage(raw, armMoves, tapes) {
   const s = String(raw || "").trim();
   const start = s.indexOf("{"), end = s.lastIndexOf("}");
   if (start !== -1 && end > start) {
     try {
-      const o = JSON.parse(s.slice(start, end + 1));
+      const o = deEs(JSON.parse(s.slice(start, end + 1)));
+      const status = ES[String(o.status).toLowerCase()] || o.status;
       return {
         text: String(o.text || "").trim() || s,
-        status: SAGE_STATUS.has(o.status) ? o.status : null,
-        action: o.action === "analyze" ? "analyze" : null,
+        status: SAGE_STATUS.has(status) ? status : null,
+        action: (ES[String(o.action).toLowerCase()] || o.action) === "analyze" ? "analyze" : null,
         ...parseTool(o),
         led: parseLed(o.led),
         finding: parseFinding(o.finding),
         snapshot: parseSnapshot(o.snapshot),
         move: parseMove(o.move),
-        arm: parseArm(o.arm, armMoves),
-        tape: parseTape(o.tape, tapes),
+        arm: parseArm(o.arm, armMovesFor(armMoves, "sage_can_use"), armMoves),
+        tape: parseTape(o.tape, armMovesFor(tapes, "sage_can_use"), tapes),
       };
     } catch {  }
   }
   return { text: s, status: null, action: null, tool: null, toolArg: null, led: null, finding: null, snapshot: null, move: null, arm: null, tape: null };
 }
 
-module.exports = { parseSage, snapSummary, wantsTool, SAGE_TOOLS, parseArm, parseTape, armMovesFor, ARM_REPEAT_MS };
+module.exports = { parseSage, snapSummary, askFor, wantsTool, SAGE_TOOLS, parseArm, parseTape, armMovesFor, ARM_REPEAT_MS };
