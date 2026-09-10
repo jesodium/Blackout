@@ -431,9 +431,34 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
 - `server/public/js/blk.mjs` — the BLK language (parser, serializer, evaluator,
   linter, interpreter). Text is the file format; `blkedit.js` + `blk.html` are
   the editor, `blksim.js` the offline rover simulator. See "BLK" below.
-- `server/` — Node.js dashboard + "Sage" AI agent (Cerebras first, the rest as fallback
-  — `BRAINS`/`chat()` in `server.js`: one openai-sdk client per keyed provider,
-  tried in order, so a dead or rate-limited primary costs one retry, not the run).
+- `server/` — Node.js dashboard + "Sage" AI agent. **Cerebras is the only brain**
+  (`BRAINS`/`chat()` in `server.js`): openrouter, groq, gemini and lm studio came
+  out 2026-09-09 — four spare providers meant four sets of keys to keep alive for
+  a venue with no internet, and Cerebras is the one that answers fast. `BRAINS` is
+  still a list and `chat()` still makes two passes, so a rate-limited call costs
+  one retry and a second brain is one line if it is ever wanted again.
+  **The model is `qwen-3.8-27b`** (2026-09-09). `gemma-4-31b` is still listed by
+  `/v1/models` and 404s on every spelling of the name — Cerebras pulled it for
+  public workloads and points at qwen — so a name that reads fine in `.env` is a
+  dead brain. `gpt-oss-120b` is the third and refuses `image_url` content outright
+  ("Only 'text' content type"), which kills Sage's vision, so qwen is the only one
+  of the three that can do the whole job. `reasoning_effort: "none"` is on qwen
+  only (`CEREBRAS_TUNE`) — without it every reply arrives behind a paragraph of
+  thinking. **Vision on it is ~0.6-1.0s for a whole svga frame** (measured off a
+  real 600x800 shot, 23KB), so there is nothing to gain by downscaling before the
+  send: 448px wide saved ~30ms and cost detail. The "~17s when she looks" figure
+  below is the old provider's.
+  **Only the FIRST message may be a system message** — a second one 400s with
+  `System message must be at the beginning` and the SDK reports it as a bodyless
+  400, so a dashboard set to Spanish (`langMsg()` adds the language instruction as
+  its own system message) took Sage out entirely. `chat()` folds every system
+  message into one before the call, at the one choke point rather than the five
+  call sites.
+  **A 404 is a dead brain for the session** (`BRAIN_DEAD`), so with nothing behind
+  it a `CEREBRAS_MODEL` the key cannot reach takes Sage out until a restart — and
+  it used to report **"AI key not set" for a key that was set fine**, because a
+  brain skipped as dead left nothing to throw. `b.deadErr` carries the real reason
+  now, which is how the 404 was finally read.
   BLE is read directly by the browser (Web Bluetooth) and forwarded to
   `/api/mega/sensor`; gamepad input goes out the same way as dashboard
   drive commands. `sage.js` parses the model's JSON replies; `vision.js`
@@ -456,6 +481,21 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     be backed out of. FPV and the first-run tour take the pad back while they're up
     (they bind the same buttons). `npm run test:padnav` covers the mix and the
     roaming maths and cross-checks the constants against `main.ino`.
+  - **Panes are resizable, tiling-wm style** — `Split` in `app.js` plus `.split*`
+    in `style.css`. Four dividers: 3d|cam, stage/strip, main|rail, agent/drive.
+    **The pane AFTER a divider is the one that gets a fixed `flex-basis`; the pane
+    before it keeps `flex:1` and absorbs the rest**, so panes always tile with no
+    gap and no overlap and there is no second size table to keep in step. That is
+    why `.cockpit` is flex and not grid — one mechanism for every divider. The
+    divider lives *inside* the flex gap (a negative margin cancels its own width),
+    so adding one moves nothing until it is dragged. Sizes are per rig in
+    `localStorage.split.*`; double-click or Enter hands the pane back to the
+    stylesheet, and 120px is the floor so a pane can't be dragged out of
+    existence. **Dead under 1024px** — that layout stacks everything into one
+    column and a pinned px size there is a broken pane, so the dividers are
+    `display:none` and nothing is restored. `npm run test:split` drives the real
+    page over CDP (needs the server + a debuggable chrome, like `test:layout`).
+
   - **Icons** are files — `public/icons/<name>.svg` — used as a css **mask**
     (`.icn .icn-<name>`), never an `<img>`: masked, they take `currentColor` and
     the font size of whatever they sit in, so the same file is amber in a
@@ -620,7 +660,12 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     the label counter-rotation, and — over `POST /api/cam-rot` → `setCamRot()` in
     `vision.js` — the still **Sage** is shown. That last one is the trap: rotate only
     the picture and her vision quietly goes sideways, which is the failure the -90 was
-    there to prevent in the first place. It is kept per rig in `localStorage.camRot`;
+    there to prevent in the first place. **The angle is POSTed on mount, not only on the button** (2026-09-09): the
+    browser's copy is per rig in `localStorage`, the server's is a process-lifetime
+    default (`CAM_ROTATE`), so after any page reload or server restart the two
+    disagreed until somebody happened to press ROTATE — the live feed looked right
+    (css) and every still Sage read, and every one drawn in the transcript, was
+    90deg off. It is kept per rig in `localStorage.camRot`;
     `CAM_ROTATE` (env) is still the boot default, and `npm run test:detect` asserts all
     four copies move together and round-trips `rotBox` against its forward map at every
     angle. Remounting the cam upright is now the button, not an edit.
@@ -638,25 +683,35 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     at ~10fps, so every frame gets boxes. Without webgl it falls back to cpu at
     ~280ms and the busy flag just skips ticks. `DET_MIN_SCORE` is a bench knob — a
     real shot of a person off this cam came back at 0.52.
-  - **Auto headlamp:** `lux < 100` (`LUX_DARK`) means Sage is going blind, so
-    `darkCheck()` in `server.js` fires a canned line of hers on `agent-blurt`
-    ("it's going dark in here — turning the headlamp on") and ramps the cam lamp
-    up to **250** (`LAMP_MAX`), `LAMP_RAMP_STEP` at a time every `LAMP_RAMP_MS`
-    (`rampTo()` in `vision.js` is the level list, pure and tested). The line is
-    canned and not an llm call for the same reason `emitBlurt()` is: the venue's
-    run has no internet and a round trip is seconds spent blind. It ramps **once**
-    per dark spell — `lampAuto` latches until `lux >= LUX_LIGHT` (1.5x, hysteresis
-    so it can't flap on the threshold), which is also what gives the lamp back
-    rather than burning it for the rest of the run.
-    **The frame-judged bracket walk is no longer wired in** — `autoLamp()` /
-    `lampStep()` are still in `vision.js` and still tested, but nothing calls them:
-    a ramp to a fixed 250 and a walk that reads mean luma back off the frame will
-    hunt against each other if both run, so it is one or the other. The walk is
-    what caught a blown-out close-up wall; wire it in *after* the ramp settles if
-    that ever matters.
+  - **NOTHING adjusts the headlamp but Sage** (2026-09-09). It was `lux < 100`
+    (`darkCheck()`), and it fired in a normally lit room — a bh1750 pointed at
+    the floor reads a fraction of what the ceiling puts out, so 100 lx is an
+    ordinary indoor reading and she announced the lamp over nothing. The
+    replacement (mean luma of the analysis frame) was the same mistake one step
+    later: both are a machine guessing at "can she see?" when the one thing in
+    the loop that can actually answer is Sage looking at the picture. So **`lux`
+    is a display reading and nothing else** — a tile, a chart, a line in her
+    readings — and the whole rule is one sentence in `lampLine()` and in all
+    three prompts: *too dark to make out, raise it; judge that off the picture,
+    never off the lx number*. Gone with it: `darkCheck`, `rampLamp`, the
+    `agent-blurt` line and its `lamp-auto` feed row, `LUX_DARK`/`LUX_LIGHT`, and
+    `rampTo`/`autoLamp`/`lampStep` in `vision.js` (the bracket walk that was
+    already wired to nothing) plus their half of `test-auto`. Don't build a
+    third one: if she is not raising the lamp when she should, that is a prompt
+    line, not a threshold.
+    **Sage's own `led` field is gated on CONSOLE → SAGE LAMP, now default ON**
+    (`sageLamp` in localStorage, riding on `/api/chat` like SAGE MOVES, held
+    server-side as `lampAllowed` so the analysis loop obeys the same flag). It
+    defaulted OFF while the server ramped the lamp by itself — she reached for it
+    every other turn and the operator kept losing the level they set — but with
+    the auto ramp gone, OFF means *nobody* touches the lamp. Turn it off
+    deliberately to pin a level by hand for a run. Off, the turn also carries a
+    LAMP LOCK line so she holds it in words too — **asking her for it out loud
+    still works**, `LAMP_ASKED` in `server.js` reads that off the operator's own
+    message.
     `lux` parses to **null** when field 12 is absent instead of 0: a real
-    pitch-black cave reads 0 lx, so 0 can't double as "not wired" or the lamp
-    ramps to 250 on a rover with no bh1750. The blurt only reaches the operator
+    pitch-black cave reads 0 lx, so 0 can't double as "not wired" or a rover with
+    no bh1750 reads as a dark one in the tile and the verdict. The blurt only reaches the operator
     while a briefed session is open (same gate every `agent-blurt` has).
   - **The agent tab is a terminal, not a chat box** (`Agent`/`Feed`/`FeedLine` in
     `app.js`, `.term-*`/`.fl-*` in `style.css`): a bar with the ascii face, a
@@ -732,7 +787,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     press, exactly like a drive move, and SAGE MOVES off locks the arm too.
     `armJog()` still has one call site; the tape goes out as ordinary `arm,`
     commands, so the deadman applies unchanged.
-  - **Each take carries its own two flags** — the bench fills up with debug takes,
+  - **Each take carries its own three flags** — the bench fills up with debug takes,
     and a debug take is exactly what should not be one tap away on comp day or in
     Sage's hands. A take in `arm_moves/<name>.json` is either a bare list of steps
     (everything recorded before the flags existed — those count as usable
@@ -746,6 +801,16 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     (`/moves/<name>/rename`, which refuses a blank, a dot-leading name, a slash
     and a collision) and both sides pick it up on their next read. **The bench itself plays anything regardless**, flags or not; they only
     gate the two places a take fires with nobody watching the arm.
+    The third, **`sage_ask_permission_for_this`**, is not about hiding: false
+    means the take plays with no YES/NO card in front of it, because a spoken
+    hello is not a thing to ask permission for and the card is a pause that makes
+    a greeting land wrong. Missing reads as true, so anything that *moves*
+    keeps its card. It is read off the raw take in `askFor()` (`sage.js`) and
+    comes back as `ask` on the proposal — **not** in the `armMovesFor()` map,
+    whose values are steps arrays all the way to the browser. `propose()` in
+    `app.js` is the one gate: `p.ask !== false && confirmRef.current`, so BYPASS
+    plays anything and ASK still asks for everything that did not opt out.
+    Sage's `move` (BLK) cards are untouched — they always ask.
   - **The arm travel ledger lives outside `<Arm/>`** (`armLedger` / `armSend()` /
     `armPlay()` in `app.js`): the pad unmounts on every tab switch, and a
     component that unmounts forgets the count — it showed a fresh meter on an arm
@@ -761,10 +826,13 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     and the swap animation replays — there is no js animation to schedule: the flag rides on `/api/chat`, `askConfirm()` in
     `server.js` parks the agent loop and emits `sage-confirm`, and the browser
     answers over the socket. **ASK gates every tool, not just the loop's two** —
-    `camera`/`sensors` are gated in `agentLoop()`, and the lamp, a `finding` and a
+    `camera`/`sensors` are gated in `agentLoop()`, and a `finding` and a
     `snapshot` are side effects of the *reply* so they are gated inside
     `askSage()` (`allow()`); a declined side effect is skipped silently, because
-    it changed nothing there is anything to tell her about. Anything new that
+    it changed nothing there is anything to tell her about. **The lamp is the one
+    that asks in BYPASS too** — it is the setting the operator dials in by hand
+    and then watches her undo — and it asks *without* awaiting, so an analysis
+    turn is never parked 60s on a card nobody is watching. Anything new that
     fires off a parsed field belongs behind `allow()` too — `npm run test:auto`
     fails if one of the three loses it. Sage's move/arm/tape cards keep their own
     YES/NO in the feed and are not part of this. **A silent browser reads as NO** after 60s, same rule
@@ -826,7 +894,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     - `POST /api/strip {frame:{h,s,v}}` pins it; `{frame:null}` hands it back.
   - **Cloud pills** (SAGE / VOICE in the topbar) are a reachability probe, not a health
     check: `/api/cloud` HEADs the two api roots, cached ~25s, and the dashboard polls it
-    every 30s. The venue has no internet and both Gemini and Deepgram fail quietly
+    every 30s. The venue has no internet and both Cerebras and Deepgram fail quietly
     without it. Probe the api *root* — an authenticated path just hangs for an
     unauthenticated request and reads as offline.
   - **Elevation** is derived in `server.js` (`altitudeM`) from the pressure the
@@ -863,11 +931,29 @@ as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
 
 - **A tape is the arm take's `{ms, cmd}`, deliberately** — same shape, same
   player, so drive, arm, lights and routines live in ONE list and there is no
-  second format to keep in step. `tapePlay()` in `app.js` is `armPlay()` with one
-  branch added, and it runs on `armLedger.tape`, so the panic key kills a tape
-  mid-run exactly as it kills an arm take. It parks the robot at the end (`stop`
-  then `arm,`) — the last step of a recording is whatever the operator's finger
-  was doing, which is not necessarily "stopped".
+  second format to keep in step. `tapePlay()` in `app.js` runs on
+  `armLedger.tape`, so the panic key kills a tape mid-run exactly as it kills an
+  arm take. It parks the robot at the end (`stop` then `arm,`) — the last step of
+  a recording is whatever the operator's finger was doing, which is not
+  necessarily "stopped".
+- **A tape's clock STOPS while she talks, and that is the one place it is not
+  `armPlay()`** (2026-09-09). Steps used to fire off absolute timestamps, which
+  is right until a line runs long — and every line runs long: the gaps were timed
+  to an operator's finger, not to a sentence, and an `@analyze` waits on the model
+  for as long as the model takes. So the gestures ran ahead of the words and the
+  arm waved *before* "and the best part, I have an arm!" was said, and an analysis
+  landed a whole verse late. A step's recorded gap is now measured from the **end**
+  of the one before it, and a spoken step ends when the speech does — `tapeStep()`
+  hands its `speakQueued()` promise back and `tapePlay()` awaits it. **The gaps
+  between two board commands are untouched**, which is what the deadman lives on.
+  It costs the panic key an extra hook: a step parked on a sentence is not a
+  timeout in `armLedger.tape`, so `armStopTape()` bumps `armLedger.tapeTok` and
+  every await re-checks it. `tapePlay()` returns a **promise** now, not an
+  estimated duration — a run's length is not knowable up front any more.
+  `@analyze` is the one wait with a cap (`TAPE_ANALYZE_MS`, 25s): it hands off to
+  the model and has nothing to wait on until the answer comes back, so
+  `whenSpoken()` waits for the next line to be *queued* and then for it to finish,
+  and a failed analysis (which never speaks at all) is a pause, not a hang.
 - **Recording is a tap in `sendCmd()`, not a per-widget hook** — that is the one
   place every command leaves the browser (drive, gamepad, arm pad, lights,
   routines, Sage's cards), so everything is caught with one line and nothing new
@@ -876,8 +962,30 @@ as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
 - **The clock starts at the first step, not at REC** — the same dead-air-at-the-
   head bug `armrec.py`'s `clean()` fixes, for the same reason. The **gaps are the
   take** (the board's deadman lives on them), the operator's reaction time is not.
+- **Spoken steps are QUEUED, never fired straight at `speak()`** — `speak()`
+  opens with `stopSpeech()`, so a line whose sentence ran past the next step's
+  timestamp was cut off mid-word by it: she talked over herself all through a
+  run. `speakQueued()` chains them; `speakFlush()` (the panic key, and the start
+  of a run) drops whatever has not begun. A new operator turn still cuts in
+  through `speak()` directly — that interruption is wanted. **Her analysis lines
+  join the same queue while a tape is playing** (`armLedger.tapeOn` picks which
+  in `speakTimed()`): mid-run an analysis arriving on `speak()` cut the scripted
+  line it landed on top of. Off a tape it still cuts in.
+- **She reads ~12% fast on purpose** — `TTS_RATE` (env, SSML relative %, Edge
+  voices) and `u.rate` in `browserSpeak()`. Now that a run waits for every line,
+  each spoken second is a second the arm stands still. Deepgram Aura has no speed
+  parameter, so this only bites on the Edge fallback and the browser voice.
+- **A cue is for a line that should differ every run; a FACT is a `@say`** —
+  PRESENT YOURSELF's arm lines came back from the model as "this mechanism clears
+  the path ahead so we can keep moving without delay". What the arm *is* does not
+  need improvising; the greeting does.
+- **A spoken step lands in the transcript, not in the log** — `@sage`/`@say` go
+  out on `io.onSay` (a plain `●` feed row via `sayFeed()`), because a line she
+  says out loud is her talking; `@log` is the machinery and stays in the log.
+  A tape played from the drawer writes to the same feed.
 - **`@` steps never reach the board**: `@sage <cue>`, `@say <text>`,
-  `@analyze [focus]`, `@log <text>`, `@led <0-255>` are the things only the PC
+  `@present`, `@tape <name>`, `@analyze [focus]`, `@log <text>`, `@led <0-255>`
+  are the things only the PC
   has, and they are the reason a presentation run is a tape and not a `Step`
   table in `routines.h`. They are typed in by hand when the JSON is edited —
   nothing records them, because there is no button on the dashboard that means
@@ -894,6 +1002,62 @@ as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
   internet, so that fallback is the normal case, not the unhappy one: write the
   cue as a sentence that is fine to hear out loud, and the model only ever
   improves on it. One request per distinct cue, `TAPE_LINE_MS` (6s) to answer.
+- **A spoken step can carry a language suffix** — `@say.es <texto>` beside the
+  plain `@say <text>`, same `ms`, so one tape presents in either language and
+  there is no second file to keep in step. A suffixed step fires **only** with
+  the dashboard on that language; the unsuffixed lines are the English original
+  and they drop out of the run as soon as the tape carries a set for the
+  language on screen, so a half-translated tape speaks what was translated and
+  falls back to English for the rest instead of saying both. Only `@say`/`@sage`
+  are dropped that way — `@analyze`'s focus is an instruction to the model, and
+  the model already answers in the dashboard's language. TTS follows `getLang()`
+  already, so the voice comes along for free. `PRESENT YOURSELF` and `SAY HELLO`
+  carry `.es` lines today.
+
+- **Which eye a full analysis looks through is the MAXIMIZED FEED** — `anaCam()`
+  reads `localStorage.camMain`, the same key the pip's swap button writes, so the
+  eye is picked by tapping the small feed to make it big and there is no second
+  control to keep in step (the agent bar's `<select>` was that control, deleted
+  2026-09-09 with `agent.anaCam`/`camFront`/`camArm`). `analyze()` reads it, so
+  every analyze button obeys it, the FPV one included. It rides on
+  `request-analysis` as `cam` and is range-checked server-side against `camCount`.
+  **Sage's own `camera`/`armcam` tools are unaffected** — she picks her own eye
+  mid-turn; this is only the analysis a human presses, plus `@present`, which is
+  one. A greeting that reads a dark front cam is why it exists.
+- **`@present` is the judge greeting, and it is the July-16 `PRESENTATION`
+  behaviour minus the driving** — same camera still an `@analyze` takes, read
+  against `prompts/present.md` (mode `"present"` on `request-analysis`, which
+  never went away) instead of the cave prompt: she counts the people actually in
+  frame, greets that many, says which side they are on and compliments them. So
+  the open of a run is never the same words twice, and it holds the run until she
+  has finished speaking exactly like `@analyze`. It takes a **fresh** grab rather
+  than `eyeParts()`' cache — that cache hands back a still up to
+  `VISION_MAX_AGE_MS` (30s) old, and a 30s-old frame of an empty room is how she
+  greets people who already left. **She must never invent a count**: the prompt
+  says a number only if she can plainly see the faces, no hedging, and no
+  questions (nobody answers, the tape carries on, so a question lands as
+  silence). She read a dark shot of a desk as "tres voluntarios" on 2026-09-09. The four pivots it used to ride
+  on are gone for good — `routines.h`'s `PRESENTATION` table is not what
+  "present yourself" plays.
+- **`@tape <name>` plays another recorded run inline**, so the claw wave a
+  presentation ends on lives in its own file and can be re-recorded without
+  touching the script around it (`PRESENT YOURSELF` = `@present` → the arm line →
+  `@tape CLAW`). **One level deep**: a tape that names itself, or a pair that name
+  each other, would recurse until the tab died, so a nested tape's own `@tape`
+  is a note in the log and nothing else. A missing file is a note too, never a
+  dead run. The child plays with its own gaps and is **not** language-filtered —
+  it is a gesture take, not a script.
+- **A scripted line's audio is fetched when the run STARTS, not when its turn
+  comes** — same reason the `@sage` cue prefetch exists. The tape now waits for
+  every sentence, so a line whose synth round trip only begins once the line
+  before it ended puts the whole round trip on screen as silence.
+  `ttsPrewarm()` (`app.js`, next to `speak()`) warms every `@say` in the run into
+  `ttsWarm`, and a `@sage` cue warms itself the moment the model answers;
+  `speak()` takes the parked `Audio` instead of building its own. That is what
+  the `@present` at the head of a run buys: the model turn pays for the lines
+  behind it. `speakFlush()` clears the map, so the panic key does not leave a
+  run's worth of audio behind. Nothing warms `@present`/`@analyze` — that line
+  does not exist yet.
 - **Editing is a textarea of the raw JSON**, and the file on disk is the same
   thing — trimming a botched approach, retiming a gap, or dropping a `@say` in
   is a text edit, not a timeline GUI. The server re-checks the shape on save
@@ -902,6 +1066,18 @@ as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
   flash, they have **no arm op**, and `analyze`/`say` do not exist on the board.
   A tape runs from the PC. The cost is the PC: a BLE drop mid-tape strands it the
   way a routine or an uploaded BLK program would not.
+- **The operator's own words play a run with no model in the way** — a
+  `CMD_TRIGGERS` entry in `app.js` with a `tape` field (`"present yourself"` →
+  PRESENT YOURSELF, `"say hello"` → SAY HELLO, `"...about your arm"` → ABOUT THE
+  ARM) is matched in `ask()` before the
+  turn is ever sent, so it fires instantly and works with the venue offline.
+  **"present yourself" used to be `go,presentation`**, the on-board routine —
+  that is why the tape never played and a disconnected board did nothing at all.
+  A run that talks, looks and works the claw cannot be a `Step` table, so the
+  phrase belongs to the tape now. `npm run test:tape` asserts every trigger — by running the
+  real regexes off the source against the sentence an operator types, since a
+  trigger written as an alternation never appears in the file as that sentence —
+  and that the routine has not crept back.
 - **Sage can ask to play one, and only one, and only when asked in words** —
   `"tape"` in her json is a name, resolved server-side (`parseTape()` in
   `sage.js`) into the same `{ms, cmd}` tape the drawer plays, and it lands in the
@@ -910,8 +1086,8 @@ as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
   from the folder (`tapeLine()`), so recording a run is all it takes to give her
   one — nothing to edit in `chat.md`. CONSOLE → SAGE MOVES locks it with the
   drive and the arm.
-- **A tape carries the same two flags an arm take does** (`sage_can_use`,
-  `show_in_app`) and the same filter reads them (`armMovesFor()` — one reader,
+- **A tape carries the same three flags an arm take does** (`sage_can_use`,
+  `show_in_app`, `sage_ask_permission_for_this`) and the same filter reads them (`armMovesFor()` — one reader,
   `readTakes(dir)`, for both folders). There is deliberately **no toggle in the
   drawer**: the file is the editor, so hiding a debug tape from Sage is a line of
   json. Missing flag = usable, same as arm.
