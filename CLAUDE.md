@@ -984,13 +984,18 @@ as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
   says out loud is her talking; `@log` is the machinery and stays in the log.
   A tape played from the drawer writes to the same feed.
 - **`@` steps never reach the board**: `@sage <cue>`, `@say <text>`,
-  `@present`, `@tape <name>`, `@analyze [focus]`, `@log <text>`, `@led <0-255>`
-  are the things only the PC
+  `@present`, `@tape <name>`, `@under <name>`, `@analyze [focus]`, `@log <text>`,
+  `@led <0-255>` are the things only the PC
   has, and they are the reason a presentation run is a tape and not a `Step`
   table in `routines.h`. They are typed in by hand when the JSON is edited —
   nothing records them, because there is no button on the dashboard that means
   "say this here". Adding a kind is a case in `tapeStep()` plus its name in
   `TAPE_EVENTS`.
+- **A cue is SPOKEN VERBATIM whenever the model does not answer in `TAPE_LINE_MS`,
+  which at the venue is every time** — so a cue written as an instruction ("tell
+  them about your arm in two sentences: six DOF, a gripper…") is read out loud
+  word for word, instructions and all. Write every cue as a first-person sentence
+  that is fine to hear as-is; the model only ever improves on it.
 - **`@sage <cue>` is a cue, `@say <text>` is a script** — and a presentation read
   off a script is the same words every run and sounds like it. A cue goes to
   `/api/tape-line`, where she writes the sentence herself in her own voice off
@@ -1039,6 +1044,16 @@ as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
   silence). She read a dark shot of a desk as "tres voluntarios" on 2026-09-09. The four pivots it used to ride
   on are gone for good — `routines.h`'s `PRESENTATION` table is not what
   "present yourself" plays.
+- **`@under <name>` is `@tape` played UNDERNEATH the run instead of in place** —
+  the only concurrency in the player, and it exists because everything else is
+  serial: a 26s gesture take after an 8s line is the arm waving at a silent room,
+  and before it is the arm waving before the words. So `@under` starts the child
+  and the run carries straight on to the next step, and the child is **cut the
+  moment the run's own steps are done** (`underOff` in `tapePlay()`), which for a
+  spoken step means when the TTS ends. Scenery follows the line: no line, no
+  scenery. **Gesture takes only** — a spoken child would talk over the parent's
+  own sentence, and nothing enforces that. `PRESENT ARM` is the one user
+  (`@under ARM_DEMO_V2` + an `@sage` cue about the arm).
 - **`@tape <name>` plays another recorded run inline**, so the claw wave a
   presentation ends on lives in its own file and can be re-recorded without
   touching the script around it (`PRESENT YOURSELF` = `@present` → the arm line →
@@ -1068,7 +1083,7 @@ as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
   way a routine or an uploaded BLK program would not.
 - **The operator's own words play a run with no model in the way** — a
   `CMD_TRIGGERS` entry in `app.js` with a `tape` field (`"present yourself"` →
-  PRESENT YOURSELF, `"say hello"` → SAY HELLO, `"...about your arm"` → ABOUT THE
+  PRESENT YOURSELF, `"say hello"` → SAY HELLO, `"...about your arm"` → PRESENT
   ARM) is matched in `ask()` before the
   turn is ever sent, so it fires instantly and works with the venue offline.
   **"present yourself" used to be `go,presentation`**, the on-board routine —

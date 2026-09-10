@@ -104,7 +104,7 @@ for (const [cmd, ...want] of [
 sent.length = 0;
 T.tapeStep("@nope", io);
 assert.ok(sent[0].startsWith("LOG:tape: unknown"), "an unknown @event went to the board");
-assert.deepEqual(T.TAPE_EVENTS, ["sage", "say", "present", "tape", "analyze", "log", "led"],
+assert.deepEqual(T.TAPE_EVENTS, ["sage", "say", "present", "tape", "under", "analyze", "log", "led"],
   "the hint no longer lists the events that work");
 
 // ---- "@sage" is a cue, not a script ----
@@ -181,7 +181,7 @@ assert.ok(!/go,presentation/.test(trig), "present yourself is a board routine ag
 const tapeTrigs = [...trig.matchAll(/re: (\/.+?\/),\s*tape: "([^"]+)"/g)]
   .map(([, re, tape]) => [eval(re), tape]);
 for (const [phrase, want] of [["present yourself", "PRESENT YOURSELF"], ["say hello", "SAY HELLO"],
-                              ["sage tell me more about your arm", "ABOUT THE ARM"]]) {
+                              ["sage tell me more about your arm", "PRESENT ARM"]]) {
   const hit = tapeTrigs.find(([re]) => re.test(phrase));
   assert.equal(hit?.[1], want, `"${phrase}" no longer plays the ${want} tape`);
   assert.ok(existsSync(new URL(`tapes/${want}.json`, import.meta.url)), `tapes/${want}.json is missing`);
@@ -284,6 +284,24 @@ await T.tapePlay([{ ms: 0, cmd: "@tape CLAW" }, { ms: 0, cmd: "@log done" }], io
 assert.deepEqual(sent, ["FLUSH", "OPEN:CLAW", "arm,5,100", "arm,5,0", "LOG:done", "stop", "arm,"],
   "the nested run did not play in place — got " + JSON.stringify(sent));
 assert.ok(Date.now() - t3 >= 30, "the nested run's own gaps were dropped");
+
+// "@under" plays the same file, but the run does NOT wait for it: she talks over
+// a gesture take instead of waving at a silent room. The park at the end still
+// waits, or it would cut the backgrounded take off mid-move.
+// It is also CUT the moment the run's own steps are done: a long take under a
+// short line would leave the arm waving at a silent room.
+child = [{ ms: 0, cmd: "arm,5,100" }, { ms: 400, cmd: "arm,5,0" }];
+sent.length = 0;
+const t4 = T.tapePlay([{ ms: 0, cmd: "@under CLAW" }, { ms: 150, cmd: "@log talking" }], io);
+await new Promise(r => setTimeout(r, 40));
+assert.ok(sent.includes("arm,5,100"), "the @under take never started under the run");
+await new Promise(r => setTimeout(r, 150));
+assert.ok(sent.includes("LOG:talking"), "the run waited for an @under take instead of carrying on");
+await t4;
+assert.deepEqual(sent, ["FLUSH", "OPEN:CLAW", "arm,5,100", "LOG:talking", "stop", "arm,"],
+  "the @under take outlived the sentence it was scenery for — got " + JSON.stringify(sent));
+await new Promise(r => setTimeout(r, 450));
+assert.ok(!sent.includes("arm,5,0"), "a cut @under take kept sending after the run parked");
 
 // one level only: a tape that names itself must not recurse until the tab dies
 child = [{ ms: 0, cmd: "@tape LOOP" }];
