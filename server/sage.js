@@ -133,6 +133,17 @@ function parseFinding(v) {
   return s ? s.slice(0, 140) : null;
 }
 
+// A reply whose json never closed — she runs out of max_tokens mid-string, and
+// Spanish runs ~25% longer than English for the same sentence, so it is the
+// Spanish dashboard that hits it — used to fall through to `text: s` and the
+// operator got the raw braces read out loud. Pull the text field out by hand
+// instead: a sentence cut short still reads as a sentence.
+function salvage(s) {
+  const m = s.match(/"(?:text|texto)"\s*:\s*"((?:\\.|[^"\\])*)/);
+  if (!m) return s;
+  try { return JSON.parse('"' + m[1].replace(/\\+$/, "") + '"').trim() || s; } catch { return m[1]; }
+}
+
 const wantsTool = (sage, step, max) => !!(sage && sage.tool) && step < max - 1;
 
 // armMoves/tapes are the RAW folders (readTakes), not a filtered map: the
@@ -158,9 +169,9 @@ function parseSage(raw, armMoves, tapes) {
         arm: parseArm(o.arm, armMovesFor(armMoves, "sage_can_use"), armMoves),
         tape: parseTape(o.tape, armMovesFor(tapes, "sage_can_use"), tapes),
       };
-    } catch {  }
+    } catch { console.warn("sage: reply is not valid json (cut off?) — salvaging text"); }
   }
-  return { text: s, status: null, action: null, tool: null, toolArg: null, led: null, finding: null, snapshot: null, move: null, arm: null, tape: null };
+  return { text: start !== -1 ? salvage(s) : s, status: null, action: null, tool: null, toolArg: null, led: null, finding: null, snapshot: null, move: null, arm: null, tape: null };
 }
 
 module.exports = { parseSage, snapSummary, askFor, wantsTool, SAGE_TOOLS, parseArm, parseTape, armMovesFor, ARM_REPEAT_MS };
