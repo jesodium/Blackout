@@ -34,7 +34,8 @@
     "test:armrec": "python3 armrec.py --selftest",
     "test:sonar": "node test-sonar.mjs",
     "test:demo": "node test-demo.mjs",
-    "test:led": "node test-led.mjs"
+    "test:led": "node test-led.mjs",
+    "test:split": "node test-split.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

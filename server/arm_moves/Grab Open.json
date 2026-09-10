@@ -1,4 +1,7 @@
 {
+  "sage_can_use": true,
+  "show_in_app": true,
+  "sage_ask_permission_for_this": true,
   "steps": [
     {
       "ms": 0,
@@ -24,7 +27,5 @@
       "ms": 1860,
       "cmd": "arm,4,0"
     }
-  ],
-  "sage_can_use": true,
-  "show_in_app": true
+  ]
 }

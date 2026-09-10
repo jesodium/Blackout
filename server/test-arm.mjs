@@ -183,8 +183,12 @@ assert.equal((arm.match(/onCmd\(`arm,/g) || []).length, 0,
 assert.ok(/^const armLedger = \{/m.test(app), "the arm travel ledger is back inside a component");
 assert.ok(!/function Arm\([^]*?useState\(\(\) => ARM_JOINTS\.map\(\(\) => 0\)\)/.test(arm),
   "<Arm/> keeps its own travel state — it resets every time the pad unmounts");
-assert.ok(/armStopTape\(\);\s*\/\/ a queued arm step/.test(app),
-  "a queued playback step survives the panic key and restarts the arm");
+// one panic path, used by the space key AND by AUTO's STOP bar — a bare `stop`
+// leaves the queued tape/arm steps to restart the robot a moment later
+assert.ok(/const panicStop = \(send\) => \{[^}]*armStopTape\(\)[^}]*clawClear\(\)[^}]*send\("stop"\)/.test(app),
+  "panicStop no longer kills the queued steps and the claw hold");
+assert.equal((app.match(/panicStop\(/g) || []).length, 2,
+  "a stop path stopped going through panicStop() — a queued step will restart the robot");
 
 // ---- the claw ----
 // OPEN is a one-shot burst that parks itself and CLOSE latches. On a 360 with no
@@ -301,6 +305,22 @@ const shaped = {
 };
 assert.deepEqual(Object.keys(armMovesFor(shaped, "sage_can_use")), ["legacy", "both", "sageOnly"]);
 assert.deepEqual(Object.keys(armMovesFor(shaped, "show_in_app")), ["legacy", "both", "appOnly"]);
+
+// the third flag: false means the take plays with no YES in front of it. Missing
+// reads as true, and a bare legacy array does too — anything that moves the arm
+// keeps its card unless somebody wrote the flag off.
+const asks = {
+  legacy: [{ ms: 0, cmd: "arm,0,100" }],
+  quiet: { sage_ask_permission_for_this: false, steps: [{ ms: 0, cmd: "arm,0,100" }] },
+  loud: { steps: [{ ms: 0, cmd: "arm,0,100" }] },
+};
+const ok = armMovesFor(asks, "sage_can_use");
+assert.equal(parseArm("quiet", ok, asks).ask, false, "sage_ask_permission_for_this:false still asks");
+assert.equal(parseArm("loud", ok, asks).ask, true, "a take with no flag stopped asking");
+assert.equal(parseArm("legacy", ok, asks).ask, true, "a legacy take stopped asking");
+assert.equal(parseArm("quiet\nloud", ok, asks).ask, true, "one take that asks must make the chain ask");
+// the filtered map alone has no flags left on it — that has to read as "ask"
+assert.equal(parseArm("quiet", ok).ask, true, "a filtered map leaked a false ask");
 assert.deepEqual(armMovesFor(shaped, "sage_can_use").legacy, shaped.legacy,
   "a pre-flags take must come back as its bare step list");
 // a take Sage may not use must not even be namable to her
@@ -329,7 +349,9 @@ assert.ok(!/Go down|Grab Open/.test(readFileSync(new URL("prompts/chat.md", impo
 
 // she may only ever propose: nothing in the browser runs an arm tape without a
 // press, and the drive lock takes the arm with it
-assert.ok(/kind: "arm"[^]*?state: "pending"/.test(app), "an arm proposal runs without a card");
+assert.ok(/state: ask \? "pending" : "running"/.test(app) &&
+          /const ask = p\.ask !== false && confirmRef\.current;/.test(app),
+  "an arm proposal runs without a card — the only ways past it are the take's own flag and BYPASS");
 assert.ok(/if \(sage && sage\.arm && movesRef\.current\)/.test(app),
   "an arm proposal ignores the SAGE MOVES lock");
 assert.ok(/reply\.move = null; reply\.arm = null;/.test(srv0), "the move lock does not clear arm");

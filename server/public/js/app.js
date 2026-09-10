@@ -50,6 +50,12 @@ const nextCamHost = (cam, h) => {
   return list[(list.indexOf(h) + 1) % list.length];
 };
 const camKey = (base, cam) => base + (cam || "");
+// Which eye a full analysis looks through: the MAXIMIZED feed, the same
+// `camMain` the pip swap writes -- the operator points the big picture at what
+// they want looked at, and a separate picker was one more thing to keep in step.
+// Sage's own "camera"/"armcam" tools still choose for themselves; this is only
+// the analysis the operator presses (and the presentation greeting, which is one).
+const anaCam = () => Math.min(Math.max(0, +localStorage.getItem("camMain") || 0), CAM_HOSTS.length - 1);
 const camHost = (cam = 0) => localStorage.getItem(camKey("camHost", cam)) || CAM_DEFAULTS[cam];
 const camUrl = (host) => `http://${host}:81/stream`;
 
@@ -119,10 +125,16 @@ const DIRS = [
   { w: "right|derecha",   cmd: (ms) => `drv,right,${DRIVE_PWM},${ms}`, ackKey: "sage.rightAck" },
 ].map(d => ({ ...d, bare: new RegExp(`\\b(?:${d.w})\\b`), re: drv(d.w) }));
 
+// A trigger with `tape` plays a recorded run straight from here — no model round
+// trip, so it fires instantly and works with the venue offline. "present
+// yourself" is a tape and NOT the on-board PRESENTATION routine any more: the run
+// talks, looks at the room and works the claw, and none of those exist in
+// routines.h. The name has to match the file in server/tapes/.
 const CMD_TRIGGERS = [
-  { re: /present yourself|presentate/,        cmd: () => "go,presentation", ackKey: "sage.presentAck" },
-  { re: /time to explore|hora de explorar/,   cmd: () => "go,run",          ackKey: "sage.exploreAck" },
-  { re: /start the mission|inicia la mision/, cmd: () => "go,mission",      ackKey: "sage.missionAck" },
+  { re: /present yourself|present urself|presentate/, tape: "PRESENT YOURSELF" },
+  { re: /say hello|di hola/,                          tape: "SAY HELLO" },
+  { re: /the mission|la mision/,                       tape: "NO CLAW DEMO" },
+  { re: /about (your|the|its) arm|sobre (tu|el) brazo/,  tape: "ABOUT THE ARM" },
   ...DIRS,
 ];
 
@@ -149,7 +161,7 @@ function browserSpeak(text, { onStart, onEnd } = {}) {
   const u = new SpeechSynthesisUtterance(text);
   const sl = speechLang();
   const pre = sl.slice(0, 2);
-  u.rate = 0.9; u.lang = sl;
+  u.rate = 1.08; u.lang = sl;   // a tape waits on every line now, so a slow read is dead air
 
   u.voice = voices.find(v => v.lang.startsWith(pre) && /samantha|alex|google|enhanced|jorge|alvaro|helena/i.test(v.name))
     || voices.find(v => v.lang.startsWith(pre)) || null;
@@ -171,6 +183,30 @@ const bandOf = (f, v) => {
 
 const splitSpeech = (t) => (t.match(/[^.!?]+[.!?]+|\S[^.!?]*$/g) || [t]).map(s => s.trim()).filter(Boolean);
 
+// Deepgram Aura has no speed parameter, so the Edge fallback's TTS_RATE (+12% SSML)
+// has no counterpart there and she reads slow — a tape waits on every line now, so
+// that is dead air. The knob is the player instead: playbackRate keeps pitch
+// (preservesPitch defaults on), and it is only applied to deepgram or the Edge
+// lines would be sped up twice. Bench knob — raise until she clips.
+const TTS_PLAYBACK = 1.15;
+const ttsUrl = (p) => "/api/tts?text=" + encodeURIComponent(p) + "&voice=" + encodeURIComponent(ttsVoice()) + "&provider=" + ttsProviderRef;
+
+// A queued line only started fetching its audio once the line before it had
+// finished speaking, so every gap in a tape carried a whole synth round trip as
+// silence. Warming makes the request NOW and parks the element here; speak()
+// takes it instead of building its own. A tape warms every scripted line the
+// moment it starts, so the model turn at the head of a run pays for the rest.
+// speakFlush() drops them: a killed run must not leave a run's worth of audio.
+const ttsWarm = new Map();
+function ttsPrewarm(text) {
+  for (const part of splitSpeech(text || "")) {
+    const u = ttsUrl(part);
+    if (ttsWarm.has(u)) continue;
+    const a = new Audio(u); a.preload = "auto"; a.load();
+    ttsWarm.set(u, a);
+  }
+}
+
 let ttsAudio = null;
 let ttsToken = 0;
 let ttsOnEnd = null;
@@ -188,7 +224,7 @@ async function speak(text, { onStart, onEnd } = {}) {
   ttsOnEnd = onEnd;
   if (!text) { ttsOnEnd = null; onEnd?.(); return; }
   const parts = splitSpeech(text);
-  const mk = (p) => { const a = new Audio("/api/tts?text=" + encodeURIComponent(p) + "&voice=" + encodeURIComponent(ttsVoice()) + "&provider=" + ttsProviderRef); a.preload = "auto"; return a; };
+  const mk = (p) => { const u = ttsUrl(p); const a = ttsWarm.get(u) || new Audio(u); ttsWarm.delete(u); a.preload = "auto"; a.playbackRate = ttsProviderRef === "deepgram" ? TTS_PLAYBACK : 1; return a; };
   let started = false;
   const firstStart = () => { if (!started) { started = true; onStart?.(); } };
   let cur = mk(parts[0]);
@@ -211,6 +247,36 @@ async function speak(text, { onStart, onEnd } = {}) {
     cur = next;
   }
   if (myToken === ttsToken) { ttsOnEnd = null; onEnd?.(); }
+}
+
+// A tape's lines fire off a clock, and a clock has no idea how long a sentence
+// takes to say — so speak()'s stopSpeech() made her talk over herself every time
+// a line ran long. Queued lines wait their turn. A new operator turn still cuts
+// in through speak() directly, and speakFlush() drops whatever has not started
+// yet, so the panic key does not leave a sentence queued behind it.
+let speakChain = Promise.resolve(), speakGen = 0;
+const speakFlush = () => { speakGen++; speakChain = Promise.resolve(); ttsWarm.clear(); speakWake?.(); stopSpeech(); };
+function speakQueued(text, opts) {
+  const gen = speakGen;
+  speakWake?.();                       // an @analyze step is waiting for exactly this
+  speakChain = speakChain
+    .then(() => gen === speakGen
+      ? new Promise((res) => speak(text, { ...opts, onEnd: () => { opts?.onEnd?.(); res(); } }))
+      : null)
+    .catch(() => {});
+  return speakChain;
+}
+
+// An "@analyze" step hands off to the model and has nothing to wait on yet — the
+// line is spoken whenever it comes back, seconds later. So wait for the next
+// sentence to be QUEUED (capped: a failed analysis never speaks at all), then
+// for the queue to drain.
+let speakWake = null;
+function whenSpoken(capMs) {
+  return new Promise((res) => {
+    const to = setTimeout(res, capMs);
+    speakWake = () => { clearTimeout(to); speakWake = null; res(); };
+  }).then(() => speakChain);
 }
 
 function playOnboard(key, fallbackText, { onStart, onEnd } = {}) {
@@ -697,6 +763,8 @@ const ARM_JOINTS = ["base", "shoulder", "elbow", "wrist", "gripwrist", "gripper"
 // agent feed with no pad on screen at all. One robot, one ledger.
 const armLedger = {
   tape: [],            // pending playback timeouts, killed by the panic key
+  tapeTok: 0,          // bumped by every stop — a tape awaiting a spoken line checks it before going on
+  tapeOn: false,       // a run is playing: her lines queue behind each other instead of cutting in
 };
 
 // The one choke point every arm command goes through — the pad, a tapped move
@@ -709,7 +777,7 @@ function armSend(cmd, onCmd) {
 // A queued step firing after the panic key restarts the arm the instant it was
 // stopped, so the tape has to die with it. Bound at the app root, next to the
 // global stop.
-const armStopTape = () => { armLedger.tape.forEach(clearTimeout); armLedger.tape = []; };
+const armStopTape = () => { armLedger.tape.forEach(clearTimeout); armLedger.tape = []; armLedger.tapeTok++; armLedger.tapeOn = false; };
 
 // Recorded on the bench by armrec.py, or assembled by the server from one of
 // Sage's arm proposals: a flat list of {ms, cmd} replayed with its original
@@ -787,6 +855,11 @@ function clawStop(onCmd) {
   armSend(`arm,${CLAW_JOINT},0`, onCmd);
 }
 
+// Everything a panic stop has to kill. A bare `stop` is not one: a queued tape
+// or arm step, and the claw's hold repeat, each restart the robot the instant it
+// lands. The panic key and AUTO's STOP bar both go through here.
+const panicStop = (send) => { blkCancel(); armStopTape(); clawClear(); speakFlush(); send("stop"); };
+
 // One deliberate twitch, for letting go of something without flinging the jaws
 // open into their stop. Full power for `ms` and then park — see CLAW_FRAME_MS
 // for why this is timed and not throttled. It drops the latch: the claw is now
@@ -847,8 +920,9 @@ const tapeStop = () => {
   return out;
 };
 
-const TAPE_EVENTS = ["sage", "say", "analyze", "log", "led"];
+const TAPE_EVENTS = ["sage", "say", "present", "tape", "analyze", "log", "led"];
 const TAPE_LINE_MS = 6000;   // she gets this long to answer; after it, the cue
+const TAPE_ANALYZE_MS = 25000;  // an @analyze holds the run this long; a failed one never speaks at all
 
 // "@say" is a script — the same words every run, and it sounds like it.
 // "@sage" is a CUE: she writes the sentence herself off the cue and whatever the
@@ -867,41 +941,109 @@ function tapeCue(cue) {
   return slot;
 }
 
-function tapeStep(cmd, io, cues) {
+// "@say.es <texto>" beside "@say <text>": a step may carry a language suffix, and
+// the same tape then speaks whichever the dashboard is set to. Split here so the
+// cue prefetch and the step both read the name the same way.
+const tapeParse = (cmd) => {
+  const m = /^@(\w+)(?:\.([a-z]{2}))?\s*([^]*)$/.exec(cmd);
+  return { kind: m?.[1], lang: m?.[2] || null, text: (m?.[3] || "").trim() };
+};
+
+function tapeStep(cmd, io, cues, sub) {
   if (!cmd.startsWith("@")) return void armSend(cmd, io.onCmd);
-  const m = /^@(\w+)\s*([^]*)$/.exec(cmd);
-  const kind = m?.[1], text = (m?.[2] || "").trim();
+  const { kind, text } = tapeParse(cmd);
   if (kind === "sage") {
     // whatever is in hand right now — never a wait, this is live
     const line = cues?.get(text)?.line || text;
-    io.onNote?.(line);
-    speak(line);
+    io.onSay?.(line);
+    return speakQueued(line);
   }
-  else if (kind === "say") speak(text);
-  else if (kind === "analyze") io.onAnalyze?.(null, text || null);
+  else if (kind === "say") { io.onSay?.(text); return speakQueued(text); }
+  // The judge greeting: the same camera still an @analyze takes, read against
+  // prompts/present.md instead of the cave prompt — she counts the people in
+  // front of her, greets that many and compliments them, so the open of a run is
+  // never the same words twice. Nothing to prewarm, the line does not exist yet.
+  else if (kind === "present") { io.onAnalyze?.("present", text || null); return whenSpoken(TAPE_ANALYZE_MS); }
+  // "@tape <name>" plays another recorded run inline. The claw wave a
+  // presentation ends on lives in its own file so it can be re-recorded without
+  // touching the script around it. ONE level deep: a tape that names itself, or
+  // a pair that name each other, would recurse until the browser gave up.
+  else if (kind === "tape") {
+    if (!sub) { io.onNote?.(`tape: ${text} is nested too deep to play`); return null; }
+    return fetch("/api/tapes/" + encodeURIComponent(text))
+      .then(r => r.ok ? r.json() : Promise.reject(new Error("404")))
+      .then(d => sub(Array.isArray(d) ? d : d.steps || []))
+      .catch(() => io.onNote?.(`tape: no recorded run called "${text}"`));
+  }
+  else if (kind === "analyze") { io.onAnalyze?.(null, text || null); return whenSpoken(TAPE_ANALYZE_MS); }
   else if (kind === "log") io.onNote?.(text);
   else if (kind === "led") fetch("/api/led", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: +text || 0 }) }).catch(() => {});
   else io.onNote?.(`tape: unknown event ${cmd}`);
 }
 
-// Timeouts off one clock, never a loop with waits — the board's deadman lives on
-// the gaps. Shares armLedger.tape, so the panic key kills a tape mid-run exactly
-// as it kills an arm take.
+// THE CLOCK STOPS WHILE SHE TALKS. Steps used to fire off absolute timestamps,
+// which is right until a line runs long — and every line runs long: the gaps
+// were timed to an operator's finger, not to a sentence, and an "@analyze" waits
+// on the model for as long as the model takes. So the gestures ran ahead of the
+// words and the arm waved before "and the best part, I have an arm!" was said.
+// Now a step's recorded gap is measured from the END of the one before it, and a
+// spoken step ends when the speech does. The gaps between two *board* commands
+// are untouched, which is what the deadman lives on.
+//
+// It is still one timeout at a time in armLedger.tape, so the panic key kills a
+// tape mid-run exactly as it kills an arm take — plus a token, because a step
+// parked on a sentence is not in that array and has to check for itself.
 function tapePlay(steps, io) {
   armStopTape();
   clawClear();
+  speakFlush();          // a leftover line from the last run must not open this one
+  // A suffixed step only ever fires in its own language. The unsuffixed ones are
+  // the English original, and they drop out as soon as the tape carries a set for
+  // the language on screen — so a half-translated tape speaks what was translated
+  // and falls back to English for the rest instead of saying both.
+  const lang = getLang();
+  const dubbed = steps.some(st => tapeParse(st.cmd).lang === lang);
+  steps = steps.filter(st => {
+    if (!st.cmd.startsWith("@")) return true;
+    const { kind, lang: l } = tapeParse(st.cmd);
+    return l ? l === lang : !(dubbed && (kind === "say" || kind === "sage"));
+  });
   const cues = new Map();
   for (const st of steps) {
-    const cue = st.cmd.startsWith("@sage") ? st.cmd.slice(5).trim() : null;
-    if (cue && !cues.has(cue)) cues.set(cue, tapeCue(cue));
+    const p = tapeParse(st.cmd);
+    if (!st.cmd.startsWith("@")) continue;
+    if (p.kind === "sage" && !cues.has(p.text)) cues.set(p.text, tapeCue(p.text));
+    // Every scripted line's audio is asked for now, while the run is still on its
+    // first sentence — otherwise each line's synth round trip is silence.
+    if (p.kind === "say") ttsPrewarm(p.text);
   }
-  const last = steps.length ? steps[steps.length - 1].ms : 0;
-  armLedger.tape = steps.map(st => setTimeout(() => tapeStep(st.cmd, io, cues), st.ms));
-  armLedger.tape.push(setTimeout(() => { io.onCmd("stop"); armSend("arm,", io.onCmd); }, last + ARM_REPEAT_MS));
-  return last + ARM_REPEAT_MS;
+  const tok = ++armLedger.tapeTok;
+  armLedger.tapeOn = true;
+  const alive = () => tok === armLedger.tapeTok;
+  const wait = (ms) => new Promise((res) => armLedger.tape.push(setTimeout(res, ms)));
+  const runSteps = async (list, depth = 0) => {
+    let at = 0;
+    for (const st of list) {
+      await wait(Math.max(0, st.ms - at));
+      if (!alive()) return false;
+      at = st.ms;
+      // a spoken step hands back its sentence; an "@tape" hands back the run it played
+      const held = tapeStep(st.cmd, io, cues, depth ? null : (s) => runSteps(s, depth + 1));
+      if (held) { await held; if (!alive()) return false; }
+    }
+    return true;
+  };
+  return (async () => {
+    if (!await runSteps(steps)) return;
+    await wait(ARM_REPEAT_MS);
+    if (!alive()) return;
+    armLedger.tapeOn = false;
+    io.onCmd("stop");
+    armSend("arm,", io.onCmd);
+  })();
 }
 
-function Tapes({ onCmd, onAnalyze, onNote, enabled }) {
+function Tapes({ onCmd, onAnalyze, onNote, onSay, enabled }) {
   const [files, setFiles] = useState([]);
   // Seeded from the module flag, not false: the drawer unmounts this whole
   // component when the console is closed (or another tab is picked), and the arm
@@ -961,7 +1103,7 @@ function Tapes({ onCmd, onAnalyze, onNote, enabled }) {
           onClick=${() => (rec ? stop() : (tapeStart(name.trim()), setErr(""), setRec(true)))}>
           ${rec ? "■ STOP + SAVE" : "● RECORD"}
         </button>
-        <span class="tapes-hint">${rec ? "recording every command — drive, arm, lights" : `add by hand: @sage <what to talk about — she writes the line> · ${TAPE_EVENTS.slice(1).map(e => "@" + e).join(" ")}`}</span>
+        <span class="tapes-hint">${rec ? "recording every command — drive, arm, lights" : `add by hand: @sage <what to talk about — she writes the line> · ${TAPE_EVENTS.slice(1).map(e => "@" + e).join(" ")} · @say.es <texto> for a spoken line in another language`}</span>
       </div>
       ${err && html`<div class="tapes-err">${err}</div>`}
       <ul class="tapes-list">
@@ -971,7 +1113,7 @@ function Tapes({ onCmd, onAnalyze, onNote, enabled }) {
             onClick=${async () => {
               const r = await fetch(`/api/tapes/${encodeURIComponent(n)}`);
               const d = await r.json().catch(() => null);
-              if (d) tapePlay(d.steps || [], { onCmd, onAnalyze, onNote });
+              if (d) tapePlay(d.steps || [], { onCmd, onAnalyze, onNote, onSay });
             }}>▶ PLAY</button>
           <button type="button" class="serial-btn" onClick=${() => open(n)}>EDIT</button>
           <button type="button" class="serial-btn" onClick=${() => del(n)}>✕</button>
@@ -1353,7 +1495,7 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
     return () => { ro.disconnect(); anim?.cancel(); };
   }, []);
 
-  const stopAll = () => { heldRef.current = null; keysRef.current.clear(); moving.current = false; setVerb(null); onCmd("stop"); };
+  const stopAll = () => { heldRef.current = null; keysRef.current.clear(); moving.current = false; setVerb(null); panicStop(onCmd); };
 
   const hold = (v) => (e) => { e.preventDefault(); if (armedRef.current) heldRef.current = v; };
   const release = () => { heldRef.current = null; };
@@ -1465,6 +1607,12 @@ function CamView({ cam = 0, pip = false, onSwap }) {
   const [picks, setPicks] = useState({ wb_mode: 0, framesize: 8 });
   const imgRef = useRef(null);
   const boxRef = useRef(null);
+
+  useEffect(() => {
+    const on = (e) => setSliders(p => (p.led === e.detail ? p : { ...p, led: e.detail }));
+    window.addEventListener("cam-led", on);
+    return () => window.removeEventListener("cam-led", on);
+  }, []);
 
   const fail = useCallback(() => setState("offline"), []);
   const lastFrame = useRef(0);
@@ -1589,11 +1737,19 @@ function CamView({ cam = 0, pip = false, onSwap }) {
     const v = ROTS[(ROTS.indexOf(rot) + 1) % ROTS.length];
     setRot(v);
     localStorage.setItem(camKey("camRot", cam), v);
-    // Sage grabs her own stills server-side, so the angle has to go with it --
-    // for both cams now that she can ask for the gripper view. Posting it without
-    // the cam index is exactly how her vision goes sideways.
-    fetch("/api/cam-rot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v, cam }) }).catch(() => {});
   };
+
+  // Sage grabs her own stills server-side, so the angle has to go with it -- for
+  // both cams now that she can ask for the gripper view. Posting it without the
+  // cam index is exactly how her vision goes sideways. It rides on MOUNT and not
+  // just on the button: the angle is per rig in localStorage, the server's is a
+  // process-lifetime default (CAM_ROTATE), so after any reload or server restart
+  // the two disagreed until somebody happened to press ROTATE -- the feed looked
+  // right and every still she read, and every one shown in the transcript, was
+  // 90deg off.
+  useEffect(() => {
+    fetch("/api/cam-rot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: rot, cam }) }).catch(() => {});
+  }, [rot, cam]);
 
   const pick = (varName, val) => {
     setPicks(p => ({ ...p, [varName]: val }));
@@ -1852,6 +2008,59 @@ function ReplayList({ runs, onPick, onDelete, onClose }) {
         </div>
       </div>
     </div>`;
+}
+
+// ---- pane splitters ----
+// Drag a divider and the pane AFTER it takes a fixed px size; the pane before it
+// keeps flex:1 and absorbs the rest, so panes always tile — no gaps, no overlap,
+// no second layout to keep in step. Sizes are per rig in localStorage;
+// double-click or Enter hands the pane back to the stylesheet.
+// IMPORTANT NOTE: dead under 1024px — that layout stacks everything into one
+// column and a pinned px size there is just a broken pane.
+const SPLIT_MIN = 120;
+function Split({ id, axis = "x" }) {
+  const ref = useRef(null);
+  const key = "split." + id;
+  const y = axis === "y";
+  // px === null hands the pane back to css.
+  const size = (px) => {
+    const pane = ref.current?.nextElementSibling;
+    if (!pane) return;
+    if (px == null) { pane.style.flex = ""; localStorage.removeItem(key); return; }
+    const box = ref.current.parentElement;
+    const room = (y ? box.clientHeight : box.clientWidth) - SPLIT_MIN;
+    const v = Math.round(Math.min(Math.max(px, SPLIT_MIN), Math.max(SPLIT_MIN, room)));
+    pane.style.flex = `0 0 ${v}px`;
+    try { localStorage.setItem(key, v); } catch {}
+  };
+  useEffect(() => {
+    if (window.innerWidth <= 1024) return;
+    const v = +localStorage.getItem(key);
+    if (v) size(v);
+  }, []);
+  const down = (e) => {
+    const pane = ref.current.nextElementSibling;
+    const from = y ? pane.offsetHeight : pane.offsetWidth;
+    const p0 = y ? e.clientY : e.clientX;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    // dragging toward the pane shrinks it, which is what a divider does
+    const move = (ev) => size(from - ((y ? ev.clientY : ev.clientX) - p0));
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const keys = (e) => {
+    const pane = ref.current.nextElementSibling;
+    const step = { ArrowLeft: 1, ArrowUp: 1, ArrowRight: -1, ArrowDown: -1 }[e.key];
+    if (step) { e.preventDefault(); size((y ? pane.offsetHeight : pane.offsetWidth) + step * (e.shiftKey ? 40 : 10)); }
+    else if (e.key === "Enter") { e.preventDefault(); size(null); }
+  };
+  return html`<div ref=${ref} class=${"split split--" + axis} role="separator" tabIndex="0"
+    aria-orientation=${y ? "horizontal" : "vertical"} aria-label=${t("split.resize")}
+    onPointerDown=${down} onDblClick=${() => size(null)} onKeyDown=${keys} />`;
 }
 
 // ---- judge view ----
@@ -2287,10 +2496,18 @@ const canMic = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
 const MIC_MAX_MS = 15000;
 
 const SIL_MS = 2000, SIL_RMS = 0.02;
+// full-scale for the meter — speech peaks around 0.2 rms, so a bar that only fills
+// at 1.0 never moves. Bench knob: raise it if the meter pins on a loud room.
+const LVL_FULL = 0.25;
 
 function useMic(onText) {
   const [listening, setListening] = useState(false);
+  const [heard, setHeard] = useState(false);
   const recRef = useRef(null);
+  // the level meter is a css var written straight onto the button, never state:
+  // the fpv mic's hook lives at the app root, and a 10Hz setState there re-renders
+  // the whole dashboard to move a 2px bar.
+  const btnRef = useRef(null);
   const toggle = useCallback(async () => {
     if (recRef.current) { recRef.current.stop(); return; }
     stopSpeech();
@@ -2304,7 +2521,7 @@ function useMic(onText) {
     rec.onstop = async () => {
       stopWatch();
       stream.getTracks().forEach((tr) => tr.stop());
-      recRef.current = null; setListening(false);
+      recRef.current = null; setListening(false); setHeard(false);
       const blob = new Blob(parts, { type: rec.mimeType });
       if (blob.size < 2000) return;
       try {
@@ -2320,20 +2537,29 @@ function useMic(onText) {
     const an = ac.createAnalyser(); an.fftSize = 512;
     ac.createMediaStreamSource(stream).connect(an);
     const buf = new Uint8Array(an.fftSize);
-    let loudAt = Date.now();
+    // the silence cut is only armed once speech has actually been heard: counting
+    // from mic-open cut the operator off during their own reaction time (~2s), which
+    // is why a press-talk-press cycle worked and press-talk did not. MIC_MAX_MS is
+    // what bounds a press with nobody speaking.
+    let loudAt = 0;
     const tick = setInterval(() => {
       an.getByteTimeDomainData(buf);
       let sum = 0;
       for (const v of buf) { const d = (v - 128) / 128; sum += d * d; }
-      if (Math.sqrt(sum / buf.length) > SIL_RMS) loudAt = Date.now();
-      if (Date.now() - loudAt > SIL_MS && rec.state === "recording") rec.stop();
+      const rms = Math.sqrt(sum / buf.length);
+      btnRef.current?.style.setProperty("--lvl", Math.min(1, rms / LVL_FULL).toFixed(2));
+      if (rms > SIL_RMS) { if (!loudAt) setHeard(true); loudAt = Date.now(); }
+      if (loudAt && Date.now() - loudAt > SIL_MS && rec.state === "recording") rec.stop();
     }, 100);
-    stopWatch = () => { clearInterval(tick); ac.close().catch(() => {}); };
+    stopWatch = () => {
+      clearInterval(tick); ac.close().catch(() => {});
+      btnRef.current?.style.removeProperty("--lvl");
+    };
 
-    recRef.current = rec; setListening(true); rec.start();
+    recRef.current = rec; setListening(true); setHeard(false); rec.start();
     setTimeout(() => { if (rec.state === "recording") rec.stop(); }, MIC_MAX_MS);
   }, [onText]);
-  return { listening, toggle, supported: canMic };
+  return { listening, heard, toggle, btnRef, supported: canMic };
 }
 
 // ---- briefing ----
@@ -2409,9 +2635,9 @@ function Briefing({ onBrief, onBack, onSpeak, busy }) {
           <textarea class="mission-input" rows="3" placeholder=${t(cur.ph)}
             value=${curVal} onInput=${e => setCur(e.target.value)} disabled=${busy} autoFocus
             onKeyDown=${e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) next(); }}></textarea>
-          ${mic.supported ? html`<button type="button" class=${"ask-mic brief-mic" + (mic.listening ? " is-live" : "")}
+          ${mic.supported ? html`<button type="button" ref=${mic.btnRef} class=${"ask-mic brief-mic" + (mic.listening ? " is-live" : "") + (mic.heard ? " is-heard" : "")}
             onClick=${mic.toggle} disabled=${busy} aria-pressed=${mic.listening}>
-            <${Icon} n="mic" /> ${mic.listening ? t("brief.listening") : t("brief.speak")}</button>` : null}
+            <${Icon} n="mic" /> ${!mic.listening ? t("brief.speak") : mic.heard ? t("brief.heard") : t("brief.listening")}</button>` : null}
         </div>
         <button type="button" class="btn btn--primary" onClick=${next} disabled=${busy || !curVal.trim()}>
           ${step === BRIEF_STEPS.length - 1 ? t("brief.review") : t("brief.next")}
@@ -2424,7 +2650,7 @@ const ASK_SUGGESTIONS = ["ask.s0", "ask.s1", "ask.s2", "ask.s3", "ask.s4"];
 function Ask({ onAsk, busy }) {
   const mic = useMic(onAsk);
   if (!mic.supported) return null;
-  return html`<button type="button" class=${"btn foot-icon ask-mic" + (mic.listening ? " is-live" : "")} onClick=${mic.toggle}
+  return html`<button type="button" ref=${mic.btnRef} class=${"btn foot-icon ask-mic" + (mic.listening ? " is-live" : "") + (mic.heard ? " is-heard" : "")} onClick=${mic.toggle}
     disabled=${busy} aria-pressed=${mic.listening} title=${t("ask.mic")} aria-label=${t("ask.mic")}>
     ${mic.listening ? "●" : html`<${Icon} n="mic" />`}</button>`;
 }
@@ -2537,7 +2763,7 @@ function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lan
 
 const SAVERS = ["saverOff", "matrix", "saverBounce", "saverStars", "saverTetris"];
 
-function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, onAnalyze, onNote, enabled, onTutorial, saver, onSaver, moves, onMoves, buzz, onBuzz, demo, onDemo }) {
+function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, onAnalyze, onNote, onSay, enabled, onTutorial, saver, onSaver, moves, onMoves, lamp, onLamp, buzz, onBuzz, demo, onDemo }) {
   if (!open) return null;
   const tabs = [["logs", t("zone.logs")], ["findings", t("zone.analysis")], ["serial", t("zone.serial")], ["motor", t("colo.motor")], ["tapes", "Tapes"]];
   return html`
@@ -2552,6 +2778,11 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
         <button type="button" class=${"serial-btn drawer-moves" + (moves ? " is-on" : "")}
           aria-pressed=${!!moves} onClick=${onMoves} title=${t("drawer.movesTitle")}>
           ${t("drawer.moves")}: ${t(moves ? "drawer.on" : "drawer.off")}
+        </button>
+        ${""}
+        <button type="button" class=${"serial-btn drawer-lamp" + (lamp ? " is-on" : "")}
+          aria-pressed=${!!lamp} onClick=${onLamp} title=${t("drawer.lampTitle")}>
+          ${t("drawer.lamp")}: ${t(lamp ? "drawer.on" : "drawer.off")}
         </button>
         ${""}
         <button type="button" class=${"serial-btn drawer-demo" + (demo ? " is-on" : "")}
@@ -2575,7 +2806,7 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
         ${tab === "logs" ? html`<${Logs} logs=${logs} />`
         : tab === "findings" ? html`<${Memory} chat=${chat} />`
         : tab === "serial" ? html`<${SerialMonitor} lines=${serialLines} onClear=${onClearSerial} />`
-        : tab === "tapes" ? html`<${Tapes} onCmd=${onCmd} onAnalyze=${onAnalyze} onNote=${onNote} enabled=${enabled} />`
+        : tab === "tapes" ? html`<${Tapes} onCmd=${onCmd} onAnalyze=${onAnalyze} onNote=${onNote} onSay=${onSay} enabled=${enabled} />`
         : html`<${MotorDebug} onCmd=${onCmd} enabled=${enabled} />`}
       </div>
     </div>`;
@@ -2744,7 +2975,7 @@ function DevicesModal({ open, clients, selfId, onMode, onClose }) {
 }
 
 function SettingsModal({ open, onClose }) {
-  const [values, setValues] = useState({ GEMINI_API_KEY: "", GEMINI_MODEL: "", CEREBRAS_API_KEY: "", DEEPGRAM_API_KEY: "", CEREBRAS_MODEL: "", TTS_VOICE: "" });
+  const [values, setValues] = useState({ CEREBRAS_API_KEY: "", DEEPGRAM_API_KEY: "", CEREBRAS_MODEL: "", TTS_VOICE: "" });
   const [saved, setSaved] = useState(false);
   useEffect(() => { window.blackout.getSettings().then(setValues); }, []);
   const set = (k) => (e) => { setSaved(false); setValues(v => ({ ...v, [k]: e.target.value })); };
@@ -2763,9 +2994,7 @@ function SettingsModal({ open, onClose }) {
           <button type="button" class="blk-modal-x" onClick=${onClose} aria-label=${t("update.close")}>✕</button>
         </div>
         <div class="settings-body">
-          ${field("GEMINI_API_KEY", t("settings.geminiKey"), t("settings.unset"), "password")}
-          ${field("GEMINI_MODEL", t("settings.geminiModel"), "gemini-3.6-flash")}
-          ${field("CEREBRAS_API_KEY", t("settings.cerebrasKey"), t("settings.optional"), "password")}
+          ${field("CEREBRAS_API_KEY", t("settings.cerebrasKey"), t("settings.unset"), "password")}
           ${field("CEREBRAS_MODEL", t("settings.cerebrasModel"), "gemma-4-31b")}
           ${field("DEEPGRAM_API_KEY", t("settings.deepgramKey"), t("settings.optional"), "password")}
           ${field("TTS_VOICE", t("settings.ttsVoice"), "en-US-AndrewNeural")}
@@ -3097,7 +3326,12 @@ function App() {
     const item = { id: Date.now() + Math.random(), time: new Date().toLocaleTimeString(), ...e };
     setChats(cs => cs.map(c => c.id === chat.id ? { ...c, feed: [...(c.feed || []), item].slice(-80) } : c));
     socketRef.current?.emit("feed", item);
+    return item.id;
   }, []);
+
+  // A tape's spoken line is Sage talking, so it goes in the transcript as an
+  // ordinary ● row — the log is for the machinery (@log), not for her voice.
+  const sayFeed = useCallback((line) => { pushFeed({ text: line }); }, [pushFeed]);
 
   const patchFeed = useCallback((id, patch) => {
     const chat = activeRef.current;
@@ -3116,6 +3350,13 @@ function App() {
   const movesRef = useRef(moves);
   movesRef.current = moves;
   const toggleMoves = useCallback(() => setMoves(m => { localStorage.setItem("sageMoves", String(!m)); return !m; }), []);
+
+  // SAGE LAMP off (the default) means she never writes the headlamp on her own —
+  // asking her for it in words still works, the server reads that off the turn.
+  const [lamp, setLamp] = useState(() => localStorage.getItem("sageLamp") !== "false");
+  const lampRef = useRef(lamp);
+  lampRef.current = lamp;
+  const toggleLamp = useCallback(() => setLamp(l => { localStorage.setItem("sageLamp", String(!l)); return !l; }), []);
   useEffect(() => { localStorage.setItem("chats", JSON.stringify(chats)); }, [chats]);
   useEffect(() => { localStorage.setItem("activeChat", activeId); }, [activeId]);
   useEffect(() => { localStorage.setItem("ttsProvider", ttsProv); ttsProviderRef = ttsProv; }, [ttsProv]);
@@ -3169,7 +3410,10 @@ function App() {
   const speakTimed = useCallback((text) => {
     const t = Date.now();
     setAi(p => ({ ...p, phase: "speaking", since: t, tts: null }));
-    speak(text, {
+    // Mid-tape her analysis lands in the queue with the scripted lines — speak()
+    // opens with stopSpeech(), so it used to cut whatever the run was saying.
+    // Off a tape a new turn still cuts in, which is the interruption we want.
+    (armLedger.tapeOn ? speakQueued : speak)(text, {
       onStart: () => { setSpeaking(true); socketRef.current?.emit("speaking", true); setAi(p => ({ ...p, phase: null, tts: Date.now() - t })); },
       onEnd: () => { setSpeaking(false); socketRef.current?.emit("speaking", false); },
     });
@@ -3263,10 +3507,10 @@ function App() {
       addLog(t("log.tool", { name: d.name, detail: d.detail || "" }), "ai");
     });
 
-    socket.on("lamp-auto", d => {
-      addLog(`headlamp ${d.from} → ${d.led}${d.mean != null ? ` (view ${d.mean}/255)` : ""}`, "ai");
-      pushFeed({ kind: "tool", name: "lamp", detail: `${d.from} → ${d.led}` });
-    });
+    // The lamp has one level and three people reaching for it (this slider, Sage,
+    // the dark ramp). The server echoes every change; a window event carries it to
+    // whichever CamViews are mounted without threading the socket through them.
+    socket.on("led", v => window.dispatchEvent(new CustomEvent("cam-led", { detail: v })));
 
     socket.on("blk-decision", d => {
       if (!d?.question) return;
@@ -3354,11 +3598,11 @@ function App() {
     return w;
   }, []);
 
-  const analyze = useCallback((mode, focus) => {
+  const analyze = useCallback((mode, focus, cam) => {
     if (analyzingRef.current) return;
     analyzingRef.current = true;
     setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
-    socketRef.current?.emit("request-analysis", { mode: mode || null, prompt: focus || null });
+    socketRef.current?.emit("request-analysis", { mode: mode || null, prompt: focus || null, cam: cam ?? anaCam() });
   }, []);
 
   const onBleNotify = useCallback((e) => {
@@ -3434,11 +3678,7 @@ function App() {
       if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(el.tagName) ||
         el.getAttribute?.("role") === "button")) return;
       e.preventDefault();
-      blkCancel();
-      armStopTape();          // a queued arm step would restart the arm the
-                              // instant the panic key stopped it
-      clawClear();            // and so would the claw's hold repeat
-      sendCmdRef.current("stop");
+      panicStop(sendCmdRef.current);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -3558,18 +3798,40 @@ function App() {
         pushFeed({ kind: "move", text: blkSerialize(safe), board, guarded: added, state: "pending" });
       }
     }
-    // The server already resolved her arm proposal into a {ms, cmd} tape — the
-    // same shape armrec.py records — so this card is one press away from the pad.
-    if (sage && sage.arm && movesRef.current)
-      pushFeed({ kind: "arm", text: sage.arm.text, tape: sage.arm.tape, state: "pending" });
-    // A recorded run: the server resolved the name into the same {ms, cmd} tape
-    // the drawer plays, so this card is the TAPES tab's play button with a YES
-    // in front of it.
+    // The server already resolved her arm proposal or her recorded run into a
+    // {ms, cmd} tape — the same shape armrec.py records — so a card is one press
+    // away from the pad, or from the TAPES tab's play button.
+    // It plays with no press when the take's own file says so
+    // (`sage_ask_permission_for_this: false` — a spoken hello is not a thing to
+    // ask permission for), and BYPASS plays anything. `ask` comes off the file,
+    // never off the card, so a run that drives keeps its YES in both modes.
+    const propose = (kind, p, extra = {}) => {
+      const ask = p.ask !== false && confirmRef.current;
+      const id = pushFeed({ kind, text: p.text, tape: p.tape, state: ask ? "pending" : "running", ...extra });
+      if (ask || id == null) return;
+      if (kind === "tape")
+        tapePlay(p.tape, { onCmd: sendCmd, onAnalyze: analyze, onNote: (n) => addLog(n, "ai"), onSay: sayFeed })
+          .then(() => patchFeed(id, { state: "done" }));
+      else setTimeout(() => patchFeed(id, { state: "done" }), armPlay(p.tape, sendCmd));
+    };
+    if (sage && sage.arm && movesRef.current) propose("arm", sage.arm);
     if (sage && sage.tape && movesRef.current)
-      pushFeed({ kind: "tape", text: sage.tape.text, tape: sage.tape.tape, state: "pending",
-        dur: sage.tape.tape[sage.tape.tape.length - 1].ms });
+      propose("tape", sage.tape, { dur: sage.tape.tape[sage.tape.tape.length - 1].ms });
     if (speak && ttsRef.current) speakTimed(textv);
-  }, [speakTimed, pushFeed]);
+  }, [speakTimed, pushFeed, patchFeed, sendCmd, analyze, addLog, sayFeed]);
+
+  // A recorded run played by name — the trigger path above, and anywhere else a
+  // run is started without a card in front of it.
+  const runTape = useCallback(async (name) => {
+    const r = await fetch(`/api/tapes/${encodeURIComponent(name)}`);
+    if (!r.ok) return void addLog(`no recorded run called "${name}"`, "system");
+    const steps = (await r.json()).steps || [];
+    if (!steps.length) return void addLog(`recorded run "${name}" is empty`, "system");
+    const id = pushFeed({ kind: "tape", text: name, tape: steps, state: "running",
+      dur: steps[steps.length - 1].ms });
+    await tapePlay(steps, { onCmd: sendCmd, onAnalyze: analyze, onNote: (n) => addLog(n, "ai"), onSay: sayFeed });
+    if (id != null) patchFeed(id, { state: "done" });
+  }, [addLog, pushFeed, patchFeed, sendCmd, analyze, sayFeed]);
 
   // one ask can take several visible steps — she calls her own tools server-side
   const ask = useCallback(async (text) => {
@@ -3580,6 +3842,7 @@ function App() {
     pushFeed({ kind: "user", text });
 
     const trigger = matchCmd(norm(text));
+    if (trigger?.tape) return void runTape(trigger.tape);
     if (trigger) {
       const ms = driveMs(norm(text));
       const sent = await sendCmd(trigger.cmd(ms));
@@ -3595,7 +3858,7 @@ function App() {
     try {
       const r = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, lang: getLang(), moves: movesRef.current, confirm: confirmRef.current }),
+        body: JSON.stringify({ messages: next, lang: getLang(), moves: movesRef.current, lamp: lampRef.current, confirm: confirmRef.current }),
       });
       const data = await r.json();
       const sage = data.reply, ok = !!(sage && sage.text);
@@ -3605,7 +3868,7 @@ function App() {
     } catch (e) {
       setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
     }
-  }, [addLog, showSage, pushFeed, sendCmd]);
+  }, [addLog, showSage, pushFeed, sendCmd, runTape]);
 
   // a card only ever runs when the operator presses YES. NO sends nothing at all.
   const onAnswer = useCallback(async (item, yes) => {
@@ -3618,8 +3881,8 @@ function App() {
     if (item.kind === "tape") {
       patchFeed(item.id, { state: "running" });
       addLog(`playing recorded run "${item.text}"`, "ai");
-      const ms = tapePlay(item.tape, { onCmd: sendCmd, onAnalyze: analyze, onNote: (n) => addLog(n, "ai") });
-      setTimeout(() => patchFeed(item.id, { state: "done" }), ms);
+      tapePlay(item.tape, { onCmd: sendCmd, onAnalyze: analyze, onNote: (n) => addLog(n, "ai"), onSay: sayFeed })
+        .then(() => patchFeed(item.id, { state: "done" }));
       return;
     }
     if (item.kind === "arm") {
@@ -3918,9 +4181,9 @@ function App() {
             <${FpvOverlay} packet=${view} />
             <${FpvSage} ai=${ai} packet=${view} speaking=${speaking} connected=${live} />
             <div class="fpv-hud">
-              <button type="button" class=${"hud-btn" + (fpvMic.listening ? " is-active" : "")}
+              <button type="button" ref=${fpvMic.btnRef} class=${"hud-btn mic-lvl" + (fpvMic.listening ? " is-active" : "")}
                 disabled=${!fpvMic.supported} onClick=${fpvMic.toggle} aria-pressed=${fpvMic.listening}>
-                ○ ${fpvMic.listening ? t("ask.listening") : t("ask.mic")}
+                ${fpvMic.heard ? "●" : "○"} ${!fpvMic.listening ? t("ask.mic") : fpvMic.heard ? t("ask.heard") : t("ask.listening")}
               </button>
               <button type="button" class="hud-btn" onClick=${() => analyze()} disabled=${ai.analyzing}>
                 ◎ ${ai.analyzing ? t("agent.analyzing") : t("agent.runAnalysis")}
@@ -3955,10 +4218,13 @@ function App() {
           <div class="col-main">
             <div class="stage-row">
               <${ThreeDeeBox} packet=${view} onLog=${addLog} />
+              <${Split} id="cam" />
               <${CamBox} packet=${view} onFpv=${() => toggleFpv(true)} />
             </div>
+            <${Split} id="strip" axis="y" />
             <${SensorStrip} packet=${view} />
           </div>
+          <${Split} id="rail" />
           <aside class="col-rail">
             <${Agent} ai=${ai} tts=${tts} ttsProv=${ttsProv} hasDeepgram=${hasDeepgram} confirm=${confirm} onConfirm=${toggleConfirm} packet=${view} connected=${live} speaking=${speaking}
               chats=${chats} activeChat=${activeChat} feed=${activeChat?.feed || NO_FEED} onNewChat=${newChat} onSelectChat=${selectChat}
@@ -3967,16 +4233,20 @@ function App() {
               onReport=${openReport} onAnswer=${onAnswer} />
             ${
               driveMounted && html`
+              <${React.Fragment}>
+              <${Split} id="drive" axis="y" />
               <${Drive} onCmd=${sendCmd} onAnalyze=${analyze} enabled=${canDrive} leaving=${!granted}
-                busyRef=${analyzingRef} packetRef=${packetRef} />`}
+                busyRef=${analyzingRef} packetRef=${packetRef} />
+              <//>`}
           </aside>
         </main>`}
 
         ${!judge && html`<${Drawer} open=${drawer} tab=${drawerTab} onTab=${setDrawerTab} onClose=${closeDrawer}
           logs=${logs} serialLines=${serialLines} onClearSerial=${clearSerial}
-          chat=${activeChat} onCmd=${sendCmd} onAnalyze=${analyze} onNote=${(n) => addLog(n, "system")}
+          chat=${activeChat} onCmd=${sendCmd} onAnalyze=${analyze} onNote=${(n) => addLog(n, "system")} onSay=${sayFeed}
           enabled=${canDrive} onTutorial=${restartTour}
           saver=${saver} onSaver=${pickSaver} moves=${moves} onMoves=${toggleMoves}
+            lamp=${lamp} onLamp=${toggleLamp}
             buzz=${buzz} onBuzz=${toggleBuzz} demo=${demo} onDemo=${toggleDemo} />`}
       </div>
 

@@ -1,0 +1,155 @@
+{
+  "sage_can_use": true,
+  "show_in_app": true,
+  "sage_ask_permission_for_this": false,
+  "steps": [
+    {
+      "ms": 0,
+      "cmd": "@sage Hello! I am Sage, the A I scout riding on this rover. It is lovely to meet you — what should I call you?"
+    },
+    {
+      "ms": 0,
+      "cmd": "@sage.es ¡Hola! Soy Sage, la exploradora de inteligencia artificial que viaja en este rover. Encantada de conocerlos, ¿cómo debería llamarlos?"
+    },
+    {
+      "ms": 959,
+      "cmd": "arm,0,-100"
+    },
+    {
+      "ms": 1103,
+      "cmd": "arm,0,-100"
+    },
+    {
+      "ms": 1209,
+      "cmd": "arm,0,0"
+    },
+    {
+      "ms": 1799,
+      "cmd": "arm,0,100"
+    },
+    {
+      "ms": 2004,
+      "cmd": "arm,0,100"
+    },
+    {
+      "ms": 2108,
+      "cmd": "arm,0,0"
+    },
+    {
+      "ms": 2908,
+      "cmd": "arm,0,-100"
+    },
+    {
+      "ms": 3160,
+      "cmd": "arm,0,0"
+    },
+    {
+      "ms": 4000,
+      "cmd": "arm,1,-100"
+    },
+    {
+      "ms": 4113,
+      "cmd": "arm,1,-100"
+    },
+    {
+      "ms": 4252,
+      "cmd": "arm,1,0"
+    },
+    {
+      "ms": 5197,
+      "cmd": "arm,1,100"
+    },
+    {
+      "ms": 5302,
+      "cmd": "arm,1,100"
+    },
+    {
+      "ms": 5447,
+      "cmd": "arm,1,0"
+    },
+    {
+      "ms": 5842,
+      "cmd": "arm,1,-100"
+    },
+    {
+      "ms": 5909,
+      "cmd": "arm,1,-100"
+    },
+    {
+      "ms": 6107,
+      "cmd": "arm,1,0"
+    },
+    {
+      "ms": 6408,
+      "cmd": "arm,1,100"
+    },
+    {
+      "ms": 6503,
+      "cmd": "arm,1,100"
+    },
+    {
+      "ms": 6659,
+      "cmd": "arm,1,0"
+    },
+    {
+      "ms": 7200,
+      "cmd": "@analyze I ALREADY said hello, gave my name and asked theirs — do not greet, introduce myself or ask names again. Just look at the people in front of me and say one warm, specific, respectful thing I can really see: how many, where they stand, what they wear. Never call them judges."
+    },
+    {
+      "ms": 15008,
+      "cmd": "arm,5,-100"
+    },
+    {
+      "ms": 15209,
+      "cmd": "arm,5,0"
+    },
+    {
+      "ms": 15701,
+      "cmd": "arm,5,100"
+    },
+    {
+      "ms": 16242,
+      "cmd": "arm,5,-100"
+    },
+    {
+      "ms": 16443,
+      "cmd": "arm,5,0"
+    },
+    {
+      "ms": 16808,
+      "cmd": "arm,5,100"
+    },
+    {
+      "ms": 17609,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 17910,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 18211,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 18510,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 18810,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 19110,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 19412,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 19710,
+      "cmd": "arm,5,35"
+    }
+  ]
+}
