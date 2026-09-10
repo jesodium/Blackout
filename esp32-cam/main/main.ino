@@ -80,7 +80,7 @@ static void camIdentify() {
 // app.js -- npm run test:detect fails if the two drift.
 // A row with ip {0,0,0,0} is DHCP + mDNS only.
 enum { NET_HOME, NET_SCHOOL, NET_HOTSPOT, NET_ROUTER };
-#define CAM_NETWORK NET_HOTSPOT
+#define CAM_NETWORK NET_ROUTER
 
 static const struct {
   const char *ssid, *pass;
