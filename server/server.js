@@ -11,35 +11,54 @@ const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
-const { eyeParts, grabFrames, setFrameSource, setLed, getLed, pingCam, rampTo, setCamRot, camCount, LAMP_MAX } = require("./vision");
+const { eyeParts, grabFrames, setFrameSource, setLed: visionSetLed, getLed, pingCam, setCamRot, camCount } = require("./vision");
+// One wrapper so every lamp change -- the slider, Sage, the dark ramp -- lands on
+// every dashboard's slider. The browser posts /api/led and hears its own echo back.
+const setLed = async (v) => { const r = await visionSetLed(v); io.emit("led", getLed()); return r; };
 const ledStrip = require("./ledstrip");
 const { parseSage, snapSummary, wantsTool, armMovesFor } = require("./sage");
 const recorder = require("./recorder");
 
 // ---- brains ----
-// tried in order, so a dead or rate-limited primary costs one retry, not the run
+// Cerebras only. The fallback chain (openrouter/groq/gemini/lmstudio) is gone —
+// four spare providers meant four sets of keys to keep alive for a venue with no
+// internet, and the one that answers fast is this one. Still a list, so chat()'s
+// retry pass is unchanged and a second brain is one line if it is ever wanted.
+// qwen puts a paragraph of thinking in front of every reply unless this is off;
+// gemma has no reasoning mode and 400s on the param, so it is per-model.
+const CEREBRAS_TUNE = (process.env.CEREBRAS_MODEL || "").startsWith("qwen") ? { reasoning_effort: "none" } : {};
 const BRAINS = [
-  ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "gemma-4-31b", {}],
-  ["openrouter", process.env.OPENROUTER_API_KEY, "https://openrouter.ai/api/v1", process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free", {}],
-  ["groq", process.env.GROQ_API_KEY, "https://api.groq.com/openai/v1", process.env.GROQ_MODEL || "qwen/qwen3.6-27b", { reasoning_effort: "none" }],
-  ["gemini", process.env.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/", process.env.GEMINI_MODEL || "gemini-3.6-flash", { reasoning_effort: "minimal" }],
-  ["lmstudio", process.env.LMSTUDIO_URL && "lm-studio", process.env.LMSTUDIO_URL || "http://localhost:1234/v1", process.env.LMSTUDIO_MODEL || "google/gemma-4-12b", {}],
+  ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "qwen-3.8-27b", CEREBRAS_TUNE],
 ].filter(([, key]) => key).map(([name, key, baseURL, model, tune]) => ({ name, model, tune, baseURL, client: new OpenAI({ baseURL, apiKey: key, maxRetries: 0 }) }));
 const hasAI = BRAINS.length > 0;
 
 const BRAIN_DEAD = new Set([401, 402, 403, 404]);
 
 async function chat(params) {
+  // Cerebras 400s ("System message must be at the beginning") on the SECOND system
+  // message, which is exactly what langMsg() adds when the dashboard is in Spanish —
+  // so every es turn died with a bodyless 400. Fold them into one, here rather than at
+  // the four call sites, so a new prompt can't reintroduce it.
+  const sys = params.messages.filter((m) => m.role === "system");
+  if (sys.length > 1) params = { ...params, messages: [
+    { role: "system", content: sys.map((m) => m.content).join("\n\n") },
+    ...params.messages.filter((m) => m.role !== "system"),
+  ] };
   let last;
   for (let pass = 0; pass < 2; pass++) {
     for (const b of BRAINS) {
-      if (b.dead || (pass && b.cooled)) continue;
+      // A brain dropped on an earlier call leaves nothing to throw, and the
+      // caller then reported "AI key not set" for a key that was set fine — a
+      // wrong CEREBRAS_MODEL read as a missing key for a whole session. Carry
+      // the reason it died.
+      if (b.dead) { last = last || b.deadErr; continue; }
+      if (pass && b.cooled) continue;
       try { return await b.client.chat.completions.create({ model: b.model, ...b.tune, ...params }); }
       catch (e) {
         last = e;
 
         if (e.status === 429) { b.cooled = true; console.error(`${b.name} rate-limited — skipping the retry pass`); continue; }
-        if (BRAIN_DEAD.has(e.status)) b.dead = e.status;
+        if (BRAIN_DEAD.has(e.status)) { b.dead = e.status; b.deadErr = new Error(`${b.name} (${b.model}) is out for this session: ${e.status} ${e.message}`); }
         console.error(`${b.name} (${b.model}) failed:`, e.status || "", e.message, b.dead ? "— dropping it for this session" : "");
       }
     }
@@ -111,7 +130,11 @@ async function speakEdge(text, voice, res) {
   const tts = new MsEdgeTTS();
   await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
   res.setHeader("Content-Type", "audio/mpeg");
-  tts.toStream(text).audioStream.on("error", () => res.destroy()).pipe(res);
+  // She reads a touch fast on purpose: a presentation tape now WAITS for each
+  // line to finish before the next step fires, so every spoken second is a
+  // second the arm is standing still. TTS_RATE is the knob (SSML relative %).
+  tts.toStream(text, { rate: process.env.TTS_RATE || "+12%" })
+    .audioStream.on("error", () => res.destroy()).pipe(res);
 }
 
 async function ttsHandler(req, res) {
@@ -161,6 +184,14 @@ app.post("/api/chat", async (req, res) => {
   const lang = LANG_INSTRUCT[req.body?.lang] ? req.body.lang : "en";
 
   const moves = req.body?.moves !== false;
+  // CONSOLE -> SAGE LAMP. Off, she can talk about the light but never writes it:
+  // she reached for it every other turn and the operator lost the level they set.
+  // The word check is the "SAGE, brighten the lamp" escape hatch, so the toggle
+  // stays off for the whole run. The black-frame ramp is not this and is
+  // unaffected.
+  if (typeof req.body?.lamp === "boolean") lampAllowed = req.body.lamp;
+  const lastSaid = String(msgs[msgs.length - 1]?.content || "");
+  const lamp = lampAllowed || LAMP_ASKED.test(lastSaid);
   try {
     const d = freshData();
     const ctx = d ? buildChatContext(d) : "No live readings right now — running dark.";
@@ -173,9 +204,10 @@ app.post("/api/chat", async (req, res) => {
       ...(moves ? armLine() : []),
       ...(moves ? tapeLine() : []),
       ...(moves ? [] : [{ role: "system", content: "MOVE LOCK: your drive, your arm and the runs the crew recorded are all locked out right now — say so in your own words as a scout would (\"I'm parked until the crew unlocks me\"), never by naming these fields. Never offer to move, and never set \"move\", \"arm\" or \"tape\" this turn." }]),
+      ...(lamp ? [] : [{ role: "system", content: "LAMP LOCK: your headlamp is held where the crew left it this turn. Set \"led\" to null whatever you think of the light, and don't mention the lamp unless they bring it up." }]),
       ...camLine(),
       ...mapped,
-    ], { maxTokens: 400, confirm: req.body?.confirm === true });
+    ], { maxTokens: 400, confirm: req.body?.confirm === true, lamp });
     if (!moves && reply) { reply.move = null; reply.arm = null; reply.tape = null; }
     res.json({ reply, steps });
   } catch (err) {
@@ -251,7 +283,6 @@ function processLine(raw) {
   recorder.push(data);
   io.emit("sensor-data", data);
   maybeAutoAnalyze(data);
-  if (data.lux != null) darkCheck(data.lux);
   pushHud(data);
 }
 
@@ -297,7 +328,7 @@ app.get("/api/lan", (req, res) => {
   res.json({ url: ip ? `http://${ip}:${PORT}` : null, host: `http://blackout.local:${PORT}` });
 });
 
-const CLOUD_HOSTS = { sage: BRAINS[0] ? new URL(BRAINS[0].baseURL).origin + "/" : "https://api.groq.com/", tts: "https://api.deepgram.com/" };
+const CLOUD_HOSTS = { sage: BRAINS[0] ? new URL(BRAINS[0].baseURL).origin + "/" : "https://api.cerebras.ai/", tts: "https://api.deepgram.com/" };
 let cloudSeen = { at: 0, state: null };
 app.get("/api/cloud", async (_req, res) => {
   if (cloudSeen.state && Date.now() - cloudSeen.at < 25000) return res.json(cloudSeen.state);
@@ -491,6 +522,7 @@ app.post("/api/blk-sage", async (req, res) => {
       messages: [
         { role: "system", content: BLK_SYSTEM },
         ...ctx,
+        ...langMsg(currentLanguage),
         ...msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") })),
       ],
       max_tokens: 900,
@@ -506,6 +538,7 @@ async function sageDecide(question, { images = [], extra = "" } = {}) {
   const resp = await chat({
     messages: [
       { role: "system", content: CHAT_SYSTEM },
+      ...langMsg(currentLanguage),
       { role: "system", content: "In this turn you are making a yes/no call for a running workflow. Reply with the JSON object and nothing else." },
       { role: "user", content: images.length ? [{ type: "text", text }, ...images] : text },
     ],
@@ -630,9 +663,10 @@ let currentMission = "";
 let currentLanguage = "en";
 
 const LANG_INSTRUCT = {
-  es: "IMPORTANTE: Responde SIEMPRE en español natural y fluido, sin importar el idioma de las lecturas, etiquetas o del mensaje del operador. Mantén tu personaje y tono.",
+  es: "IMPORTANTE: Responde SIEMPRE en español natural y fluido, sin importar el idioma de las lecturas, etiquetas o del mensaje del operador. Mantén tu personaje y tono. Las CLAVES y los VALORES fijos del JSON (text, status, tool, led, finding, snapshot, move, arm, tape; clear/caution/danger; camera/armcam/sensors) se escriben SIEMPRE en inglés: solo el texto que se lee en voz alta va en español.",
 };
 const langMsg = (lang) => (LANG_INSTRUCT[lang] ? [{ role: "system", content: LANG_INSTRUCT[lang] }] : []);
+const LANG_SET = new Set(Object.values(LANG_INSTRUCT));
 
 const ONBOARDING = {
   en: {
@@ -717,47 +751,20 @@ function recordFinding(text, dataUrl) {
   recorder.mark("finding", text);
 }
 
-// ---- auto headlamp ----
-// latches until the light comes back, so it ramps once per dark spell instead of flapping
-const LUX_DARK = parseFloat(process.env.LUX_DARK || "100");
-const LUX_LIGHT = parseFloat(process.env.LUX_LIGHT || String(LUX_DARK * 1.5));
-const LAMP_RAMP_MS = parseInt(process.env.LAMP_RAMP_MS || "200", 10);
-const LAMP_BLURT = {
-  en: "It's going dark in here — turning the headlamp on so we can see.",
-  es: "Se está poniendo oscuro — enciendo la linterna para que veamos.",
-};
-let lampBusy = false, lampAuto = false;
-function darkCheck(lux) {
-  if (lampBusy) return;
-  if (lux < LUX_DARK && !lampAuto && getLed() < LAMP_MAX) rampLamp(lux);
-
-  else if (lux >= LUX_LIGHT && lampAuto) {
-    lampAuto = false;
-    setLed(0).catch((e) => console.error("auto lamp off:", e.message));
-  }
-}
-
-async function rampLamp(lux) {
-  lampBusy = true;
-  lampAuto = true;
-  const from = getLed();
-  const text = LAMP_BLURT[currentLanguage] || LAMP_BLURT.en;
-  io.emit("agent-blurt", { text, timestamp: Date.now() });
-  recorder.mark("sage", text);
-  try {
-    for (const v of rampTo(from)) {
-      await setLed(v);
-      await new Promise((r) => setTimeout(r, LAMP_RAMP_MS));
-    }
-    io.emit("lamp-auto", { from, led: getLed(), timestamp: Date.now() });
-    recorder.mark("analysis", `headlamp ${from} → ${getLed()} (dark, ${Math.round(lux)} lx)`);
-  } catch (e) {
-    console.error("auto lamp:", e.message);
-    lampAuto = false;
-  } finally {
-    lampBusy = false;
-  }
-}
+// ---- headlamp ----
+// NOTHING adjusts the lamp automatically any more. It was lux < 100 (which fires
+// in a normally lit room -- a bh1750 pointed at the floor reads a fraction of
+// what the ceiling puts out), then the mean luma of the analysis frame; both were
+// a machine guessing at "can she see?" when the one thing in the loop that can
+// actually answer that is Sage looking at the picture. So lux is a DISPLAY
+// READING and nothing else, and the rule is one line in her prompt: too dark to
+// make out, raise the lamp.
+// Sage's own "led" field, gated by CONSOLE -> SAGE LAMP (the flag rides on
+// /api/chat like SAGE MOVES, so it lands on her first turn). Default ON since
+// 2026-09-09: she is the only thing that touches the lamp now, so OFF means
+// nobody does. Turn it off to pin a level by hand for a run.
+let lampAllowed = true;
+const LAMP_ASKED = /\b(lamp|headlamp|light|lights|led|bright|brighter|brighten|dim|dimmer|darker)\b|luz|linterna|foco|brillo|ilumina|oscur/i;
 
 const SNAP_DIR = path.join(__dirname, "public", "snapshots");
 fs.mkdirSync(SNAP_DIR, { recursive: true });
@@ -774,7 +781,7 @@ function takeSnapshot(reason) {
   recorder.mark("finding", text);
 }
 
-async function askSage(messages, { maxTokens = 400, confirm = false } = {}) {
+async function askSage(messages, { maxTokens = 400, confirm = false, lamp = false } = {}) {
   // one choke point for every model call, so the strip's "thinking" and her
   // verdict colour come for free in chat, analysis and the autonomous loop
   ledStrip.busy(true);
@@ -787,20 +794,23 @@ async function askSage(messages, { maxTokens = 400, confirm = false } = {}) {
   } finally {
     ledStrip.busy(false);
   }
-  const sage = parseSage(resp.choices[0]?.message?.content, armMovesFor(readArmMoves(), "sage_can_use"), sageTapes());
-  // the lamp, a finding and a snapshot are side effects of the reply, not loop
-  // steps — they get the same gate as the tools or ASK FIRST only covers half of
-  // what she reaches for. Declined = skipped, silently: it changed nothing.
+  const sage = parseSage(resp.choices[0]?.message?.content, readArmMoves(), readTakes(TAPE_DIR));
+  // a finding and a snapshot are side effects of the reply, not loop steps —
+  // they get the same gate as the tools or ASK FIRST only covers half of what
+  // she reaches for. Declined = skipped, silently: it changed nothing.
   const allow = (name, arg) => (confirm ? askConfirm(name, arg) : true);
-  if (sage.led != null && sage.led !== getLed() && await allow("lamp", String(sage.led))) {
+  // The lamp ALWAYS asks, in BYPASS too: it is the one side effect the operator
+  // sets by hand and then watches Sage undo. It is asked off the main path (no
+  // await) so the analysis loop is never parked 60s on a card nobody is watching
+  // — a silent browser still reads as NO, so the lamp just holds.
+  if (lamp && sage.led != null && sage.led !== getLed()) {
     const from = getLed();
-
-    setLed(sage.led)
+    askConfirm("lamp", String(sage.led)).then((ok) => ok && setLed(sage.led)
       .then(() => emitStep({ kind: "tool", name: "lamp", detail: `${from} → ${sage.led}` }))
       .catch((e) => {
         console.error("cam led:", e.message);
         emitStep({ kind: "tool", name: "lamp", detail: `${from} → ${sage.led} · failed: ${e.message}` });
-      });
+      }));
   }
   if (sage.status) ledStrip.sage(sage.status);
   if (sage.finding && await allow("finding", sage.finding)) recordFinding(sage.finding, lastImage(messages));
@@ -866,12 +876,19 @@ async function runTool(name, arg) {
   return null;
 }
 
-async function agentLoop(messages, { maxTokens = 400, confirm = false } = {}) {
+async function agentLoop(messages, { maxTokens = 400, confirm = false, lamp = false } = {}) {
   const msgs = messages.slice();
   const steps = [];
   let sage;
+  // Every tool result is English prose pushed AFTER the system block, so on a turn
+  // where she looks or re-reads the sensors the last thing the model sees is
+  // English and it answers in English — which is why a Spanish dashboard was only
+  // *sometimes* answered in Spanish. Repeat the language line on each injected turn:
+  // recency is the only lever, the system block can't be moved below them.
+  const langNote = messages.find((m) => m.role === "system" && LANG_SET.has(m.content))?.content;
+  const say = (text) => (langNote ? `${text}\n\n${langNote}` : text);
   for (let i = 0; i < MAX_TOOL_STEPS; i++) {
-    sage = await askSage(msgs, { maxTokens, confirm });
+    sage = await askSage(msgs, { maxTokens, confirm, lamp });
     if (!wantsTool(sage, i, MAX_TOOL_STEPS)) break;
     if (confirm && !(await askConfirm(sage.tool, sage.toolArg))) {
       const step = { kind: "tool", name: sage.tool, arg: sage.toolArg || null,
@@ -879,7 +896,7 @@ async function agentLoop(messages, { maxTokens = 400, confirm = false } = {}) {
       steps.push(step);
       emitStep(step);
       msgs.push({ role: "assistant", content: sage.text || `(reaching for ${sage.tool})` });
-      msgs.push({ role: "user", content: "The operator turned that down. Answer them now from what you already have, and don't reach for anything else this turn." });
+      msgs.push({ role: "user", content: say("The operator turned that down. Answer them now from what you already have, and don't reach for anything else this turn.") });
       continue;
     }
     const out = await runTool(sage.tool, sage.toolArg);
@@ -889,7 +906,7 @@ async function agentLoop(messages, { maxTokens = 400, confirm = false } = {}) {
     emitStep(step);
     recorder.mark("analysis", `tool ${sage.tool}: ${out.detail}`);
     msgs.push({ role: "assistant", content: sage.text || `(reaching for ${sage.tool})` });
-    msgs.push({ role: "user", content: out.images?.length ? [{ type: "text", text: out.text }, ...out.images] : out.text });
+    msgs.push({ role: "user", content: out.images?.length ? [{ type: "text", text: say(out.text) }, ...out.images] : say(out.text) });
   }
   return { reply: sage, steps };
 }
@@ -1039,7 +1056,7 @@ function readingLines(data) {
   ].filter(Boolean).join("\n");
 }
 
-const lampLine = () => `\nYour headlamp is currently at ${getLed()} of 255 (it trims itself when the passage goes pitch dark, so leave it alone unless you want a level it is not finding on its own).`;
+const lampLine = () => `\nYour headlamp is at ${getLed()} of 255, and NOTHING moves it but you. If the picture you are looking at is too dark to make out, raise it. Judge that off the picture, never off the light reading — the lx number is there for the operator's screen, not for you to decide the lamp from.`;
 
 function buildChatContext(data) {
   return `${missionLine()}Current readings from the rover right now (each line is already judged — trust the [STATUS] tag for the verdict, do NOT re-judge from the number, but DO say the number aloud with its unit when the operator asks about it):
@@ -1052,7 +1069,7 @@ function buildAiPrompt(data) {
 ${readingLines(data)}${trendLine(data)}${lampLine()}`;
 }
 
-async function runAiAnalysis(mode, focus) {
+async function runAiAnalysis(mode, focus, cam = 0) {
   const present = mode === "present";
 
   const data = freshData();
@@ -1062,19 +1079,40 @@ async function runAiAnalysis(mode, focus) {
   }
 
   try {
-    const eyes = await eyeParts();
+    // Which eye is the OPERATOR's pick (the picker next to the voice selector),
+    // not hers -- her own "camera"/"armcam" tools still choose for themselves.
+    // The greeting is ONE look at the room, so it takes a FRESH frame instead of
+    // eyeParts()' cache, which hands back a still up to VISION_MAX_AGE_MS old --
+    // a 30s-old frame of an empty room is how she ends up greeting people who
+    // are not there any more.
+    const eyes = present ? await grabFrames(1, 0, cam) : await eyeParts(cam);
+    if (present) console.log(`Presentation greeting — cam ${cam} frame: ${eyes.length ? "yes" : "NONE, greeting blind"}`);
     emitStep({ kind: "tool", name: "analysis", arg: focus || null, img: saveShot(eyes),
       detail: eyes.length ? "full read of the passage" : "no view — readings only" });
     const focusLine = focus ? `\nThe operator's workflow asked you to look at this specifically: ${focus}` : "";
-    const promptText = buildAiPrompt(data) + focusLine + (eyes.length
-      ? "\n(Attached is your live forward-camera view — read it for what's ahead.)"
-      : "\n(Your eye is dark right now. Don't mention this or say anything about not being able to see — just report normally from the readings you do have, as if vision were never part of it.)");
+    // A greeting is not a telemetry read: buildAiPrompt() opens with "report to
+    // the operator" and a block of sensor lines she is then told never to
+    // mention, which is what left her greeting blind-sounding with a picture in
+    // hand. Present gets its own one-liner and the picture line that MAKES her
+    // name something she sees.
+    const seeLine = present
+      ? "\n(Attached is your live camera view of the room. LOOK AT IT and say out loud ONE plain thing you can actually see about the people in it — a shirt or jacket colour, that someone is holding a phone, that one is standing — and hang your compliment on that. Anything true and ordinary counts; do not skip it because it feels too small.)"
+      : "\n(Attached is your live forward-camera view — read it for what's ahead.)";
+    // A greeting with no picture must never invent a room. The cave prompt's
+    // "just report from the readings" does not apply -- there are no readings in
+    // a greeting, so the model fills the gap with people who are not there.
+    const blindLine = present
+      ? "\n(NO PICTURE this turn — you are not seeing the room. Greet them warmly with NO number, NO count, and NO description of anybody. Never say or hint that you cannot see.)"
+      : "\n(Your eye is dark right now. Don't mention this or say anything about not being able to see — just report normally from the readings you do have, as if vision were never part of it.)";
+    const promptText = (present
+      ? "You are parked in front of the judges and the robot has settled. Give your greeting now."
+      : buildAiPrompt(data)) + focusLine + (eyes.length ? seeLine : blindLine);
 
     const { reply: sage } = await agentLoop([
       { role: "system", content: present ? PRESENT_SYSTEM : AI_SYSTEM },
       ...langMsg(currentLanguage),
       { role: "user", content: eyes.length ? [{ type: "text", text: promptText }, ...eyes] : promptText },
-    ], { maxTokens: 400 });
+    ], { maxTokens: 400, lamp: lampAllowed });
     io.emit("ai-analysis", { analysis: sage.text || "No analysis returned.", status: sage.status, timestamp: Date.now() });
     recorder.mark("analysis", sage.text || "No analysis returned.");
   } catch (err) {
@@ -1235,6 +1273,7 @@ io.on("connection", (socket) => {
     host, mode, granted: mode === "full",
   });
   pushClients();
+  socket.emit("led", getLed());
   socket.on("disconnect", () => { clients.delete(socket.id); pushClients(); });
 
   socket.on("grant", (d) => {
@@ -1252,8 +1291,10 @@ io.on("connection", (socket) => {
   socket.on("request-analysis", (opts) => {
     const mode = opts?.mode;
     const focus = String(opts?.prompt || "").trim().slice(0, 300) || null;
-    console.log(`On-demand analysis requested${mode ? ` (${mode})` : ""}${focus ? ` — focus: ${focus}` : ""}`);
-    runAiAnalysis(mode, focus);
+    // the operator's eye for this analysis; out of range falls back to the front cam
+    const cam = Number(opts?.cam) > 0 && Number(opts.cam) < camCount ? Number(opts.cam) : 0;
+    console.log(`On-demand analysis requested${mode ? ` (${mode})` : ""} on cam ${cam}${focus ? ` — focus: ${focus}` : ""}`);
+    runAiAnalysis(mode, focus, cam);
   });
 
   socket.emit("mission-set", { mission: currentMission });
