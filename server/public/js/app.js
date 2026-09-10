@@ -134,7 +134,7 @@ const CMD_TRIGGERS = [
   { re: /present yourself|present urself|presentate/, tape: "PRESENT YOURSELF" },
   { re: /say hello|di hola/,                          tape: "SAY HELLO" },
   { re: /the mission|la mision/,                       tape: "NO CLAW DEMO" },
-  { re: /about (your|the|its) arm|sobre (tu|el) brazo/,  tape: "ABOUT THE ARM" },
+  { re: /about (your|the|its) arm|sobre (tu|el) brazo/,  tape: "PRESENT ARM" },
   ...DIRS,
 ];
 
@@ -920,7 +920,7 @@ const tapeStop = () => {
   return out;
 };
 
-const TAPE_EVENTS = ["sage", "say", "present", "tape", "analyze", "log", "led"];
+const TAPE_EVENTS = ["sage", "say", "present", "tape", "under", "analyze", "log", "led"];
 const TAPE_LINE_MS = 6000;   // she gets this long to answer; after it, the cue
 const TAPE_ANALYZE_MS = 25000;  // an @analyze holds the run this long; a failed one never speaks at all
 
@@ -968,12 +968,20 @@ function tapeStep(cmd, io, cues, sub) {
   // presentation ends on lives in its own file so it can be re-recorded without
   // touching the script around it. ONE level deep: a tape that names itself, or
   // a pair that name each other, would recurse until the browser gave up.
-  else if (kind === "tape") {
+  // "@under <name>" is the same file played UNDERNEATH instead of in place: the
+  // run carries straight on to the next step while it moves, so she can talk over
+  // a 26s gesture take rather than wave at a silent room and then speak. It is
+  // scenery for the sentence, so it is CUT the moment the run's own steps are
+  // done: a 26s take under an 8s line otherwise leaves the arm waving at a silent
+  // room, which is the same failure at the other end. Only for a take of board
+  // commands — a spoken child would talk over the parent's line.
+  else if (kind === "tape" || kind === "under") {
     if (!sub) { io.onNote?.(`tape: ${text} is nested too deep to play`); return null; }
-    return fetch("/api/tapes/" + encodeURIComponent(text))
+    const run = fetch("/api/tapes/" + encodeURIComponent(text))
       .then(r => r.ok ? r.json() : Promise.reject(new Error("404")))
       .then(d => sub(Array.isArray(d) ? d : d.steps || []))
       .catch(() => io.onNote?.(`tape: no recorded run called "${text}"`));
+    return kind === "tape" ? run : null;
   }
   else if (kind === "analyze") { io.onAnalyze?.(null, text || null); return whenSpoken(TAPE_ANALYZE_MS); }
   else if (kind === "log") io.onNote?.(text);
@@ -1018,6 +1026,8 @@ function tapePlay(steps, io) {
     if (p.kind === "say") ttsPrewarm(p.text);
   }
   const tok = ++armLedger.tapeTok;
+  let underOff = false;  // set the moment the run's own steps are done — an "@under"
+                         // take is scenery for the sentence and ends with it
   armLedger.tapeOn = true;
   const alive = () => tok === armLedger.tapeTok;
   const wait = (ms) => new Promise((res) => armLedger.tape.push(setTimeout(res, ms)));
@@ -1025,7 +1035,7 @@ function tapePlay(steps, io) {
     let at = 0;
     for (const st of list) {
       await wait(Math.max(0, st.ms - at));
-      if (!alive()) return false;
+      if (!alive() || (depth && underOff)) return false;
       at = st.ms;
       // a spoken step hands back its sentence; an "@tape" hands back the run it played
       const held = tapeStep(st.cmd, io, cues, depth ? null : (s) => runSteps(s, depth + 1));
@@ -1035,6 +1045,7 @@ function tapePlay(steps, io) {
   };
   return (async () => {
     if (!await runSteps(steps)) return;
+    underOff = true;
     await wait(ARM_REPEAT_MS);
     if (!alive()) return;
     armLedger.tapeOn = false;
