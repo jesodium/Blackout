@@ -95,6 +95,33 @@ static const struct {
   { SECRET_SSID_ROUTER,  SECRET_PASS_ROUTER,  {192,168,1,9},  {255,255,255,0} },
 };
 
+#define WIFI_RETRY_MS 10000
+
+// One join attempt. The radio is cycled off and the NVS copy of the credentials
+// wiped first: a failed join leaves the driver holding the state that just
+// failed, and ESP.restart() is a soft reset that inherits it — which is why the
+// old "reboot in 5s to retry" loop retried forever and only a finger on the RST
+// button ever got the cam onto the hotspot.
+static void wifiJoin() {
+  const auto &net = NETS[CAM_NETWORK];
+  WiFi.persistent(false);
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);          // modem sleep costs frames on a stream anyway
+  WiFi.setAutoReconnect(true);
+  const bool statik = camSlot && net.ip[3];
+  Serial.printf("joining [%s]%s\n", net.ssid, statik ? " (static IP)" : " (DHCP)");
+  if (statik) {
+    IPAddress ip(net.ip[0], net.ip[1], net.ip[2], net.ip[3] + camSlot);
+    IPAddress gw(net.ip[0], net.ip[1], net.ip[2], 1);
+    if (!WiFi.config(ip, gw, IPAddress(net.mask[0], net.mask[1], net.mask[2], net.mask[3]), gw))
+      Serial.println("WiFi.config failed — falling back to DHCP");
+  }
+  WiFi.begin(net.ssid, net.pass);
+}
+
 // ---- ai-thinker pinout ----
 #define PWDN_GPIO_NUM  32
 #define RESET_GPIO_NUM -1
@@ -249,16 +276,7 @@ void setup() {
     s->set_wb_mode(s, 0);
   }
 
-  const auto &net = NETS[CAM_NETWORK];
-  const bool statik = camSlot && net.ip[3];
-  Serial.printf("joining [%s]%s\n", net.ssid, statik ? " (static IP)" : " (DHCP)");
-  if (statik) {
-    IPAddress ip(net.ip[0], net.ip[1], net.ip[2], net.ip[3] + camSlot);
-    IPAddress gw(net.ip[0], net.ip[1], net.ip[2], 1);
-    if (!WiFi.config(ip, gw, IPAddress(net.mask[0], net.mask[1], net.mask[2], net.mask[3]), gw))
-      Serial.println("WiFi.config failed — falling back to DHCP");
-  }
-  WiFi.begin(net.ssid, net.pass);
+  wifiJoin();
   for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
     for (int j = 0; j < 10; j++) { delay(50); ledUpdate(); }
     Serial.printf("st=%d\n", WiFi.status());
@@ -266,23 +284,39 @@ void setup() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.printf("WiFi FAILED, status=%d — 1=SSID-not-found 4=bad-password\n", WiFi.status());
     ledMode = LED_ERROR;
-
-    Serial.println("rebooting in 5s to retry...");
-    for (int i = 0; i < 100; i++) { delay(50); ledUpdate(); }
-    ESP.restart();
+    Serial.println("loop() keeps retrying — no reset needed");
   }
 
-  if (camOk) {
+  if (camOk && WiFi.status() == WL_CONNECTED) {
     ledMode = LED_CONNECTED;
     for (int i = 0; i < 40; i++) { delay(50); ledUpdate(); }
   }
   ledcWrite(LED_PIN, 0);
-  MDNS.begin(camName);
-  Serial.printf("\nnet up: http://%s (%s.local)  cam=%s\n",
-                WiFi.localIP().toString().c_str(), camName, camOk ? "OK" : "FAIL");
+  Serial.printf("\ncam=%s\n", camOk ? "OK" : "FAIL");
   if (!camSlot) Serial.println("UNCLAIMED — paste the chip id above into CAM_CHIPS and reflash");
   if (camOk) Serial.println("stream: :81/stream   capture: /capture");
-  startServer();
+  startServer();   // binds 0.0.0.0, so it does not care whether wifi is up yet
 }
 
-void loop() { delay(1000); }
+// The hotspot is not guaranteed to be up when the cam is, and it can go away
+// mid-run — so joining is a thing loop() keeps doing, not a one-shot in setup().
+// The lamp stays out of it: once setup() returns the lamp belongs to
+// control?var=led, and a blinking lamp on a booted cam means the headlamp, never
+// the network.
+void loop() {
+  static bool up = false;
+  static unsigned long lastTry = 0;
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!up) {
+      up = true;
+      MDNS.begin(camName);
+      Serial.printf("net up: http://%s (%s.local)\n",
+                    WiFi.localIP().toString().c_str(), camName);
+    }
+  } else if (millis() - lastTry >= WIFI_RETRY_MS) {
+    if (up) { up = false; MDNS.end(); Serial.println("wifi dropped"); }
+    lastTry = millis();
+    wifiJoin();
+  }
+  delay(200);
+}
