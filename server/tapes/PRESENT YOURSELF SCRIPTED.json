@@ -1,0 +1,167 @@
+{
+  "sage_can_use": false,
+  "show_in_app": false,
+  "sage_ask_permission_for_this": false,
+  "steps": [
+    {
+      "ms": 0,
+      "cmd": "@say Hey! I'm Sage, the AI assistant riding on this rover. I keep the operator company, and I read the room around me."
+    },
+    {
+      "ms": 0,
+      "cmd": "@say.es ¡Hola! Soy Sage, la asistente de inteligencia artificial que viaja en este rover. Acompaño al operador y leo el entorno a mi alrededor."
+    },
+    {
+      "ms": 6000,
+      "cmd": "@say I watch the air, the temperature, how far the walls are and how much light there is, and I call out anything that looks wrong."
+    },
+    {
+      "ms": 6000,
+      "cmd": "@say.es Vigilo el aire, la temperatura, a qué distancia están las paredes y cuánta luz hay, y aviso de cualquier cosa que no vaya bien."
+    },
+    {
+      "ms": 12500,
+      "cmd": "@say And the best part — I have an arm!"
+    },
+    {
+      "ms": 12500,
+      "cmd": "@say.es ¡Y lo mejor: tengo un brazo!"
+    },
+    {
+      "ms": 14500,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 14800,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 15100,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 15196,
+      "cmd": "hud,ok,33C 79%|43cm"
+    },
+    {
+      "ms": 15407,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 15700,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 16000,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 16300,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 16599,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 16902,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 17200,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 17500,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 17791,
+      "cmd": "arm,5,0"
+    },
+    {
+      "ms": 18197,
+      "cmd": "hud,ok,33C 79%|43cm"
+    },
+    {
+      "ms": 18214,
+      "cmd": "arm,5,-100"
+    },
+    {
+      "ms": 18415,
+      "cmd": "arm,5,0"
+    },
+    {
+      "ms": 19000,
+      "cmd": "@say It reaches, it grips, and it lifts things out of my way, so I can clear a passage instead of just looking at one."
+    },
+    {
+      "ms": 19000,
+      "cmd": "@say.es Alcanza, agarra y aparta cosas de mi camino, así puedo despejar un paso en vez de solo mirarlo."
+    },
+    {
+      "ms": 20414,
+      "cmd": "arm,5,100"
+    },
+    {
+      "ms": 20931,
+      "cmd": "arm,5,-100"
+    },
+    {
+      "ms": 21131,
+      "cmd": "arm,5,0"
+    },
+    {
+      "ms": 21239,
+      "cmd": "hud,ok,33C 79%|43cm"
+    },
+    {
+      "ms": 21507,
+      "cmd": "arm,5,100"
+    },
+    {
+      "ms": 22030,
+      "cmd": "arm,5,-100"
+    },
+    {
+      "ms": 22231,
+      "cmd": "arm,5,0"
+    },
+    {
+      "ms": 22591,
+      "cmd": "arm,5,100"
+    },
+    {
+      "ms": 23393,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 23693,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 23993,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 24294,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 24299,
+      "cmd": "hud,ok,33C 79%|43cm"
+    },
+    {
+      "ms": 24593,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 24899,
+      "cmd": "arm,5,35"
+    },
+    {
+      "ms": 25194,
+      "cmd": "arm,5,35"
+    }
+  ]
+}

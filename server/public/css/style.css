@@ -174,10 +174,28 @@ body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
 /* ---- layout ---- */
 .cockpit {
   flex: 1; min-height: 0;
-  display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 30vw, 460px);
-  gap: var(--gap); padding: var(--gap);
+  /* flex, not grid, so <Split/> can size any pane the same way: the pane after a
+     divider gets a fixed flex-basis, the pane before it grows into the rest. */
+  display: flex; gap: var(--gap); padding: var(--gap);
 }
 .col-main, .col-rail { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; min-height: 0; }
+.col-main { flex: 1; }
+.col-rail { flex: 0 0 clamp(360px, 30vw, 460px); }
+
+/* ---- pane splitters (Split in app.js) ---- */
+/* it lives in the flex gap: the negative margin cancels its own width, so
+   adding one never moves the panes until it is dragged. */
+.split { flex: none; position: relative; z-index: 5; touch-action: none; }
+.split--x { width: 4px; margin: 0 calc((var(--gap) + 4px) / -2); cursor: col-resize; }
+.split--y { height: 4px; margin: calc((var(--gap) + 4px) / -2) 0; cursor: row-resize; }
+.split::after {
+  content: ""; position: absolute; border-radius: 2px;
+  background: transparent; transition: background 0.15s;
+}
+.split--x::after { inset: 14px 1px; }
+.split--y::after { inset: 1px 14px; }
+.split:hover::after, .split:focus-visible::after { background: var(--ink-3); }
+.split:focus-visible { outline: none; }
 
 .zone {
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
@@ -605,7 +623,7 @@ input[type="range"]:focus { box-shadow: none; }
 .fl-move.is-declined .fl-body { border-left-color: var(--line); opacity: 0.6; }
 .fl-move.is-running .fl-body { border-left-color: var(--accent); }
 
-.drawer-moves.is-on, .drawer-buzz.is-on { color: var(--go); border-color: var(--go); }
+.drawer-moves.is-on, .drawer-lamp.is-on, .drawer-buzz.is-on { color: var(--go); border-color: var(--go); }
 
 .fl-work .fl-mark { color: var(--accent); animation: spin 1.1s linear infinite; }
 .fl-work .fl-t { font: 700 10px/1.6 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
@@ -747,6 +765,16 @@ input[type="range"]:focus { box-shadow: none; }
 .is-analyzing .zone-title { animation: pulse 0.9s ease-in-out infinite; }
 
 .ask-mic.is-live { color: var(--bg); background: var(--accent); border-color: var(--accent); animation: chat-rec 1s steps(2) infinite; }
+/* the blink means "open, nothing picked up yet"; solid means the mic is hearing you */
+.ask-mic.is-live.is-heard { animation: none; }
+
+/* live input level, fed by --lvl on the button itself (see useMic) */
+.ask-mic, .mic-lvl { position: relative; overflow: hidden; }
+.ask-mic.is-live::after, .mic-lvl.is-active::after {
+  content: ""; position: absolute; left: 0; bottom: 0; height: 2px;
+  width: calc(var(--lvl, 0) * 100%); background: currentColor; opacity: 0.85;
+  transition: width 90ms linear; pointer-events: none;
+}
 @keyframes chat-rec { 50% { opacity: 0.55; } }
 
 .mission-k { font: 700 9px/1 var(--grotesk); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
@@ -821,9 +849,9 @@ input[type="range"]:focus { box-shadow: none; }
 .term-feed  { animation: view-in 0.5s 0.08s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 .agent-foot { animation: view-in 0.5s 0.18s ease both; }
 
-.drive { flex-shrink: 0; }
-
-.drive-body { display: flow-root; }
+.drive { flex-shrink: 0; min-height: 0; }
+/* dragged short, the pad scrolls rather than spilling out of the zone */
+.drive-body { display: flow-root; flex: 1; min-height: 0; overflow: auto; }
 .drive-inner { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; }
 
 /* ---- drive ---- */
@@ -1413,6 +1441,8 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   .shell { height: auto; min-height: 100dvh; overflow: visible; }
   .topbar { position: sticky; top: 0; z-index: 100; flex-wrap: wrap; gap: 10px 16px; }
   .cockpit { display: flex; flex-direction: column; }
+  .split { display: none; }
+  .col-main, .col-rail { flex: none; }
   .stage-row { flex-direction: column; flex: none; }
   .stage-3d { flex: none; }
   .stage-3d .stage-body { height: min(28dvh, 220px); flex: none; }

@@ -1,0 +1,7 @@
+{
+  "sage_can_use": true,
+  "show_in_app": true,
+  "steps": [
+    { "ms": 0, "cmd": "@sage tell them about your arm in one or two sentences: six joints, recorded moves, and what it is for down in a cave" }
+  ]
+}
