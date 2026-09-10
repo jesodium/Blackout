@@ -666,7 +666,27 @@ const LANG_INSTRUCT = {
   es: "IMPORTANTE: Responde SIEMPRE en español natural y fluido, sin importar el idioma de las lecturas, etiquetas o del mensaje del operador. Mantén tu personaje y tono. Las CLAVES y los VALORES fijos del JSON (text, status, tool, led, finding, snapshot, move, arm, tape; clear/caution/danger; camera/armcam/sensors) se escriben SIEMPRE en inglés: solo el texto que se lee en voz alta va en español.",
 };
 const langMsg = (lang) => (LANG_INSTRUCT[lang] ? [{ role: "system", content: LANG_INSTRUCT[lang] }] : []);
-const LANG_SET = new Set(Object.values(LANG_INSTRUCT));
+
+// The same instruction again, short, to be appended AFTER the picture. Recency
+// is the only lever: with an image in the turn, a language line sitting up in
+// the system block loses to the image and she answers in English -- measured on
+// this cam's own stills, 1 reply in 8 came back Spanish that way against 7 in 8
+// with the line moved below the image. Text-only turns hold either way.
+const LANG_TAIL = {
+  es: 'RECUERDA: el valor de "text" del JSON va en ESPA\u00d1OL. Nada de ingl\u00e9s en "text".',
+};
+const langOf = (msgs) => Object.keys(LANG_INSTRUCT).find(
+  (l) => msgs.some((m) => m.role === "system" && m.content === LANG_INSTRUCT[l]));
+
+// Append that reminder to the last user turn, past any image parts.
+function langLast(msgs) {
+  const tail = LANG_TAIL[langOf(msgs)];
+  const i = msgs.map((m) => m.role).lastIndexOf("user");
+  if (!tail || i < 0) return msgs;
+  const c = msgs[i].content, out = msgs.slice();
+  out[i] = { ...msgs[i], content: Array.isArray(c) ? [...c, { type: "text", text: tail }] : `${c}\n\n${tail}` };
+  return out;
+}
 
 const ONBOARDING = {
   en: {
@@ -788,12 +808,22 @@ async function askSage(messages, { maxTokens = 400, confirm = false, lamp = fals
   let resp;
   try {
     resp = await chat({
-      messages,
+      // json_object because the language instruction costs her the envelope:
+      // asked to answer in Spanish she answered in Spanish PROSE, and a reply
+      // with no json is a reply with no status, no tool and no card -- 3 of 8
+      // carried a status against 8 of 8 with the mode on. parseSage still takes
+      // bare prose, so this is belt over braces, not a new contract.
+      messages: langLast(messages),
       max_tokens: maxTokens,
+      response_format: { type: "json_object" },
     });
   } finally {
     ledStrip.busy(false);
   }
+  // names the cause when parseSage has to salvage: "length" is her running out
+  // of max_tokens mid-json, which the Spanish dashboard hits first (same
+  // sentence, ~25% more tokens). Raise maxTokens if this starts showing up.
+  if (resp.choices[0]?.finish_reason === "length") console.warn(`sage: reply cut off at ${maxTokens} tokens`);
   const sage = parseSage(resp.choices[0]?.message?.content, readArmMoves(), readTakes(TAPE_DIR));
   // a finding and a snapshot are side effects of the reply, not loop steps —
   // they get the same gate as the tools or ASK FIRST only covers half of what
@@ -880,13 +910,11 @@ async function agentLoop(messages, { maxTokens = 400, confirm = false, lamp = fa
   const msgs = messages.slice();
   const steps = [];
   let sage;
-  // Every tool result is English prose pushed AFTER the system block, so on a turn
+  // A tool result is English prose pushed after the system block, so on a turn
   // where she looks or re-reads the sensors the last thing the model sees is
-  // English and it answers in English — which is why a Spanish dashboard was only
-  // *sometimes* answered in Spanish. Repeat the language line on each injected turn:
-  // recency is the only lever, the system block can't be moved below them.
-  const langNote = messages.find((m) => m.role === "system" && LANG_SET.has(m.content))?.content;
-  const say = (text) => (langNote ? `${text}\n\n${langNote}` : text);
+  // English and it answers in English. langLast() in askSage is what repeats the
+  // language line below it -- and below the image, which is the half that a note
+  // pasted onto the text part here could never do.
   for (let i = 0; i < MAX_TOOL_STEPS; i++) {
     sage = await askSage(msgs, { maxTokens, confirm, lamp });
     if (!wantsTool(sage, i, MAX_TOOL_STEPS)) break;
@@ -896,7 +924,7 @@ async function agentLoop(messages, { maxTokens = 400, confirm = false, lamp = fa
       steps.push(step);
       emitStep(step);
       msgs.push({ role: "assistant", content: sage.text || `(reaching for ${sage.tool})` });
-      msgs.push({ role: "user", content: say("The operator turned that down. Answer them now from what you already have, and don't reach for anything else this turn.") });
+      msgs.push({ role: "user", content: "The operator turned that down. Answer them now from what you already have, and don't reach for anything else this turn." });
       continue;
     }
     const out = await runTool(sage.tool, sage.toolArg);
@@ -906,7 +934,7 @@ async function agentLoop(messages, { maxTokens = 400, confirm = false, lamp = fa
     emitStep(step);
     recorder.mark("analysis", `tool ${sage.tool}: ${out.detail}`);
     msgs.push({ role: "assistant", content: sage.text || `(reaching for ${sage.tool})` });
-    msgs.push({ role: "user", content: out.images?.length ? [{ type: "text", text: say(out.text) }, ...out.images] : say(out.text) });
+    msgs.push({ role: "user", content: out.images?.length ? [{ type: "text", text: out.text }, ...out.images] : out.text });
   }
   return { reply: sage, steps };
 }
