@@ -1,0 +1,151 @@
+<meta charset="utf-8">
+<title>figures</title>
+<style>
+  :root { --ink:#1E1D17; --dim:#7C776C; --line:#C9C4B8; --fill:#F0EFEA; --accent:#8A5A10; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#fff; color:var(--ink);
+         font:14px/1.4 "Menlo","SF Mono",ui-monospace,monospace; }
+  .fig { display:none; padding:24px; }
+  body[data-fig="1"] #f1, body[data-fig="2"] #f2, body[data-fig="3"] #f3 { display:block; }
+  h2 { font:700 15px/1 "Helvetica Neue",Arial,sans-serif; letter-spacing:.08em;
+       text-transform:uppercase; margin:0 0 18px; }
+  text { font-family:"Menlo","SF Mono",ui-monospace,monospace; }
+</style>
+<body>
+<div class="fig" id="f1"></div>
+<div class="fig" id="f2"></div>
+<div class="fig" id="f3"></div>
+<script>
+// Figures for the software document. Everything is drawn here, in the browser,
+// and screenshotted headless -- so the picture and the numbers come from one
+// source and a re-count is a re-render, not a redraw by hand.
+// Numbers from scratchpad/stats.mjs (git ls-files, vendored + model files excluded).
+const LANG = [
+  ["JavaScript",      14033, "#8A5A10"],
+  ["C++ (Arduino)",    2962, "#4A6752"],
+  ["Python",           2864, "#B08040"],
+  ["HTML",             2529, "#6E8B78"],
+  ["CSS",              1869, "#C2A15E"],
+  ["Markdown",         1857, "#54514A"],
+  ["JSON",              716, "#9A958A"],
+  ["Shell",             289, "#C9C4B8"],
+  ["YAML",               49, "#E0DCD2"],
+];
+const DIRS = [
+  ["server/",      17347, "estación de tierra: panel, Sage, BLK, cintas"],
+  ["OUTDATED/",     3040, "banco de pruebas retirado (Uno R4 / Mega)"],
+  ["docs/",         2388, "sitio público del equipo"],
+  ["giga-r1/",      1709, "firmware del vehículo"],
+  ["CLAUDE.md",     1355, "memoria de ingeniería del repositorio"],
+  ["electron/",      369, "envoltorio de escritorio"],
+  ["cmds/",          361, "utilidades de banco"],
+  ["esp32-cam/",     327, "firmware de las cámaras"],
+  ["uno-r4/",        190, "pinza de banco"],
+];
+const SVG = "http://www.w3.org/2000/svg";
+const el = (p, t, a = {}, txt) => {
+  const n = document.createElementNS(SVG, t);
+  for (const k in a) n.setAttribute(k, a[k]);
+  if (txt != null) n.textContent = txt;
+  p.appendChild(n); return n;
+};
+const svg = (host, w, h, title) => {
+  host.innerHTML = "<h2>" + title + "</h2>";
+  const s = el(host, "svg", { width: w, height: h, viewBox: `0 0 ${w} ${h}` });
+  return s;
+};
+// thousands separated by a space, the way the rest of the document writes them
+const fmt = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, "\u2009");
+
+// ---- fig 1: donut of lines by language ----
+// A donut, not a pie: the hole is where the total goes, so the one number every
+// reader wants is not a caption they have to find.
+(() => {
+  const w = 1040, h = 420, cx = 210, cy = 210, r = 150, ri = 88;
+  const s = svg(f1, w, h, "Líneas de código por lenguaje");
+  const total = LANG.reduce((t, l) => t + l[1], 0);
+  let a0 = -Math.PI / 2;
+  for (const [name, n, col] of LANG) {
+    const a1 = a0 + (n / total) * Math.PI * 2;
+    // an arc wide enough to see is drawn as a wedge; the hole is punched by the
+    // background disc below, which keeps the path maths to one sweep flag.
+    const big = a1 - a0 > Math.PI ? 1 : 0;
+    const p = `M ${cx} ${cy} L ${cx + r * Math.cos(a0)} ${cy + r * Math.sin(a0)} ` +
+              `A ${r} ${r} 0 ${big} 1 ${cx + r * Math.cos(a1)} ${cy + r * Math.sin(a1)} Z`;
+    el(s, "path", { d: p, fill: col, stroke: "#fff", "stroke-width": 2 });
+    a0 = a1;
+  }
+  el(s, "circle", { cx, cy, r: ri, fill: "#fff" });
+  el(s, "text", { x: cx, y: cy - 4, "text-anchor": "middle", "font-size": 30, "font-weight": 700, fill: "#1E1D17" }, fmt(total));
+  el(s, "text", { x: cx, y: cy + 20, "text-anchor": "middle", "font-size": 13, fill: "#7C776C" }, "líneas");
+
+  // legend: name, lines, share -- three columns, so the eye reads down, not around
+  let y = 76;
+  for (const [name, n, col] of LANG) {
+    el(s, "rect", { x: 430, y: y - 11, width: 14, height: 14, rx: 3, fill: col });
+    el(s, "text", { x: 456, y, "font-size": 15, fill: "#1E1D17" }, name);
+    el(s, "text", { x: 790, y, "font-size": 15, "text-anchor": "end", fill: "#1E1D17" }, fmt(n));
+    el(s, "text", { x: 900, y, "font-size": 15, "text-anchor": "end", fill: "#7C776C" }, (n * 100 / total).toFixed(1) + " %");
+    y += 34;
+  }
+})();
+
+// ---- fig 2: lines by top-level directory ----
+(() => {
+  const w = 1040, rowH = 44, top = 20;
+  const h = top + DIRS.length * rowH + 20;
+  const s = svg(f2, w, h, "Líneas de código por carpeta");
+  const max = DIRS[0][1], x0 = 150, barW = 560;
+  DIRS.forEach(([name, n, note], i) => {
+    const y = top + i * rowH;
+    el(s, "text", { x: x0 - 12, y: y + 20, "text-anchor": "end", "font-size": 15, "font-weight": 700 }, name);
+    el(s, "rect", { x: x0, y: y + 6, width: barW, height: 20, fill: "#F0EFEA" });
+    el(s, "rect", { x: x0, y: y + 6, width: Math.max(2, barW * n / max), height: 20,
+                    fill: i === 0 ? "#8A5A10" : "#4A6752" });
+    el(s, "text", { x: x0 + Math.max(2, barW * n / max) + 10, y: y + 21, "font-size": 14, fill: "#1E1D17" }, fmt(n));
+    el(s, "text", { x: x0, y: y + 41, "font-size": 12.5, fill: "#7C776C" }, note);
+  });
+})();
+
+// ---- fig 3: repository map ----
+// A card grid, not a tree: nine folders and no real hierarchy between them, so
+// CSS grid lays it out and there are no edges to route by hand.
+(() => {
+  const CARDS = [
+    ["giga-r1/",    ["main/ · firmware del vehículo", "i2c_scan/ · diagnóstico de buses", "motor_test/ · banco de tracción"], 1709],
+    ["esp32-cam/",  ["main/ · servidor MJPEG", "wifi y alimentación propios"], 327],
+    ["server/",     ["server.js · sage.js · vision.js", "public/ · panel, editor BLK", "tapes/ · arm_moves/ · prompts/"], 17347],
+    ["electron/",   ["main.js · selector BLE propio", "preload.js"], 369],
+    ["docs/",       ["sitio público del equipo", "assets/ · models/ · vendor/"], 2388],
+    ["cmds/",       ["flash.sh · docs.sh", "arm-configurator.sh"], 361],
+    ["OUTDATED/",   ["Mega 2560 + Uno R3", "solo referencia de portado"], 3040],
+    ["CLAUDE.md",   ["memoria de ingeniería", "reglas del hardware y del código"], 1355],
+    ["cad/ step/",  ["mecánica del vehículo", "piezas CAD, fuera de git"], 0],
+  ];
+  f3.innerHTML = `<h2>Mapa del repositorio</h2>
+    <div class="head">
+      <b>Blackout-Explorations</b>
+      <span>252 archivos versionados · 27 168 líneas propias · 28 pruebas automáticas</span>
+    </div>
+    <div class="grid">` + CARDS.map(([n, l, loc]) => `
+      <div class="card">
+        <div class="card-t">${n}${loc ? `<i>${fmt(loc)} líneas</i>` : ""}</div>
+        ${l.map(x => `<div class="card-l">${x}</div>`).join("")}
+      </div>`).join("") + `</div>`;
+})();
+
+document.body.dataset.fig = new URLSearchParams(location.search).get("fig") || "1";
+// size the page to the figure so the headless screenshot needs no cropping
+const box = document.querySelector('body[data-fig] .fig:not([style*="none"])');
+</script>
+<style>
+  #f3 .head { border-left:4px solid #8A5A10; padding:6px 0 6px 14px; margin-bottom:18px; }
+  #f3 .head b { font:700 17px/1.4 "Helvetica Neue",Arial,sans-serif; display:block; }
+  #f3 .head span { color:#7C776C; font-size:13px; }
+  #f3 .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  #f3 .card { background:#F0EFEA; border:1.5px solid #C9C4B8; border-radius:4px; padding:12px 14px; }
+  #f3 .card-t { font:700 15px/1.4 "Helvetica Neue",Arial,sans-serif; margin-bottom:6px;
+                display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  #f3 .card-t i { font:400 12px/1 "Menlo",ui-monospace,monospace; color:#8A5A10; font-style:normal; }
+  #f3 .card-l { font-size:12.5px; color:#54514A; line-height:1.7; }
+</style>

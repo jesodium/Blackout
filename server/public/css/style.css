@@ -389,7 +389,9 @@ input[type="range"]:focus { box-shadow: none; }
 
 .cam-feed {
   position: absolute; top: 50%; left: 50%;
-  width: 100cqh; height: auto;
+  /* --cam-zoom is CONSOLE -> FEED ZOOM. 1 = fit the pane; above it the picture
+     is cropped to fill. fpv has its own --fpv-zoom rule and still wins. */
+  width: calc(100cqh * var(--cam-zoom, 1)); height: auto;
   /* the cam is mounted on its side. --cam-rot is the operator's ROTATE button;
      detect.mjs is handed the same angle, or the boxes land off the object. */
   transform: translate(-50%, -50%) rotate(var(--cam-rot, -90deg));
@@ -1866,3 +1868,12 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 
 .boost-row { align-items: center; margin-top: 8px; }
 .boost-row .label { margin-right: 2px; }
+
+/* CONSOLE -> SECOND FEED off. Hidden, not unmounted: the stream stays open so
+   swapping back costs nothing (see CamStage in app.js). */
+body.no-pip .stage-view--cam.is-pip { display: none; }
+
+/* CONSOLE -> FEED ZOOM. A label wearing the .serial-btn chrome so it lines up
+   with the toggles beside it; the range itself stays a native input. */
+.drawer-zoom { display: inline-flex; align-items: center; gap: 8px; cursor: default; }
+.drawer-zoom input { width: 90px; accent-color: var(--accent); cursor: pointer; }

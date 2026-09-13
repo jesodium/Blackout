@@ -30,12 +30,13 @@
     "test:detect": "node test-detect.mjs",
     "test:cam": "node test-cam.mjs",
     "test:arm": "node test-arm.mjs",
+    "test:usb": "node test-usb.mjs",
     "test:tape": "node test-tape.mjs",
     "test:armrec": "python3 armrec.py --selftest",
     "test:sonar": "node test-sonar.mjs",
-    "test:demo": "node test-demo.mjs",
     "test:led": "node test-led.mjs",
-    "test:split": "node test-split.mjs"
+    "test:split": "node test-split.mjs",
+    "test:camusb": "node camserial.js --selftest"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

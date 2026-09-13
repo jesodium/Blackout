@@ -422,6 +422,45 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
 - `esp32-cam/` — ESP32-CAM (AI-Thinker) (`main/`): standalone MJPEG streamer
   on its own WiFi + power. Never touches the Giga/BLE path; the dashboard
   `<img>` pulls `http://blackout-cam.local/stream` directly.
+  - **It also works on the USB cable alone, with no wifi at all** (2026-09-10):
+    `serialTick()` in its `main.ino` answers `f` with one jpeg (`#JPG <len>` then
+    exactly len raw bytes — by LENGTH, never by scanning for a marker, since jpeg
+    payload can spell any marker you pick) and `v <var> <val>` with the same
+    setter `/control` drives. `server/camserial.js` reads that port and the PC
+    server re-serves it at **its own `/stream`, `/capture` and `/control`** — the
+    same three paths the wifi cam answers on — so a cam on a cable is one more
+    HOST and nothing anywhere learns a second shape: `location.host` is the last
+    address in `CAM_HOSTS[0]` (`app.js`) and `http://127.0.0.1:$PORT/capture` the
+    last in `CAM_GROUPS[0]` (`vision.js`), tried after the wifi ones. That is
+    also why `camUrl()` only appends `:81` to a host with no port of its own.
+    **One frame per request, never a free-running push**: the PC drains at its own
+    pace, so an unread port can never back up into `loop()`.
+    **`CAM_BAUD` is 921600 in the sketch and in `camserial.js` and the two must
+    match** — a 23KB svga frame is TWO SECONDS at 115200, which is a still, not a
+    feed; at 921600 it is ~4fps. Drop both together if an adapter garbles it.
+    The port is found by name (`CAM_SERIAL` overrides): `usbserial`/`wchusbserial`/
+    `SLAB`, **never the Giga's `cu.usbmodem*`**, and a port only counts once it has
+    handed over a picture. It is opened on the first request and **released before
+    a flash** (`camusb.close()` in `/api/flash/start`), because flash.sh wants the
+    same cable and a held port reads as a dead board.
+    **`CAM_NETWORK NET_NONE` is the cable-only build and it is what ships today**:
+    the radio is never brought up, so there is no 15s join in `setup()`, no 10s
+    retry cycling it in `loop()`, no mDNS and no http server — the board answers
+    nothing but the serial port, and the binary drops from 1082KB to 522KB, which
+    is the check that the `#if` really fired. Anything that drives away from the
+    cable needs one of the other `NET_*` rows back; it is one word.
+    **`NET_*` are `#define`s and must never go back to being an enum** — the
+    preprocessor cannot see an enum, so `#if CAM_NETWORK != NET_NONE` compares
+    0 != 0 and compiles the radio out of *every* build, silently (caught by the
+    binary size, 2026-09-10). `npm run test:camusb` asserts it, and that the two
+    `CAM_BAUD`s still match.
+    **Discovery is asked for, not walked**: the feed retries a dead host every 5s,
+    so four wifi addresses is half a minute of red on a cam that is plugged in —
+    `CamView` asks its own `/capture` first when no host is saved yet, and an
+    instant 503 costs a rig with no cable nothing.
+    **One serial port, so this is cam 0 only** — the gripper cam has no usb entry.
+    `npm run test:camusb` feeds the frame parser a jpeg that spells its own marker,
+    one byte at a time.
   - **Flash LED (GPIO 4) debug:** boot = slow blink (500ms), error (camera/WiFi
     fail) = rapid blink (100ms), connected = steady dim (PWM 32). Handled by
     `ledUpdate()` in `main.ino`, and it runs **only during setup()** — once the cam
@@ -572,17 +611,6 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     zero — `dist` (nothing in range), `alt` (level with the start) and `lux` (a
     genuinely dark room); everything else shows NOT READING. Add the flag when a
     sensor's zero becomes real, not when a tile looks empty.
-  - **CONSOLE → DEMO DATA is the emergency stand-in for a sensor that dies mid-run**
-    (`DEMO_RANGE`/`demoFill()` in `app.js`, `localStorage.demoMode`, default OFF): every
-    tile `reads()` calls dead gets a plausible wandering number instead of NOT READING,
-    so a wire that falls off in front of the judges doesn't turn the whole board red. It
-    fills a **stale packet too** — the numbers keep moving on a dropped link, which is why
-    the toggle is a deliberate act and not a fallback. **`dist` is never faked**: the sonar
-    is what `until dist <` steers on, and an invented wall is worse than a blank tile.
-    Browser-side only — nothing fake reaches `/api/mega/sensor`, `dataHistory`, a snapshot
-    or Sage, so her readings stay honest while the tiles read pretty.
-    `npm run test:demo` checks the ranges, the untouched live readings and that `dist`
-    stays out.
   - **Stale telemetry is treated as no telemetry** — `PKT_STALE_MS` (3s) in `app.js`.
     The board streams at 10Hz (2Hz behind a screensaver), so the sensor stream *is* the
     heartbeat and no ping command was added. Nothing for 3s and `view` goes null: every
@@ -922,6 +950,42 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
 - `OUTDATED/` — retired Mega 2560 + Uno R3 two-board setup, kept only for
   porting reference. Not part of the current build.
 - `cad/`, `step/` — mechanical
+
+## USB as a second link
+
+The rover drives off the cable as well as off BLE — the CONNECT button's **USB**
+neighbour in the topbar (`POST /api/bridge/start {usb:true}` → `connectSerial()`).
+Nothing on the board changed: `main.ino` has always read the same command strings
+off `Serial.readStringUntil('\n')` in `loop()` that it reads off `cmdChar`, which
+is the same door `arm-configurator.sh` knocks on.
+
+- **The two transports differ in who owns the link, and that is the whole design.**
+  Over BLE the *browser* holds it: notifications land in `onBoardLine()` and the
+  CSV is POSTed to `/api/mega/sensor`. Over USB the *server* holds it: the parser
+  feeds `processLine()` directly, and the board's `E:` lines (blk events, the
+  `analyze` request, the black box) come back to the browser on the `serial-line`
+  socket event it already listened to. One handler either way — `onBoardLine(line,
+  forward)` — with `forward` off for the usb ones, because those arrived *through*
+  `/api/mega/sensor` and posting them again is an infinite loop.
+- **One link at a time.** `/api/bridge/start` disconnects whichever the other one
+  is; `bleActive` already refused a serial open, and `stop` now closes both. Two
+  centrals writing at once is two operators on one stick.
+- **The terminator is the trap.** No `\n` and `readStringUntil` never returns, so the
+  command is silently never read — the same fact `armrec.py`'s `wire()` carries. It is
+  in one place, `usbWrite()` in `server.js`, which is also what the server's own
+  `hud,`/`cam,` emitters go through so the panel face and the buzzer work on a
+  cable with no browser relaying.
+- **`cu.usbmodem*` is the giga and `usbserial`/`wchusbserial` is the esp32-cam**
+  (`camserial.js` holds that one, and it answers no drive command) — the port
+  filter picks usbmodem only, the mirror image of `CAM_PORT_RE` skipping it.
+  Baud is 9600 in both the sketch and `SERIAL_BAUD`.
+- **Draining the port is not optional**, the same as everywhere else here: the
+  board prints the CSV at 10Hz and a port nobody reads blocks `Serial.println()`
+  inside `loop()`. The ReadlineParser is what drains it.
+- **A flash still wins the cable** — `/api/flash/start` already calls
+  `disconnectSerial()`, and the 5s `/api/bridge` poll puts the button back.
+- `npm run test:usb` checks the terminator, the two bauds, the port filter and
+  the no-post-back guard off the three files' own source.
 
 ## Tapes
 

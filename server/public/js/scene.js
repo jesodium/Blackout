@@ -139,7 +139,9 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
       model.scale.setScalar(scale);
       model.position.sub(center.clone().multiplyScalar(scale));
       model.position.y += 0.28;
-      const mat = new THREE.MeshStandardMaterial({ color: 0xb8b0a0, roughness: 0.5, metalness: 0.4 });
+      // IMPORTANT NOTE: not 0x000000 — pure black returns no specular and the rover
+      // reads as a hole in the floor. 0x141416 + metalness is black that still catches the lights.
+      const mat = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.45, metalness: 0.6 });
       model.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; c.material = mat; } });
       group.add(model);
       scene.add(group);
