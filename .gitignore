@@ -15,6 +15,9 @@ server/.env*.local
 server/public/audio/
 # Stills Sage saved with her findings — mission output, not source
 server/public/findings/
+# 10s telemetry dumps Sage asked for — mission output, not source
+server/public/snapshots/
+server/public/shots/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -69,3 +72,12 @@ docs/marketing/
 cmds/marketing.sh
 # Recorded runs — mission output, not source
 server/recordings/
+
+# per-machine hand-control calibration
+hand_cal.json
+
+# mediapipe model, 7.8MB — hand.py prints the curl line if it is missing
+hand_landmarker.task
+
+# ── Alcatel MW45AF control panel (local tool, holds the modem password) ──
+mw45/

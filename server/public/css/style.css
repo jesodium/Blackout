@@ -1,62 +1,47 @@
-/* ============================================================
-   blackout cockpit
-   single-viewport ops console — black · bone · signal amber
-   everything the operator needs on one screen, no scrolling.
-
-   terminal, not skeuomorphic: corners are square, surfaces are flat,
-   hierarchy comes from hairlines and ink weight — never from shadow,
-   glass or a lift on hover. hover/active INVERT (bone on black ->
-   black on bone), the way a selected row in a tty does.
-   ============================================================ */
-
+/* ---- tokens ---- */
 :root {
-  /* surfaces: near-black, warm. the steps are small on purpose —
-     a panel is told apart by its rule, not by how much lighter it is. */
   --bg:      #09090a;
   --panel:   #0c0c0e;
-  --panel-2: #131315;   /* raised / hover */
-  --inset:   #060607;   /* wells: viewport, streams, inputs */
-  --glass:   #0b0b0d;   /* was frosted; opaque now — no backdrop-filter anywhere */
+  --panel-2: #131315;
+  --inset:   #060607;
+  --glass:   #0b0b0d;
 
-  /* hairlines — the whole structure rests on these, so they read as rules, not smudges */
   --line:   rgba(236, 229, 214, 0.13);
   --line-2: rgba(236, 229, 214, 0.28);
 
-  /* ink */
-  --ink:   #ece5d6;   /* bone white */
-  --ink-2: #a09888;   /* muted warm gray */
-  --ink-3: #6a6455;   /* dim */
+  --ink:   #ece5d6;
+  --ink-2: #a09888;
+  --ink-3: #6a6455;
 
-  /* the one accent: logo amber */
   --accent: #e1a95f;
-  --accent-2: #613f12; /* logo shadow brown, for outlines/depth */
+  --accent-2: #613f12;
 
-  /* status: meaning only */
   --go:   #3fcf8e;  --go-bg:    rgba(63, 207, 142, 0.14);
   --warn: #f3b62b;  --warn-bg:  rgba(243, 182, 43, 0.14);
   --abort: #ff3b2f; --abort-bg: rgba(255, 59, 47, 0.16);
+  --ask:  #5ea9f5;  --ask-bg:   rgba(94, 169, 245, 0.14);
 
   --display: 'JetBrains Mono', 'Archivo', sans-serif;
-  /* chrome is monospaced: every label, tag and button. Archivo stays for prose
-     only (--prose) — mono paragraphs are a readability tax, mono labels are not. */
+
   --grotesk: 'JetBrains Mono', ui-monospace, monospace;
   --prose:   'Archivo', system-ui, -apple-system, sans-serif;
   --mono:    'JetBrains Mono', ui-monospace, monospace;
 
   --gap: 12px;
-  --r: 2px;       /* cards — square, just off a hard corner so edges don't alias */
-  --r-s: 2px;     /* controls */
-  --r-pill: 2px;  /* was 99px. terminals have no lozenges. */
+  --r: 2px;
+  --r-s: 2px;
+  --r-pill: 2px;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ---- base ---- */
 html { font-size: 16px; -webkit-text-size-adjust: 100%; }
 
 body {
   font-family: var(--grotesk);
   color: var(--ink);
-  background: var(--bg);   /* flat — the old vignette read as a lit room, not a console */
+  background: var(--bg);
   min-height: 100dvh;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -71,14 +56,9 @@ body {
 
 :focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; border-radius: 0; }
 
-/* gamepad roaming (padnav.mjs). :focus-visible won't fire for it — the heuristic only
-   knows keyboard and pointer — so body.padnav promotes plain :focus, and heavier than
-   the keyboard ring: this one is read from across the room, not from the keyboard. */
 body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
 
-/* the pad's cursor (VIEW/SHARE toggles it). pointer-events: none so elementFromPoint
-   sees through it to whatever the operator is actually aiming at. It's positioned by
-   rAF, so no transition on transform — that would smear the aim behind the stick. */
+/* ---- gamepad cursor ---- */
 .padcursor {
   position: fixed; top: 0; left: 0; z-index: 9999; pointer-events: none;
   width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%;
@@ -86,11 +66,9 @@ body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
   box-shadow: 0 0 0 1px #0009, 0 0 12px var(--accent);
   animation: padcursor-in 140ms ease-out;
 }
-/* fade only — the element's transform is the cursor's position, so an animation that
-   touches transform would fling it to the top-left for the length of the fade. */
+
 @keyframes padcursor-in { from { opacity: 0; } }
 
-/* what the cursor is over — same read-from-the-room ring the d-pad's focus gets. */
 .padhover {
   outline: 2px solid var(--accent); outline-offset: 3px;
   transition: outline-color 120ms ease, box-shadow 160ms ease;
@@ -113,21 +91,15 @@ body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
 }
 .skip-link:focus { top: 0; }
 
-/* shared micro label */
 .label {
   font: 700 9.5px/1 var(--grotesk); letter-spacing: 0.16em;
   text-transform: uppercase; color: var(--ink-3);
 }
 
-/* ============================================================
-   shell — the app frame. fills the screen, never scrolls on desktop
-   ============================================================ */
 #root { min-height: 100dvh; }
 .shell { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
 
-/* ============================================================
-   topbar
-   ============================================================ */
+/* ---- topbar ---- */
 .topbar {
   flex-shrink: 0;
   display: flex; align-items: center; gap: 18px;
@@ -135,8 +107,7 @@ body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
   border-bottom: 1px solid var(--line);
   background: var(--glass);
 }
-/* macOS hiddenInset traffic lights get their own native-style strip above the
-   topbar (see .mac-titlebar) instead of sharing a row with the brand mark. */
+
 .mac-titlebar {
   flex-shrink: 0; height: 32px;
   background: var(--bg); border-bottom: 1px solid var(--line);
@@ -168,6 +139,8 @@ body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
 .bridge-btn:hover:not(:disabled) { border-color: var(--ink-2); }
 .bridge-btn.is-on { color: var(--go); border-color: rgba(63, 207, 142, 0.5); }
 .bridge-btn.is-on .lamp-dot.is-go { animation: pulse 1.6s ease-in-out infinite; }
+
+.bridge-btn.is-stale { color: var(--warn); border-color: rgba(255, 176, 46, 0.5); }
 .bridge-btn:disabled, .bridge-repair:disabled { opacity: 0.5; cursor: wait; }
 .bridge-repair {
   font: 500 14px/1 var(--mono); min-height: 36px; width: 36px; border-radius: var(--r-s);
@@ -181,8 +154,6 @@ body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
 .stat dt { font: 700 8.5px/1 var(--grotesk); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
 .stat dd { font: 500 13px/1 var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
 
-/* the tablet's url sits in the mast blurred: readable when the operator leans in or tabs to it,
-   not to a phone camera across the room. obscurity only — anyone on the hotspot can still find the server. */
 .lan-btn {
   font: 500 13px/1 var(--mono); color: var(--ink); background: none; border: 0; padding: 0; cursor: copy;
   filter: blur(4px); opacity: 0.55; transition: filter 0.15s, opacity 0.15s;
@@ -200,17 +171,32 @@ body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
 .console-btn:hover { color: var(--ink); border-color: var(--ink-2); }
 .console-btn.is-active { color: var(--bg); background: var(--ink); border-color: var(--ink); }
 
-/* ============================================================
-   cockpit grid
-   ============================================================ */
+/* ---- layout ---- */
 .cockpit {
   flex: 1; min-height: 0;
-  display: grid; grid-template-columns: minmax(0, 1fr) clamp(330px, 27vw, 404px);
-  gap: var(--gap); padding: var(--gap);
+  /* flex, not grid, so <Split/> can size any pane the same way: the pane after a
+     divider gets a fixed flex-basis, the pane before it grows into the rest. */
+  display: flex; gap: var(--gap); padding: var(--gap);
 }
 .col-main, .col-rail { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; min-height: 0; }
+.col-main { flex: 1; }
+.col-rail { flex: 0 0 clamp(360px, 30vw, 460px); }
 
-/* ---- card shell ---- */
+/* ---- pane splitters (Split in app.js) ---- */
+/* it lives in the flex gap: the negative margin cancels its own width, so
+   adding one never moves the panes until it is dragged. */
+.split { flex: none; position: relative; z-index: 5; touch-action: none; }
+.split--x { width: 4px; margin: 0 calc((var(--gap) + 4px) / -2); cursor: col-resize; }
+.split--y { height: 4px; margin: calc((var(--gap) + 4px) / -2) 0; cursor: row-resize; }
+.split::after {
+  content: ""; position: absolute; border-radius: 2px;
+  background: transparent; transition: background 0.15s;
+}
+.split--x::after { inset: 14px 1px; }
+.split--y::after { inset: 1px 14px; }
+.split:hover::after, .split:focus-visible::after { background: var(--ink-3); }
+.split:focus-visible { outline: none; }
+
 .zone {
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
   overflow: hidden; display: flex; flex-direction: column;
@@ -229,9 +215,7 @@ body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
   padding: 4px 9px; white-space: nowrap;
 }
 
-/* ============================================================
-   controls
-   ============================================================ */
+/* ---- buttons ---- */
 .btn {
   font: 700 11px/1.2 var(--grotesk); letter-spacing: 0.1em; text-transform: uppercase;
   min-height: 40px; padding: 0 16px; cursor: pointer; border-radius: var(--r-s);
@@ -250,7 +234,6 @@ body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
   50% { border-color: var(--ink); }
 }
 
-/* segmented pill (usb/bt · cam/3d · control mode) */
 .conn-seg {
   position: relative; display: inline-grid; grid-template-columns: 1fr 1fr;
   width: max-content; background: var(--inset);
@@ -271,18 +254,17 @@ body.padnav :focus { outline: 2px solid var(--accent); outline-offset: 3px; }
   transition: transform 0.36s cubic-bezier(0.34, 1.4, 0.5, 1);
 }
 
-/* 3-way control-mode pill: reuses conn-seg look, one thumb-width per slot */
 .mode-seg { display: grid; grid-template-columns: 1fr 1fr 1fr; width: 100%; }
 .mode-seg button { padding: 7px 6px; text-align: center; }
 .mode-seg .conn-seg-thumb { width: calc(33.333% - 2px); }
 .mode-seg[data-mode="blk"]  .conn-seg-thumb { transform: translateX(100%); }
 .mode-seg[data-mode="auto"] .conn-seg-thumb { transform: translateX(200%); }
 
-/* ============================================================
-   custom form elements — no default browser garbage
-   ============================================================ */
+.sub-seg { display: grid; grid-template-columns: 1fr 1fr; width: 100%; margin-top: 4px; }
+.sub-seg button { padding: 6px; text-align: center; font-size: 10px; }
+.sub-seg[data-sub="arm"] .conn-seg-thumb { transform: translateX(100%); }
 
-/* ---- text / number / textarea ---- */
+/* ---- form controls ---- */
 input[type="text"],
 input[type="number"],
 textarea {
@@ -309,7 +291,6 @@ textarea::placeholder {
   font-weight: 400;
 }
 
-/* ---- select (custom arrow) ---- */
 select {
   -webkit-appearance: none; appearance: none;
   font: 500 12px/1 var(--mono);
@@ -338,7 +319,6 @@ select option {
 }
 select::-ms-expand { display: none; }
 
-/* ---- range slider (custom track + thumb) ---- */
 input[type="range"] {
   -webkit-appearance: none; appearance: none;
   width: 100%; height: 4px;
@@ -382,9 +362,6 @@ input[type="range"]::-moz-range-thumb {
 }
 input[type="range"]:focus { box-shadow: none; }
 
-
-
-/* status pill */
 .pill {
   display: inline-flex; align-items: center; gap: 5px;
   font: 700 9px/1 var(--grotesk); letter-spacing: 0.12em; text-transform: uppercase;
@@ -398,26 +375,45 @@ input[type="range"]:focus { box-shadow: none; }
 .reading.is-stale { opacity: 0.4; }
 .hud-tele .is-stale { opacity: 0.4; }
 
-/* ============================================================
-   stage — 3d and camera viewports
-   ============================================================ */
+/* ---- stage: 3d + camera ---- */
 .stage-row { display: flex; flex: 1; min-height: 0; gap: var(--gap); }
+/* the camera is what the operator actually flies on, so it gets the width; the
+   3d attitude view is a glance, not a picture. */
 .stage-3d { flex: 1; min-width: 0; }
-.stage-cam { flex: 1; min-width: 0; }
+.stage-cam { flex: 1.8; min-width: 0; }
 .stage-body { position: relative; flex: 1; min-height: 0; background: var(--inset); }
 
 .stage-view { position: absolute; inset: 0; overflow: hidden; container-type: size; }
 .stage-view--3d canvas#vis-canvas { width: 100% !important; height: 100% !important; display: block; }
 .stage-view--cam { display: flex; align-items: center; justify-content: center; }
 
-/* cam mounted 90° — ov2640 can only vflip/hmirror, not rotate. un-rotate here.
-   100cqh = container height, so the frame always fills whatever size the stage is.
-   side bars in landscape = mount, not bug. remount cam upright and delete for edge-to-edge. */
 .cam-feed {
   position: absolute; top: 50%; left: 50%;
-  width: 100cqh; height: auto;
-  transform: translate(-50%, -50%) rotate(-90deg);
+  /* --cam-zoom is CONSOLE -> FEED ZOOM. 1 = fit the pane; above it the picture
+     is cropped to fill. fpv has its own --fpv-zoom rule and still wins. */
+  width: calc(100cqh * var(--cam-zoom, 1)); height: auto;
+  /* the cam is mounted on its side. --cam-rot is the operator's ROTATE button;
+     detect.mjs is handed the same angle, or the boxes land off the object. */
+  transform: translate(-50%, -50%) rotate(var(--cam-rot, -90deg));
 }
+
+.cam-boxes { pointer-events: none; z-index: 1; }
+
+/* the arm cam rides in the corner of the front one. it stays a container-type:size
+   box, so .cam-feed's 100cqh sizing and the mount rotation work in it unchanged.
+   bottom-LEFT: cam-tools is bottom-right and hud-tele owns the strip below. */
+.stage-view--cam.is-pip {
+  inset: auto auto 56px 10px; z-index: 5;
+  width: min(30%, 190px); height: auto; aspect-ratio: 4 / 3;
+  background: #000; border: 1px solid var(--line-2); border-radius: var(--r-s);
+}
+.cam-swap { position: absolute; inset: 0; z-index: 1; cursor: pointer; background: none; border: 0; }
+.cam-swap:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.is-pip .stage-chip { top: 4px; right: 4px; padding: 4px 6px; font-size: 8px; }
+.is-pip .viewport-fallback { gap: 5px; font-size: 9px; }
+.is-pip .viewport-fallback .btn { min-height: 26px; padding: 0 8px; font-size: 9px; }
+.is-pip .cam-host { width: 88%; min-height: 26px; font-size: 10px; }
+.is-fpv .stage-view--cam.is-pip { bottom: 18px; left: 18px; z-index: 12; }
 
 .viewport-fallback {
   position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column;
@@ -430,7 +426,6 @@ input[type="range"]:focus { box-shadow: none; }
   font-family: var(--mono); min-height: 38px;
 }
 
-/* floating chips + buttons over the viewport */
 .stage-chip {
   position: absolute; top: 10px; right: 10px; z-index: 3;
   font: 700 9px/1 var(--grotesk); letter-spacing: 0.14em; text-transform: uppercase;
@@ -452,7 +447,6 @@ input[type="range"]:focus { box-shadow: none; }
 .compass svg { width: 52px; height: 52px; }
 .compass span { font: 700 8.5px/1 var(--grotesk); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
 
-/* telemetry ribbon — pinned to the bottom of the viewport, both views */
 .hud-tele {
   position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 3;
   display: flex; flex-wrap: wrap; gap: 4px 24px;
@@ -462,7 +456,6 @@ input[type="range"]:focus { box-shadow: none; }
 .hud-tele dt { font: 700 8.5px/1 var(--grotesk); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
 .hud-tele dd { font: 500 13px/1 var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
 
-/* cam settings pop */
 .cam-tools { position: absolute; right: 10px; bottom: 56px; z-index: 4; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .cam-pop {
   width: 216px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px;
@@ -481,9 +474,7 @@ input[type="range"]:focus { box-shadow: none; }
 .cam-slider-row b { color: var(--ink); }
 .cam-slider input[type="range"] { width: 100%; }
 
-/* ============================================================
-   sensor strip
-   ============================================================ */
+/* ---- readings ---- */
 .strip {
   flex-shrink: 0;
   display: grid; grid-template-columns: repeat(auto-fit, minmax(146px, 1fr));
@@ -513,11 +504,6 @@ input[type="range"]:focus { box-shadow: none; }
 .meter-fill.is-warn  { background: var(--warn); }
 .meter-fill.is-abort { background: var(--accent); }
 
-/* trend sparkline cell */
-/* IMPORTANT NOTE: its own full-width band, a sibling of .strip — not a cell inside it.
-   spanning it across the auto-fit row leaves dead cells beside it, and `1 / -1`
-   collapses auto-fit to a single column. the canvas needs an explicit height or
-   its 150px intrinsic size steals that much from the stage. */
 .trend-cell { flex-shrink: 0; padding-bottom: 10px; animation-delay: 0.16s; }
 .trend-body { height: clamp(56px, 9dvh, 96px); }
 .trend-body canvas { width: 100%; height: 100%; display: block; }
@@ -525,106 +511,149 @@ input[type="range"]:focus { box-shadow: none; }
 .legend-item { display: inline-flex; align-items: center; gap: 5px; font: 700 9px/1 var(--grotesk); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
 .legend-item i { width: 14px; height: 3px; border-radius: var(--r-pill); flex-shrink: 0; }
 
-/* ============================================================
-   agent — sage
-   ============================================================ */
+/* ---- agent terminal ---- */
 .agent { flex: 1; min-height: 0; }
-/* never scrolls — the stage below absorbs/releases the slack instead */
+
 .agent-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 
-.agent-topbar { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 14px 0; }
-.agent-topbar-spacer { flex: 1; }
-.agent-back { margin: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-voice-sel { flex-shrink: 0; min-height: 30px; font-size: 11px; padding: 0 24px 0 8px; background-color: transparent; }
+.term { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
-.agent-stage {
-  position: relative; flex: 1 1 auto; min-height: 44px; container-type: size; overflow: hidden;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
-  padding: 14px; margin: 10px 14px 0; border-radius: var(--r);
-  background: var(--inset); border: 1px solid var(--line);
-  color: var(--agent-c, var(--ink-2));            /* glyph color follows intent */
-  transition: color 0.45s ease;
+.term-bar {
+  flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px 7px 6px; border-bottom: 1px solid var(--line);
 }
-.agent-grid {
-  position: absolute; inset: 0; z-index: 0; opacity: 0.08; color: currentColor;
-  background-image: radial-gradient(circle, currentColor 0.6px, transparent 0.7px);
-  background-size: 15px 15px;
-  -webkit-mask-image: radial-gradient(circle at center, #000 28%, transparent 72%);
-          mask-image: radial-gradient(circle at center, #000 28%, transparent 72%);
+.term-back {
+  flex: none; width: 24px; height: 24px; display: grid; place-items: center;
+  background: none; border: 0; cursor: pointer; color: var(--ink-3); font: 700 14px/1 var(--mono);
+  transition: color 0.14s ease, transform 0.14s ease;
+}
+.term-back:hover { color: var(--ink); transform: translateX(-2px); }
+.term-who { font: 800 11px/1 var(--grotesk); letter-spacing: 0.18em; color: var(--ink); }
+.term-state {
+  font: 500 9px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3);
+  min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.term-verdict {
+  margin-left: auto; flex: none; padding: 3px 7px; border: 1px solid var(--line);
+  border-left: 2px solid var(--ink-3); border-radius: var(--r);
+  font: 700 9px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2);
+}
+.term-verdict.is-go    { border-left-color: var(--go);     background: var(--go-bg);    color: var(--go); }
+.term-verdict.is-warn  { border-left-color: var(--warn);   background: var(--warn-bg);  color: var(--warn); }
+.term-verdict.is-abort { border-left-color: var(--accent); background: var(--abort-bg); color: var(--accent); }
+/* the bar's controls give width back before anything clips */
+.term-bar select { flex: 0 1 auto; min-width: 0; min-height: 26px; max-width: 108px; font-size: 10px; padding: 0 18px 0 5px; background-color: transparent; }
+/* permissions: one tap, and the colour is the state — blue asks, red goes straight through */
+.term-perm {
+  flex: none; display: inline-flex; align-items: center; gap: 5px; overflow: hidden;
+  min-height: 26px; padding: 0 8px; cursor: pointer;
+  border: 1px solid var(--line); border-left-width: 2px; border-radius: var(--r);
+  font: 700 9px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase;
+  transition: color 0.22s ease, background-color 0.22s ease, border-color 0.22s ease;
+}
+.term-perm .icn { width: 12px; height: 12px; }
+.term-perm.is-ask    { color: var(--ask);   border-left-color: var(--ask);   background: var(--ask-bg); }
+.term-perm.is-bypass { color: var(--abort); border-left-color: var(--abort); background: var(--abort-bg); }
+.term-perm:hover { border-color: var(--line-2); border-left-color: currentColor; }
+.term-perm:active { transform: translateY(1px); }
+/* both children are keyed on the state, so a tap remounts them and the animation replays */
+.term-perm .icn { animation: permIcon 0.32s cubic-bezier(0.2, 0.9, 0.25, 1) both; }
+.term-perm-t { animation: permText 0.32s ease both; }
+@keyframes permIcon { from { transform: rotate(-90deg) scale(0.4); opacity: 0; } }
+@keyframes permText { from { transform: translateX(-6px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .term-perm .icn, .term-perm-t { animation: none; }
 }
 
-/* halo rings pulsing behind glyph */
-.agent-orb { position: relative; z-index: 1; display: grid; place-items: center;
-  width: min(clamp(64px, 10dvh, 118px), 64cqh); height: min(clamp(64px, 10dvh, 118px), 64cqh); }
-.agent-orb::before, .agent-orb::after {
-  content: ""; position: absolute; inset: 14px; border: 1px solid currentColor; border-radius: 50%;
-  opacity: 0; animation: orb-halo 3.2s ease-out infinite;
+.term-hero {
+  flex: none; display: grid; place-items: center; padding: 26px 0 24px;
+  border-bottom: 1px solid var(--line);
+  color: var(--agent-c, var(--ink-2)); transition: color 0.45s ease;
 }
-.agent-orb::after { animation-delay: 1.6s; }
-@keyframes orb-halo { 0% { transform: scale(0.6); opacity: 0.3; } 100% { transform: scale(1.3); opacity: 0; } }
-.agent.is-alert .agent-orb::before, .agent.is-alert .agent-orb::after { animation-duration: 1.4s; }
+.term-hero .sage-face { font-size: 58px; }
+.term-hero.is-speaking { color: var(--accent); }
 
-/* the glyph */
-.ai-glyph { position: relative; z-index: 1; display: block; overflow: visible;
-  width: min(clamp(40px, 6dvh, 68px), 40cqh); height: min(clamp(40px, 6dvh, 68px), 40cqh); }
-@container (max-height: 108px) { .agent-state-label, .agent-eq { display: none; } }
-.ai-glyph * {
-  fill: none; stroke: currentColor; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round;
-  transform-box: fill-box; transform-origin: center;
+.term-feed {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 9px; padding: 10px 12px;
+  background: var(--inset);
 }
-.ai-glyph .g-fill { fill: currentColor; stroke: none; }
-.ai-glyph .g-faint { opacity: 0.22; }
-.ai-glyph .g-spin { transform-box: view-box; transform-origin: 60px 60px; }
 
-@keyframes spin    { to { transform: rotate(360deg); } }
-@keyframes breathe { 0%, 100% { transform: scale(0.86); opacity: 0.6; } 50% { transform: scale(1.1); opacity: 1; } }
-@keyframes blink   { 0%, 100% { opacity: 1; } 50% { opacity: 0.32; } }
-@keyframes bob     { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
-@keyframes draw    { to { stroke-dashoffset: 0; } }
-@keyframes shake   { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
-@keyframes pop     { 0% { transform: scale(0.7); opacity: 0; } 60% { transform: scale(1.08); } 100% { transform: scale(1); opacity: 1; } }
+.fl { display: flex; gap: 8px; animation: agent-text-in 0.3s ease; }
+.fl-mark { flex: none; width: 12px; text-align: center; font: 700 11px/1.55 var(--mono); color: var(--ink-3); }
+.fl-body { flex: 1; min-width: 0; }
+.fl-t { margin: 0; font: 400 12.5px/1.55 var(--prose); color: var(--ink); overflow-wrap: anywhere; }
+.fl-detail { margin: 2px 0 0; font: 500 10px/1.4 var(--mono); color: var(--ink-3); overflow-wrap: anywhere; }
 
-.agent.is-idle .g-core, .agent.is-idle .g-ring { animation: breathe 2.6s ease-in-out infinite; }
-.agent.is-idle .g-ring { animation-duration: 3.4s; }
+.fl-user .fl-mark { color: var(--accent); }
+.fl-user .fl-t { font: 500 11.5px/1.5 var(--mono); color: var(--ink-2); }
+.fl-sage .fl-mark { color: var(--agent-c, var(--ink-2)); }
+.fl-sage.sage-clear   .fl-mark { color: var(--go); }
+.fl-sage.sage-caution .fl-mark { color: var(--warn); }
+.fl-sage.sage-danger  .fl-mark { color: var(--abort); }
+.fl-tool .fl-mark { color: var(--accent); }
+.fl-tool .fl-t { font: 500 11.5px/1.5 var(--mono); color: var(--ink-3); }
+.fl-tool b { color: var(--ink); font-weight: 700; }
+.fl-tool .icn { vertical-align: -1px; }
+.fl-note .fl-t { font: 500 10.5px/1.5 var(--mono); color: var(--ink-3); }
 
-.agent-analyzing-label {
-  position: relative; z-index: 1; color: var(--agent-c, var(--ink));
-  font: 700 12px/1 var(--grotesk); letter-spacing: 0.26em; text-transform: uppercase;
-  display: inline-flex; align-items: center; gap: 3px;
+.fl-shot {
+  display: block; margin-top: 6px; width: 100%; max-width: 190px; aspect-ratio: 4 / 3;
+  object-fit: cover; border: 1px solid var(--line); border-radius: var(--r);
+  animation: agent-text-in 0.35s ease;
 }
-.agent-analyzing-label::after {
-  content: "\2026"; /* … */ display: inline-block;
-  animation: blink 1.1s ease-in-out infinite;
-}
-.agent.is-scanning .g-sweep { animation: spin 2.6s linear infinite; }
-.agent.is-scanning .g-wedge { opacity: 0.5; }
-.agent.is-scanning .g-blip  { animation: blink 1.1s ease-in-out infinite; }
-.agent.is-clear .g-ring2 { stroke-dasharray: 214; stroke-dashoffset: 214; animation: draw 0.6s ease forwards; }
-.agent.is-clear .g-check {
-  stroke-dasharray: 60; stroke-dashoffset: 60;
-  animation: draw 0.45s 0.3s ease forwards, bob 2.6s 0.9s ease-in-out infinite;
-}
-.agent.is-caution .g-tri  { animation: pop 0.4s ease, blink 1.3s 0.4s ease-in-out infinite; }
-.agent.is-caution .g-bang, .agent.is-caution .g-dot2 { animation: blink 1.3s ease-in-out infinite; }
-.agent.is-alert .ai-glyph { animation: shake 0.5s ease-in-out infinite; }
-.agent.is-alert .g-tri    { animation: pop 0.3s ease, blink 0.6s 0.3s steps(2, jump-none) infinite; }
-.agent.is-alert .g-bang, .agent.is-alert .g-dot2 { animation: blink 0.6s steps(2, jump-none) infinite; }
 
-.agent-state-label {
-  position: relative; z-index: 1; color: currentColor;
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
-  font: 700 10px/1 var(--grotesk); letter-spacing: 0.26em; text-transform: uppercase;
-  animation: agent-text-in 0.4s ease;
+.fl-move .fl-mark { color: var(--warn); }
+.fl-move .fl-body {
+  padding: 8px 9px; border: 1px solid var(--line); border-left: 2px solid var(--warn);
+  border-radius: var(--r); background: var(--bg);
 }
-.agent-state-label .sage-face { font-size: 26px; }
+.fl-move.is-pending .fl-mark { animation: pulse 1.6s ease-in-out infinite; }
+.fl-move .fl-t { font: 500 11.5px/1.5 var(--mono); color: var(--ink-2); }
+.fl-code {
+  margin: 6px 0 0; padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 500 11.5px/1.5 var(--mono); color: var(--ink);
+  background: var(--inset); border-radius: var(--r);
+}
+.fl-btns { display: flex; gap: 6px; margin-top: 8px; }
+.fl-btns .term-chip:hover { transform: none; }
+.term-chip.is-go { color: var(--go); border-color: var(--go); }
+.fl-pad { opacity: 0.55; font-style: normal; margin-left: 3px; }
+.fl-st.is-done { color: var(--go); }
+.fl-st.is-failed, .fl-st.is-stopped { color: var(--abort); }
+.fl-move.is-declined .fl-body { border-left-color: var(--line); opacity: 0.6; }
+.fl-move.is-running .fl-body { border-left-color: var(--accent); }
 
-/* ------------------------------------------------------------
-   sage's face (js/sageface.js) — ascii, animated.
-   the glyphs come from js; everything that moves is here. each eye is an open
-   glyph with a shut `-` stacked on it, and the blink is a step-timed opacity
-   swap between the two, so it snaps the way text should. sizes are set by the
-   call site's font-size — every offset below is in em so the face scales whole.
-   ------------------------------------------------------------ */
+.drawer-moves.is-on, .drawer-lamp.is-on, .drawer-buzz.is-on { color: var(--go); border-color: var(--go); }
+
+.fl-work .fl-mark { color: var(--accent); animation: spin 1.1s linear infinite; }
+.fl-work .fl-t { font: 700 10px/1.6 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+.fl-work b { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+.term-hint { margin: auto 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.term-hint-t { font: 400 12px/1.55 var(--prose); color: var(--ink-3); }
+.term-chip {
+  padding: 5px 9px; cursor: pointer; color: var(--ink-2); background: transparent;
+  border: 1px solid var(--line); border-radius: var(--r); font: 500 11px var(--mono);
+  transition: color 0.14s, border-color 0.14s, transform 0.14s;
+}
+.term-chip:hover { color: var(--ink); border-color: var(--ink-2); transform: translateX(2px); }
+
+.term-prompt { align-items: center; }
+.term-input {
+  flex: 1; min-width: 0; height: 34px; padding: 0 8px;
+  font: 500 12px var(--mono); color: var(--ink);
+  background: var(--inset); border: 1px solid var(--line); border-radius: var(--r);
+}
+.term-input::placeholder { color: var(--ink-3); }
+.term-input:focus { border-color: var(--ink-2); outline: none; }
+.term-prompt .foot-icon { width: 34px; height: 34px; }
+
+@keyframes agent-text-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* ---- sage face ---- */
+/* each eye is an open glyph with a shut one stacked on it, swapped on a step timer */
 .sage-face {
   --sf-gx: 0em; --sf-gy: 0em;
   position: relative; display: inline-flex; align-items: center; justify-content: center;
@@ -645,10 +674,10 @@ input[type="range"]:focus { box-shadow: none; }
 }
 .sf-eye b { font-weight: inherit; }
 .sf-shut { position: absolute; left: 0; top: 0; opacity: 0; }
-/* blink: swap open glyph for `-` and back. the two run on one clock. */
+
 .sf-open, .sf-shut { animation: sf-open 4.6s steps(1, end) infinite; }
 .sf-shut { animation-name: sf-close; }
-.sf-r .sf-open, .sf-r .sf-shut { animation-delay: 0.06s; }  /* half a frame off — reads alive, not mechanical */
+.sf-r .sf-open, .sf-r .sf-shut { animation-delay: 0.06s; }
 .sf-mouth { display: inline-block; transition: scale 0.3s ease; }
 .sf-z { position: absolute; right: -0.35em; top: -0.1em; font-size: 0.5em; opacity: 0; }
 
@@ -663,25 +692,23 @@ input[type="range"]:focus { box-shadow: none; }
 @keyframes sf-hop    { 0%, 60%, 100% { translate: 0 0; } 25% { translate: 0 -0.16em; } 40% { translate: 0 -0.04em; } }
 @keyframes sf-snooze { 0% { opacity: 0; translate: 0 0; scale: 0.7; } 25% { opacity: 0.8; } 100% { opacity: 0; translate: 0.25em -0.7em; scale: 1.2; } }
 
-/* idle — `-_-`, asleep on its feet. nothing open to blink, so it breathes. */
 .sage-face.is-idle .sf-open, .sage-face.is-idle .sf-shut { animation: none; }
 .sage-face.is-idle .sf-scan { animation: sf-breath 4s ease-in-out infinite; }
 .sage-face.is-idle .sf-z { animation: sf-snooze 3.4s ease-in-out infinite; }
-/* scanning / work — `o_o` / `O_O`, sweeping the room */
+
 .sage-face.is-scanning .sf-scan, .sage-face.is-work .sf-scan { animation: sf-sweep 3.2s ease-in-out infinite; }
 .sage-face.is-work .sf-open, .sage-face.is-work .sf-shut { animation-duration: 1.6s; }
-/* thinking — `o_O`, one eye pinched, head tilting */
+
 .sage-face.is-thinking { animation: sf-ponder 3.6s ease-in-out infinite; }
-.sage-face.is-thinking .sf-l { scale: 0.8; }
-.sage-face.is-thinking .sf-r { scale: 1.15; }
-/* clear — `^_^`, eyes already shut with joy */
+.sage-face.is-thinking .sf-open, .sage-face.is-thinking .sf-shut { animation: none; }
+.sage-face.is-thinking .sf-mouth { animation: sf-pulse 2.2s ease-in-out infinite; }
+
 .sage-face.is-clear .sf-open, .sage-face.is-clear .sf-shut { animation: none; }
 .sage-face.is-clear { animation: sf-hop 2.4s ease-in-out infinite; }
-/* caution — `:0`, mouth open and pulsing */
-.sage-face.is-caution .sf-mouth { animation: sf-pulse 1.1s ease-in-out infinite; }
-.sage-face.is-caution .sf-r { display: none; }  /* no right eye, else the blink `-` shows through */
+
+.sage-face.is-caution .sf-r { display: none; }
 .sage-face.is-caution .sf-open, .sage-face.is-caution .sf-shut { animation-duration: 2.4s; }
-/* alert — `x_x`, out cold and shaking */
+
 .sage-face.is-alert .sf-open, .sage-face.is-alert .sf-shut { animation: none; }
 .sage-face.is-alert .sf-scan { animation: sf-shake 0.32s ease-in-out infinite; }
 
@@ -691,38 +718,7 @@ input[type="range"]:focus { box-shadow: none; }
   .sage-face .sf-open { opacity: 1; }
 }
 
-/* voice equalizer (speaking) */
-.agent-eq { position: relative; z-index: 1; display: flex; align-items: flex-end; gap: 3px; height: 15px; color: currentColor; }
-.agent-eq i { width: 3px; height: 100%; border-radius: var(--r-pill); background: currentColor; transform-origin: bottom; animation: eq 0.8s ease-in-out infinite; }
-.agent-eq i:nth-child(2) { animation-delay: 0.16s; }
-.agent-eq i:nth-child(3) { animation-delay: 0.32s; }
-.agent-eq i:nth-child(4) { animation-delay: 0.48s; }
-.agent-eq i:nth-child(5) { animation-delay: 0.22s; }
-@keyframes eq { 0%, 100% { transform: scaleY(0.28); } 50% { transform: scaleY(1); } }
-
-/* what the agent says */
-.agent-speech { padding: 8px 16px 0; }
-.agent-text {
-  margin: 0; padding-left: 13px; border-left: 2px solid var(--agent-c, var(--accent)); color: var(--ink);
-  font: 400 13.5px/1.55 var(--prose);
-  min-height: 1.6em; animation: agent-text-in 0.4s ease;
-  transition: border-color 0.45s ease;
-}
-.agent.is-analyzing .agent-text { color: var(--ink-2); }
-.agent-text.sage-clear   { border-left-color: var(--go); }
-.agent-text.sage-caution { border-left-color: var(--warn); }
-.agent-text.sage-danger  { border-left-color: var(--abort); }
-@keyframes agent-text-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-
-.agent-timing {
-  margin-top: 5px; padding-left: 13px;
-  font: 500 9.5px/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-3);
-}
-.agent-timing b { color: var(--ink-2); font-weight: 700; }
-.agent-timing.is-live { color: var(--agent-c, var(--accent)); }
-.agent-timing.is-live b { color: var(--agent-c, var(--accent)); }
-
-/* go/no-go verdict */
+/* ---- verdict + mission ---- */
 .verdict {
   margin: 8px 16px 0; padding: 7px 12px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px;
   border: 1px solid var(--line); border-left: 3px solid var(--ink-3); border-radius: var(--r);
@@ -740,11 +736,10 @@ input[type="range"]:focus { box-shadow: none; }
 .agent-foot .btn--primary { flex: 1; }
 .foot-icon { flex: none; width: 42px; padding: 0; display: grid; place-items: center; font-size: 14px; }
 
-/* secondary actions live behind ⋯ so the foot is one primary button wide */
 .foot-menu { position: relative; flex-shrink: 0; }
 .foot-menu > summary { list-style: none; letter-spacing: 0.1em; }
 .foot-menu > summary::-webkit-details-marker { display: none; }
-/* keep the closed content rendered so it can animate out instead of vanishing */
+
 .foot-menu::details-content { content-visibility: visible; }
 .foot-menu-pop {
   position: absolute; z-index: 6; right: 0; bottom: calc(100% + 6px); min-width: 190px;
@@ -763,45 +758,31 @@ input[type="range"]:focus { box-shadow: none; }
   transition: color 0.14s, background 0.14s;
 }
 .menu-item:hover:not(:disabled) { color: var(--ink); background: var(--inset); }
+.menu-item.is-lead { color: var(--ink); font-weight: 700; display: flex; align-items: center; gap: 7px; }
+.menu-item.is-lead .icn { color: var(--accent); }
 .menu-item:disabled { opacity: 0.4; cursor: not-allowed; }
 .menu-label { padding: 5px 10px 3px; font: 700 8.5px/1 var(--grotesk); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
 .menu-sep { height: 0; margin: 4px 6px; border: 0; border-top: 1px solid var(--line); }
-.agent-hist { padding: 0 16px 8px; position: relative; }
 
 .is-analyzing .zone-title { animation: pulse 0.9s ease-in-out infinite; }
 
-.ai-hist > summary {
-  font: 700 9.5px/1 var(--grotesk); letter-spacing: 0.16em; text-transform: uppercase;
-  color: var(--ink-3); cursor: pointer; padding: 6px 0; list-style: none;
-}
-.ai-hist > summary::-webkit-details-marker { display: none; }
-.ai-hist > summary:hover { color: var(--ink); }
-.ai-hist > summary::before { content: "▸ "; color: var(--accent); }
-.ai-hist[open] > summary::before { content: "▾ "; }
-.ai-hist-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: min(168px, 26dvh); overflow-y: auto; }
-/* open history floats over the panel — expanding in flow would grow the box past the viewport */
-.agent-hist[open] .ai-hist-list {
-  position: absolute; z-index: 5; left: 16px; right: 16px; bottom: calc(100% - 4px);
-  padding: 8px; background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r);
-}
-.ai-hist-item {
-  display: flex; gap: 10px; padding: 8px 10px; background: var(--inset); border-radius: var(--r);
-  border: 1px solid transparent; cursor: pointer; font: 400 12px/1.45 var(--grotesk); color: var(--ink-2);
-  transition: color 0.14s, background 0.14s, border-color 0.14s, transform 0.14s ease;
-}
-.ai-hist-item:hover { border-color: var(--line-2); background: var(--panel-2); color: var(--ink); transform: translateX(3px); }
-.ai-hist-time { font: 500 10px/1.45 var(--mono); color: var(--accent); flex-shrink: 0; }
-
-/* ask sage — mic button in the foot row */
 .ask-mic.is-live { color: var(--bg); background: var(--accent); border-color: var(--accent); animation: chat-rec 1s steps(2) infinite; }
+/* the blink means "open, nothing picked up yet"; solid means the mic is hearing you */
+.ask-mic.is-live.is-heard { animation: none; }
+
+/* live input level, fed by --lvl on the button itself (see useMic) */
+.ask-mic, .mic-lvl { position: relative; overflow: hidden; }
+.ask-mic.is-live::after, .mic-lvl.is-active::after {
+  content: ""; position: absolute; left: 0; bottom: 0; height: 2px;
+  width: calc(var(--lvl, 0) * 100%); background: currentColor; opacity: 0.85;
+  transition: width 90ms linear; pointer-events: none;
+}
 @keyframes chat-rec { 50% { opacity: 0.55; } }
 
-/* shared mission bits */
 .mission-k { font: 700 9px/1 var(--grotesk); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
 .mission-input { width: 100%; resize: vertical; }
 .briefing .mission-input { height: clamp(52px, 8dvh, 84px); }
 
-/* chat sessions */
 .chat-select { padding: 10px 16px 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
 .mission-head { display: flex; align-items: center; justify-content: space-between; }
 .chat-empty { margin: auto 0; text-align: center; color: var(--ink-3); font: 400 13px var(--grotesk); }
@@ -824,14 +805,13 @@ input[type="range"]:focus { box-shadow: none; }
 .chat-del:hover { color: var(--bg); background: var(--accent); border-color: var(--accent); }
 .chat-new { margin-top: auto; }
 
-/* briefing wizard */
 .briefing { padding: 8px 16px 12px; display: flex; flex-direction: column; gap: clamp(7px, 1.2dvh, 12px); align-items: stretch; min-height: 0; }
-.brief-back, .agent-back {
+.brief-back {
   align-self: flex-start; cursor: pointer; padding: 6px 10px; background: transparent; border-radius: var(--r-pill);
   border: 1px solid var(--line-2); color: var(--ink-2); font: 600 10px var(--mono); letter-spacing: 0.04em;
   transition: color 0.14s, border-color 0.14s, padding-left 0.16s ease;
 }
-.brief-back:hover, .agent-back:hover { color: var(--ink); border-color: var(--ink-2); padding-left: 14px; }
+.brief-back:hover { color: var(--ink); border-color: var(--ink-2); padding-left: 14px; }
 .brief-orb { align-self: center; color: var(--agent-c, var(--ink)); margin-top: 4px; }
 .brief-orb .sage-face { font-size: 44px; }
 .brief-greeting { margin: 0; text-align: center; font: 400 13.5px/1.5 var(--prose); color: var(--ink); }
@@ -844,7 +824,6 @@ input[type="range"]:focus { box-shadow: none; }
 .brief-sum-k { font: 700 9px/1 var(--grotesk); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
 .brief-sum-v { font: 400 13px/1.45 var(--grotesk); color: var(--ink); }
 
-/* agent view transitions */
 .chat-select, .briefing { animation: view-in 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 @keyframes view-in { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: none; } }
 .brief-step { animation: step-in 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both; display: flex; flex-direction: column; gap: 12px; }
@@ -868,25 +847,16 @@ input[type="range"]:focus { box-shadow: none; }
 @keyframes orb-pop { from { opacity: 0; transform: scale(0.4); } to { opacity: 1; transform: scale(1); } }
 @keyframes list-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
-/* staggered entrance when a session opens */
-.agent-back  { animation: view-in 0.4s ease both; }
-.agent-stage { animation: view-in 0.5s 0.04s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-.agent-speech { animation: view-in 0.5s 0.1s ease both; }
-.verdict { animation: view-in 0.5s 0.16s ease both; }
-.agent-foot { animation: view-in 0.5s 0.22s ease both; }
-.agent-hist { animation: view-in 0.5s 0.34s ease both; }
+.term-bar   { animation: view-in 0.4s ease both; }
+.term-feed  { animation: view-in 0.5s 0.08s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.agent-foot { animation: view-in 0.5s 0.18s ease both; }
 
-/* ============================================================
-   drive
-   ============================================================ */
-.drive { flex-shrink: 0; }
-/* .drive-body is the box that gets height-animated on a mode switch; .drive-inner holds
-   the actual layout so its height stays the *natural* one while the parent is mid-tween
-   (that's what the resize observer in DriveZone reads to retarget). */
-.drive-body { display: flow-root; }
+.drive { flex-shrink: 0; min-height: 0; }
+/* dragged short, the pad scrolls rather than spilling out of the zone */
+.drive-body { display: flow-root; flex: 1; min-height: 0; overflow: auto; }
 .drive-inner { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; }
 
-
+/* ---- drive ---- */
 .pad {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
   touch-action: none; user-select: none; -webkit-user-select: none;
@@ -907,6 +877,64 @@ input[type="range"]:focus { box-shadow: none; }
 .pad-btn.is-live { box-shadow: 0 0 0 3px rgba(236, 229, 214, 0.12); }
 .pad-btn:disabled { cursor: not-allowed; }
 .pad-glyph { font-size: 18px; line-height: 1; }
+/* the crew's own word for a direction, shift-clicked in. Lowercase and quiet —
+   the glyph is still the button, this only says which way it goes. */
+.arm-lbl { font: 600 8px/1 var(--mono); letter-spacing: 0.04em; opacity: 0.65;
+  max-width: 52px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- arm ---- */
+.arm-pad {
+  display: flex; flex-direction: column; gap: 6px; margin-top: 4px;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+  transition: opacity 0.2s;
+}
+.arm-pad.is-off { opacity: 0.45; }
+.arm-row { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; }
+/* Six joints of 44px touch targets is taller than the rail has to give, and the
+   agent terminal below it is what pays. Cap it and scroll — pan-y because
+   .arm-pad kills touch scrolling on purpose for the jog buttons. */
+.arm-spd { display: flex; gap: 6px; justify-content: center; margin-bottom: 8px; }
+.arm-spd .chip.is-on { color: var(--go); border-color: var(--go); }
+
+.arm-rows {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: min(34vh, 216px); overflow-y: auto; touch-action: pan-y;
+}
+/* the joint the gamepad's right stick is pointed at */
+.arm-row.is-sel .arm-name { color: var(--ink); }
+.arm-row.is-sel { box-shadow: inset 2px 0 0 var(--ink-2); padding-left: 5px; }
+/* the fine-release row, under the gripper: same 1fr/auto/auto grid so its two
+   buttons sit directly under the claw's own OPEN/CLOSE */
+.claw-nudge { border-top: 1px solid var(--line); padding-top: 6px; margin-top: 2px; }
+.claw-nudge label { display: grid; gap: 2px; min-width: 0; }
+.claw-nudge input[type="range"] { width: 100%; }
+.claw-ms { font: 10px/1 var(--mono); color: var(--ink-2); }
+
+.arm-moves { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.arm-move { min-height: 44px; padding: 0 10px; width: auto;
+  font: 600 10px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+/* hold-bias trim: a bench knob, so it sits quieter than the jog buttons. 44px of
+   height for the touch target even though the track itself is thin. */
+.arm-name { font: 600 10px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2);
+  background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
+.arm-btn { min-height: 44px; width: 56px; grid-auto-flow: row; gap: 2px; align-content: center; }
+/* not [disabled]: a disabled button emits no pointer events, and shift-click has
+   to reach an arrow that is greyed out for being at its travel stop */
+.arm-btn.is-off, .arm-move.is-off { opacity: 0.45; }
+.arm-btn.is-off:hover { color: var(--ink-2); border-color: var(--line-2); }
+.arm-ren::backdrop { background: rgba(0, 0, 0, 0.55); }
+.arm-ren {
+  border: 1px solid var(--line-2); border-radius: var(--r); background: var(--panel);
+  color: var(--ink); padding: 14px; min-width: 260px;
+}
+.arm-ren-t { font: 600 10px/1.4 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 8px; }
+.arm-ren-in {
+  width: 100%; min-height: 38px; padding: 0 10px; box-sizing: border-box;
+  font: 600 12px/1 var(--mono); color: var(--ink);
+  background: var(--inset); border: 1px solid var(--line-2); border-radius: var(--r);
+}
+.arm-ren-in:focus { border-color: var(--ink-2); outline: none; }
+.arm-ren-btns { display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px; }   /* 44px: the editor's touch target, same reason */
 .pad-btn kbd {
   position: absolute; top: 5px; right: 7px;
   font: 600 8.5px/1 var(--mono); color: currentColor; opacity: 0.45;
@@ -925,8 +953,7 @@ input[type="range"]:focus { box-shadow: none; }
 }
 .chip:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-2); transform: translateY(-1px); }
 .chip:disabled { opacity: 0.4; cursor: not-allowed; }
-/* the oled clip picker is a <label> wrapping a hidden file input, not a button — a
-   label can't be :disabled, so the dead state is a class on it. */
+
 label.chip { display: inline-flex; align-items: center; }
 label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 
@@ -938,11 +965,9 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 }
 .stop-bar:hover { color: var(--bg); background: var(--accent); border-color: var(--accent); }
 .stop-bar:active { transform: scale(0.985); }
-/* IMPORTANT NOTE: dimmed, never disabled — stop is the one command that bypasses
-   the mirror gate, so it must stay clickable even with no link showing. */
+
 .stop-bar.is-off { opacity: 0.45; }
 
-/* blk workflow panel (inside drive) */
 .blk-ctl { display: grid; gap: 8px; }
 .blk-ctl-row { display: flex; gap: 6px; }
 .blk-ctl-sel { flex: 1; max-width: none; }
@@ -950,9 +975,7 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .blk-ctl small { font: 500 10.5px/1.5 var(--mono); color: var(--ink-3); }
 .blk-stop { background: var(--abort-bg); border: 1px solid var(--abort); color: var(--abort); font-weight: 800; min-height: 46px; }
 
-/* ============================================================
-   console drawer
-   ============================================================ */
+/* ---- console drawer ---- */
 .drawer {
   position: fixed; left: var(--gap); right: var(--gap); bottom: var(--gap); z-index: 150;
   height: min(46dvh, 430px);
@@ -989,7 +1012,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .drawer-body .zone { border: none; background: transparent; border-radius: 0; flex: 1; min-height: 0; }
 .drawer-body .zone-head { min-height: 38px; padding: 4px 14px; }
 
-/* logs */
 .logs .zone-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .log-tabs { flex-shrink: 0; display: flex; gap: 0; padding: 0 8px; border-bottom: 1px solid var(--line); }
 .log-tab {
@@ -1009,7 +1031,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .log-line.k-danger { border-left-color: var(--accent); }
 .log-line.k-ai     { border-left-color: var(--ink); }
 
-/* serial */
 .serial .serial-stream { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px; font: 400 12px/1.5 var(--mono); background: transparent; }
 .serial-tools { display: flex; align-items: center; gap: 6px; }
 .serial-btn {
@@ -1020,7 +1041,7 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 }
 .serial-btn:hover { color: var(--ink); border-color: var(--ink-2); }
 .serial-btn[aria-pressed="true"] { color: var(--bg); background: var(--ink); border-color: var(--ink); }
-/* the screensaver picker is a plain <select> wearing the button's skin */
+
 .drawer-saver { appearance: none; padding-right: 11px; }
 .drawer-saver option { color: var(--ink); background: var(--bg); }
 .serial-line { display: flex; gap: 12px; padding: 1px 0; }
@@ -1029,7 +1050,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .serial-line.is-data .m { color: var(--accent); }
 .serial-empty { color: var(--ink-3); font-style: italic; }
 
-/* findings (memory) */
 .memory { flex: 1; min-height: 0; overflow: hidden; }
 .memory-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; overflow-y: auto; }
 .memory-empty { margin: auto 0; text-align: center; color: var(--ink-3); font: 400 13px var(--grotesk); }
@@ -1049,7 +1069,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .memory-text { flex: 1; font: 500 13px/1.3 var(--grotesk); color: var(--ink); }
 .memory-time { flex-shrink: 0; font: 500 10px var(--mono); letter-spacing: 0.02em; color: var(--ink-3); }
 
-/* motor bench */
 .dbg { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; overflow-y: auto; }
 .dbg-body { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
 .dbg-grid { display: grid; grid-template-columns: repeat(3, minmax(110px, 1fr)); gap: 8px; flex: 1 1 380px; }
@@ -1061,9 +1080,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .dbg-knob input[type="number"] { width: 100%; }
 .dbg-knob input[type="range"] { width: 100%; }
 
-/* ============================================================
-   blk editor overlay
-   ============================================================ */
 .blk-modal {
   position: fixed; inset: 0; z-index: 300;
   display: flex; align-items: center; justify-content: center;
@@ -1077,6 +1093,8 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   overflow: hidden;
   animation: blkPop 0.32s cubic-bezier(0.2, 0.9, 0.25, 1.1) both;
 }
+
+/* ---- modals ---- */
 .blk-modal-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 12px; border-bottom: 1px solid var(--line-2); flex-shrink: 0;
@@ -1088,7 +1106,7 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 }
 .blk-modal-x:hover { color: var(--accent); border-color: var(--accent); }
 .blk-modal-frame iframe { flex: 1; width: 100%; border: 0; background: var(--bg); }
-/* session report — reuses the blk modal shell, reads as a document */
+
 .report-actions { display: flex; gap: 8px; }
 .report-frame { width: min(760px, 92vw); }
 .report-body { flex: 1; overflow-y: auto; padding: 20px 24px 32px; }
@@ -1118,7 +1136,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 @keyframes blkFadeOut { to { opacity: 0; } }
 @keyframes blkPopOut { to { opacity: 0; transform: translateY(22px) scale(0.97); } }
 
-/* debug-menu warning (first console open) */
 .warn-frame {
   width: min(440px, 88vw); height: auto; gap: 14px; padding: 24px; align-items: flex-start;
   border-color: var(--warn);
@@ -1128,11 +1145,10 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .warn-actions { display: flex; gap: 8px; align-self: flex-end; }
 .warn-go { color: var(--warn); border-color: var(--warn); transition: color 0.12s, background 0.12s, border-color 0.12s, opacity 0.45s ease; }
 .warn-go:disabled { opacity: 0.4; cursor: not-allowed; }
-/* countdown collapses instead of popping the button's width when it hits 0 */
+
 .warn-count { display: inline-block; overflow: hidden; white-space: pre; max-width: 3em; transition: max-width 0.35s ease, opacity 0.25s ease; }
 .warn-count.is-done { max-width: 0; opacity: 0; }
 
-/* operator settings — reuses the devices-frame shell */
 .settings-frame { width: min(420px, 92vw); height: auto; padding: 4px 0 16px; }
 .settings-body { display: flex; flex-direction: column; gap: 12px; padding: 16px 16px 4px; }
 .settings-field { display: flex; flex-direction: column; gap: 5px; }
@@ -1145,20 +1161,17 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .settings-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px 0; }
 .settings-hint { font: 500 11px/1.4 var(--grotesk); color: var(--ink-3); }
 
-/* first-run onboard flow — hero / choose model / pair. full-screen, own look.
-   IMPORTANT NOTE: z-index sits BELOW .blk-modal (300) on purpose — the pair
-   step's Connect button opens the real BlePickerModal (a .blk-modal), which
-   must stack above this full-screen overlay to be visible/clickable at all. */
+/* ---- onboarding + tour ---- */
 .onboard {
   position: fixed; inset: 0; z-index: 250;
   display: flex; justify-content: center;
-  overflow-y: auto; /* a tall step (legacy open) scrolls instead of centering off the top of a short window */
+  overflow-y: auto;
   background: var(--bg); animation: blkFade 0.28s ease both;
 }
 .onboard.is-closing { animation: blkFadeOut 0.3s ease both; }
 .onboard.is-closing .onboard-view { animation: blkPopOut 0.3s cubic-bezier(0.5, 0, 0.75, 0.4) both; }
 .onboard-skip {
-  position: fixed; top: 20px; right: 20px; /* fixed, not absolute: stays put while .onboard scrolls */
+  position: fixed; top: 20px; right: 20px;
   font: 600 11px/1 var(--grotesk); letter-spacing: 0.08em; color: var(--ink-3);
   background: none; border: 0; cursor: pointer; padding: 8px;
 }
@@ -1197,7 +1210,7 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .onboard-model-card:hover { border-color: var(--accent); transform: translateY(-2px); }
 .onboard-model-label { font: 800 16px/1.2 var(--grotesk); color: var(--ink); }
 .onboard-model-desc { font: 500 11.5px/1.4 var(--grotesk); color: var(--ink-3); }
-/* current build: bigger, background photo (placeholder) stands in for the real render */
+
 .onboard-model-featured {
   min-height: 220px; justify-content: flex-end; gap: 4px; padding: 24px;
   background-size: cover; background-position: center 30%; border-color: var(--line-2);
@@ -1221,8 +1234,7 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .onboard-model-legacy {
   position: relative; padding: 14px 16px; opacity: 0.75; filter: grayscale(0.4);
 }
-/* no lift on hover here: it's wrapped in the accordion's overflow:hidden clip, so the
-   shared card's translateY(-2px) would shave a sliver off the top on hover */
+
 .onboard-model-legacy:hover { opacity: 1; filter: none; transform: none; }
 .onboard-model-legacy .onboard-model-label { font-size: 14px; }
 .onboard-legacy-badge {
@@ -1249,7 +1261,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   .onboard-legacy { transition: none; }
 }
 
-/* first-run tour — the dim is one huge box-shadow spilling out of the spotlight */
 .tour { position: fixed; inset: 0; z-index: 400; animation: blkFade 0.22s ease both; }
 .tour.is-closing { animation: blkFadeOut 0.22s ease both; pointer-events: none; }
 .tour.is-closing .tour-card { animation: blkPopOut 0.22s cubic-bezier(0.5, 0, 0.75, 0.4) both; }
@@ -1274,7 +1285,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   .tour, .tour-hole, .tour-card, .tour.is-closing, .tour.is-closing .tour-card { animation: none; transition: none; }
 }
 
-/* usb-board strip under the topbar — the only entry point to the updater */
 .update-bar {
   flex-shrink: 0; display: flex; align-items: center; gap: 12px;
   padding: 9px 16px; border-bottom: 1px solid var(--line);
@@ -1289,13 +1299,12 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 }
 .update-bar.is-stale .update-bar-msg { color: var(--warn); }
 
-/* update blackout (firmware flash) */
+/* ---- firmware update ---- */
 .update-frame {
   width: min(560px, 92vw); height: auto; max-height: 88dvh;
   gap: 16px; padding: 24px; align-items: stretch;
 }
 
-/* connected devices — host-only roster, one control switch per dashboard */
 .devices-frame { width: min(520px, 92vw); height: auto; max-height: 88dvh; }
 .device-list { list-style: none; margin: 0; padding: 8px 12px 14px; overflow-y: auto; }
 .device-row {
@@ -1306,13 +1315,9 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .device-empty { font: 500 12px/1 var(--mono); color: var(--ink-3); padding: 10px 2px; }
 .device-row .serial-btn { min-height: 36px; min-width: 116px; }
 .device-row .serial-btn.is-on { color: var(--go); border-color: var(--go); }
-/* grant confirm sits on top of the devices sheet — don't stack a second full blur */
+
 .blk-modal .blk-modal { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(6, 6, 7, 0.6); }
 
-/* in-app ble pairing (desktop shell) — same sheet as connected devices, plus a
-   scanning affordance. no signal bars: electron exposes no rssi. */
-/* landscape sheet, same shape as the chrome/os bluetooth choosers: header, an
-   indeterminate scan bar, the list, and scan status parked next to Cancel */
 .ble-picker { width: min(560px, 92vw); height: min(440px, 82dvh); }
 .ble-picker .device-list { flex: 1; padding-top: 12px; }
 .ble-progress { flex: none; height: 2px; overflow: hidden; background: color-mix(in srgb, var(--accent) 14%, transparent); }
@@ -1352,7 +1357,7 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .flash-board small { font: 500 10px/1.3 var(--mono); letter-spacing: 0; text-transform: none; }
 .flash-board.is-ok { color: var(--go); border-color: var(--go); }
 .flash-board.is-missing { color: var(--ink-3); }
-/* flash progress: sage watches the flash — eyes blink while working, settle on exit */
+
 .flash-prog { display: flex; flex-direction: column; gap: 10px; }
 .flash-prog .sage-face { font-size: 46px; margin: 6px auto 2px; color: var(--ink); transition: color 0.4s ease; }
 .flash-prog.is-ok    .sage-face { color: var(--go); }
@@ -1381,9 +1386,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .flash-status.is-ok    { color: var(--go); }
 .flash-status.is-error { color: var(--accent); }
 
-/* ============================================================
-   toasts
-   ============================================================ */
 .toasts { position: fixed; bottom: 18px; right: 18px; z-index: 250; display: flex; flex-direction: column; gap: 8px; }
 .toast {
   font: 600 11px/1.3 var(--grotesk); letter-spacing: 0.04em; padding: 12px 16px;
@@ -1397,11 +1399,8 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 @keyframes toast-in { from { transform: translateX(40px); opacity: 0; } }
 @keyframes toast-out { to { transform: translateX(40px); opacity: 0; } }
 
-/* ============================================================
-   entrance
-   ============================================================ */
 .reveal { opacity: 0; transform: translateY(10px); animation: reveal 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) forwards; }
-/* mirror lost control: mirror of .reveal, then react unmounts it (see driveMounted) */
+
 .is-leaving { animation: leave 0.24s cubic-bezier(0.5, 0, 0.75, 0.4) both; pointer-events: none; }
 .col-main .stage-3d { animation-delay: 0.04s; }
 .col-main .stage-cam { animation-delay: 0.08s; }
@@ -1411,57 +1410,50 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 @keyframes reveal { to { opacity: 1; transform: none; } }
 @keyframes leave { to { opacity: 0; transform: translateY(10px); } }
 
-/* ============================================================
-   laptop / tablet breakpoints
-   ============================================================ */
+/* ---- breakpoints ---- */
 @media (max-width: 1240px) {
   .top-stats { display: none; }
 }
 
 @media (max-height: 1000px) and (min-width: 1025px) {
   .drive-hint { display: none; }
-  .briefing .brief-orb { display: none; }   /* decorative only — the panel must fit without scrolling */
+  .briefing .brief-orb { display: none; }
 }
 
-/* short desktop screens: shed the optional rows so the rail still fits without scrolling.
-   IMPORTANT NOTE: below ~780px tall the rail runs out of room anyway — the console
-   drawer / a taller window is the answer there, not more shaving. */
 @media (max-height: 899px) and (min-width: 1025px) {
+  .term-hero .sage-face { font-size: 38px; }
   .verdict-cause { display: none; }
-  .agent-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
   .blk-ctl { gap: 6px; }
   .blk-ctl small { display: none; }
 }
 
 @media (max-height: 840px) and (min-width: 1025px) {
-  .agent-text { -webkit-line-clamp: 2; }
-  .brief-greeting { display: none; }        /* spoken aloud anyway */
+  .brief-greeting { display: none; }
   .briefing .mission-input { height: clamp(44px, 6dvh, 84px); }
   .routines .label { display: none; }
-  .ai-hist > summary { padding: 4px 0; }
 }
 
 @media (max-height: 800px) and (min-width: 1025px) {
-  .agent-stage { min-height: 32px; }
-  .agent-speech { padding-top: 6px; }
-  .agent-timing { margin-top: 4px; }
   .verdict { padding: 5px 12px; }
+  .term-feed { padding: 8px 10px; gap: 7px; }
   .agent-foot { padding: 6px 16px 4px; }
 }
 
-/* portrait tablet & below: cockpit stacks, page scrolls, drive jumps above sage */
 @media (max-width: 1024px) {
   .shell { height: auto; min-height: 100dvh; overflow: visible; }
   .topbar { position: sticky; top: 0; z-index: 100; flex-wrap: wrap; gap: 10px 16px; }
   .cockpit { display: flex; flex-direction: column; }
+  .split { display: none; }
+  .col-main, .col-rail { flex: none; }
   .stage-row { flex-direction: column; flex: none; }
   .stage-3d { flex: none; }
-  .stage-3d .stage-body { height: min(44dvh, 440px); flex: none; }
+  .stage-3d .stage-body { height: min(28dvh, 220px); flex: none; }
   .stage-cam { flex: none; }
-  .stage-cam .stage-body { height: min(28dvh, 220px); flex: none; }
+  .stage-cam .stage-body { height: min(44dvh, 440px); flex: none; }
   .agent { flex: none; }
   .agent-body { overflow: visible; }
-  .agent-stage { flex: none; min-height: 168px; }
+
+  .term-feed { height: min(50dvh, 420px); flex: none; }
   .col-rail .drive { order: -1; }
   .drawer { height: min(60dvh, 480px); }
 }
@@ -1471,8 +1463,8 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   .brand img { height: 18px; }
   .lamp-label { display: none; }
   .top-lang { display: none; }
-  .stage-3d .stage-body { height: min(36dvh, 340px); }
-  .stage-cam .stage-body { height: min(24dvh, 180px); }
+  .stage-3d .stage-body { height: min(24dvh, 180px); }
+  .stage-cam .stage-body { height: min(36dvh, 340px); }
   .hud-tele { gap: 4px 14px; padding: 8px 10px; }
   .pad-btn { min-height: 62px; }
 }
@@ -1486,7 +1478,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   .reveal { opacity: 1; transform: none; }
 }
 
-/* blk run panel: what the picked workflow does, before it runs */
 .blk-prev { font: 500 10.5px/1.6 var(--mono); color: var(--ink-3); }
 .blk-prev summary { cursor: pointer; }
 .blk-prev pre {
@@ -1495,34 +1486,20 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   font: 500 10.5px/1.6 var(--mono); white-space: pre;
 }
 .blk-warn { color: var(--warn, #ffab19); margin-top: 4px; }
-/* where the workflow will actually run — on the board, or interpreted here */
+
 .blk-where { margin-top: 6px; color: var(--ink-2); }
 
-/* the blk editor takes the whole screen on a tablet — 86vw of a small screen
-   is a lot of wasted room, and the editor has its own drawers for the panels */
 @media (max-width: 900px) {
   .blk-modal-frame { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
 }
 
-/* ============================================================
-   fpv mode — camera goes fullscreen, the sensor strip and the
-   agent become translucent rails pinned to the edges. nothing is
-   re-rendered: it's the same panels, re-placed and re-skinned.
-   ============================================================ */
-
-/* --- the open/close morph ---
-   view transitions do the heavy lifting. only the cam tile is tagged, so the browser
-   tweens its box into the fullscreen one while everything else cross-fades as
-   ::view-transition-*(root). the rails are deliberately NOT tagged: they go from a
-   horizontal row of tiles to a vertical column, and morphing that just smears two
-   layouts through each other — they fade out and deal back in (fpv-deal) instead. */
+/* ---- fpv ---- */
 .stage-cam { view-transition-name: fpv-cam; }
 ::view-transition-group(fpv-cam) { animation-duration: 520ms; animation-timing-function: cubic-bezier(0.66, 0, 0.15, 1); }
-/* old fades out fast, new arrives late, so the two layouts overlap as little as possible */
+
 ::view-transition-old(root) { animation: fpv-fade 180ms ease both reverse; }
 ::view-transition-new(root) { animation: fpv-fade 320ms 150ms ease both; }
-/* the cam feed itself must not cross-fade against a scaled copy of itself — it's a
-   live stream, the two snapshots never match and it strobes. morph the box only. */
+
 ::view-transition-old(fpv-cam) { animation: none; opacity: 0; }
 ::view-transition-new(fpv-cam) { animation: fpv-fade 300ms ease both; }
 @keyframes fpv-fade { from { opacity: 0; } to { opacity: 1; } }
@@ -1531,35 +1508,21 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }
 
-/* --- layout --- */
 .is-fpv .topbar, .is-fpv .update-bar, .is-fpv .stage-3d, .is-fpv .drive, .is-fpv .drawer { display: none; }
 .is-fpv .cockpit { display: block; padding: 0; overflow: hidden; }
 .is-fpv .stage-cam { position: fixed; inset: 0; z-index: 0; border: none; border-radius: 0; background: #000; }
 .is-fpv .stage-cam .zone-head { display: none; }
 .is-fpv .stage-cam .stage-body { height: auto; flex: 1; }
-/* dist/roll/pitch/yaw ribbon: the sage card carries dist + heading now, and the
-   attitude line already draws roll/pitch. two of the same numbers is noise. */
+
 .is-fpv .hud-tele { display: none; }
-/* both of these live in the cam's corners, which fullscreen puts under the rail and
-   the corner brackets — stack them down the right edge, clear of the sage card */
+
 .is-fpv .stage-chip { top: 18px; right: 52px; z-index: 12; border-radius: var(--r-s); }
 .is-fpv .cam-tools { right: 18px; bottom: auto; top: 54px; z-index: 12; }
 
-/* the feed is 4:3 shot through a camera mounted on its side, so un-rotating it
-   leaves a 3:4 portrait frame — see .cam-feed. in the tile that's fine (whole
-   frame visible); fullscreen it reads as a phone video, so cover the viewport
-   instead and crop the top/bottom of the scene. 133.34cqw = the frame width
-   needed for the rotated image to span the full container width.
-   important note: this crop costs ~58% of the vertical field on a 16:9 stage —
-   deliberate, fullscreen framing beats FOV here. remount the cam upright and the
-   rotation goes away, dropping the crop to ~25% with the same edge-to-edge look. */
 .is-fpv.fpv-fill .cam-feed { width: max(100cqh, 133.34cqw); }
-/* the other sizes scale the whole frame instead of cropping it — 1 = whole 3:4 frame visible,
-   above 1 zooms in on the centre. set from FPV_ZOOMS, cycled with OPTIONS. */
+
 .is-fpv .cam-feed { width: calc(100cqh * var(--fpv-zoom, 1)); }
 
-/* nothing from the cockpit columns comes to fpv: <FpvSage> is sage and every
-   sensor, drive is hidden anyway, and the sparkline is unreadable this small. */
 .is-fpv .col-rail, .is-fpv .strip { display: none; }
 @keyframes fpv-rise { from { opacity: 0; transform: translate(-50%, 16px); } to { opacity: 1; transform: translate(-50%, 0); } }
 .fpv-enter { cursor: pointer; background: none; }
@@ -1572,12 +1535,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 }
 .fpv-hud .hud-btn { border-radius: var(--r-s); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
 
-/* ============================================================
-   fpv sage card — sage's whole presence in fpv: who's talking,
-   the last line, and every live sensor down the right. same panel
-   as the marketing frame (docs/marketing/posts.html #03-telemetry),
-   shrunk to hud size; keep the two in step if either changes.
-   ============================================================ */
 .fpv-sage {
   position: fixed; z-index: 12; bottom: 18px;
   left: 50%; transform: translateX(-50%);
@@ -1585,7 +1542,7 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "bar bar" "said stats";
   border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
   border-radius: var(--r); overflow: hidden;
-  /* thin enough to fly through — the feed still reads under it */
+
   background: color-mix(in srgb, var(--panel) 34%, transparent);
   animation: fpv-rise 420ms 120ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
 }
@@ -1609,7 +1566,7 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .fpv-sage-said {
   grid-area: said; align-self: center; padding: 11px; color: var(--ink);
   font: 300 12.5px/1.5 var(--mono);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);   /* stays legible over a bright frame */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
   animation: agent-text-in 0.4s ease;
 }
 .fpv-sage-said.sage-caution { color: var(--warn); }
@@ -1636,10 +1593,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   .fpv-sage.is-speaking .fpv-sage-dot { animation: none; }
 }
 
-/* ============================================================
-   fpv glass — reticle, attitude line, heading tape. decoration
-   over the feed; never takes a pointer event.
-   ============================================================ */
 .fpv-glass {
   position: fixed; inset: 0; z-index: 5; pointer-events: none;
   color: var(--accent); font-family: var(--mono);
@@ -1647,7 +1600,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 }
 @keyframes fpv-glass-in { from { opacity: 0; transform: scale(1.035); } to { opacity: 1; transform: none; } }
 
-/* corner brackets */
 .fpv-brackets i {
   position: absolute; width: 26px; height: 26px;
   border: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent);
@@ -1657,35 +1609,10 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .fpv-brackets i:nth-child(3) { bottom: 12px; left: 12px; border-right: 0; border-top: 0; }
 .fpv-brackets i:nth-child(4) { bottom: 12px; right: 12px; border-left: 0; border-top: 0; }
 
-/* heading tape */
-.fpv-tape {
-  position: absolute; top: 58px; left: 50%; transform: translateX(-50%);
-  width: min(460px, 40vw); height: 26px;
-  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
-}
-.fpv-tick {
-  position: absolute; top: 8px; transform: translateX(-50%);
-  font: 500 8.5px/1 var(--mono); letter-spacing: 0.06em;
-  color: color-mix(in srgb, var(--ink) 55%, transparent);
-}
-.fpv-tick::before {
-  content: ""; position: absolute; top: -7px; left: 50%; width: 1px; height: 4px;
-  background: currentColor; transform: translateX(-50%);
-}
-.fpv-tick.is-major { color: var(--accent); font-weight: 700; font-size: 9.5px; }
-.fpv-tick.is-major::before { height: 7px; top: -10px; }
-.fpv-tape-now {
-  position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
-  font: 700 10px/1 var(--mono); color: var(--accent);
-  text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent);
-}
-
-/* attitude line — roll rotates it, pitch slides it */
 .fpv-attitude {
   position: absolute; top: 50%; left: 50%; width: 62vw; height: 0;
   margin: -1px 0 0 -31vw;
-  transition: transform 140ms linear;  /* smooth over the ~10hz packet rate */
+  transition: transform 140ms linear;
 }
 .fpv-horizon {
   position: absolute; left: 0; right: 0; top: 0; height: 1px;
@@ -1695,7 +1622,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
     color-mix(in srgb, var(--accent) 70%, transparent) 84%, transparent);
 }
 
-/* reticle */
 .fpv-reticle {
   position: absolute; top: 50%; left: 50%; width: 96px; height: 96px;
   transform: translate(-50%, -50%);
@@ -1712,7 +1638,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .fpv-reticle.is-near { color: var(--abort); animation: fpv-alert 0.7s ease-in-out infinite; }
 @keyframes fpv-alert { 50% { opacity: 0.45; } }
 
-/* scanlines + vignette — the two cheapest things that read as "this is a feed" */
 .fpv-scan {
   position: absolute; inset: 0; opacity: 0.16;
   background: repeating-linear-gradient(180deg, rgba(236, 229, 214, 0.5) 0 1px, transparent 1px 3px);
@@ -1728,12 +1653,9 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   .fpv-reticle.is-near { animation: none; }
 }
 
-/* ============================================================
-   mission replay — recorded stills under the live fpv glass,
-   plus the run picker. the player is fullscreen so .fpv-glass
-   (position: fixed) lands over it exactly as it does live.
-   ============================================================ */
 .rep { position: fixed; inset: 0; z-index: 320; background: #000; }
+
+/* ---- replay ---- */
 .rep-img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .rep-blind {
   position: absolute; inset: 0; display: grid; place-items: center; margin: 0;
@@ -1748,15 +1670,13 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .rep-scrub { flex: 1; min-height: 32px; accent-color: var(--accent); cursor: pointer; }
 .rep-t { font: 500 11px/1 var(--mono); color: var(--ink-2); min-width: 88px; text-align: right; }
 
-/* event ticks ride over the scrubber. the strip is click-through so dragging the
-   range still works; only the ticks themselves take a click (jump to that beat). */
 .rep-ticks { position: absolute; inset: 0 6px; pointer-events: none; }
 .rep-tick {
   position: absolute; top: 2px; width: 3px; height: 11px; padding: 0;
   margin-left: -1.5px; border: 0; border-radius: 1px; cursor: pointer;
   background: var(--ink-2); pointer-events: auto;
 }
-.rep-tick::after { content: ""; position: absolute; inset: -12px -8px; } /* finger-sized hit box */
+.rep-tick::after { content: ""; position: absolute; inset: -12px -8px; }
 .rep-tick:hover, .rep-tick:focus-visible { height: 15px; top: 0; }
 .rep-tick.k-find     { background: var(--accent); }
 .rep-tick.k-analysis { background: var(--go); }
@@ -1765,7 +1685,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .rep-tick.k-dead     { background: var(--abort); }
 .rep-tick.k-back     { background: var(--go); }
 
-/* the run's own label, and the called-out event under it */
 .rep-badge {
   position: absolute; top: 14px; left: 16px; z-index: 6; margin: 0;
   font: 700 10px/1 var(--grotesk); letter-spacing: 0.16em; text-transform: uppercase;
@@ -1789,7 +1708,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .rep-event.k-back     { color: var(--go); }
 @keyframes repEvent { from { opacity: 0; transform: translateX(-10px); } }
 
-/* cam died mid-run: the frame is frozen, so say so instead of letting it read live */
 .rep-img.is-stale { filter: grayscale(1) brightness(0.55); }
 .rep-dead {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 7; margin: 0;
@@ -1798,7 +1716,6 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   background: rgba(6, 6, 7, 0.7); animation: recPulse 1.6s ease-in-out infinite;
 }
 
-/* why the last record attempt was refused, under the hud that refused it */
 .rec-err {
   position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 20; margin: 0;
   font: 600 10px/1 var(--grotesk); letter-spacing: 0.12em; text-transform: uppercase;
@@ -1806,6 +1723,17 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   background: rgba(6, 6, 7, 0.72);
 }
 .hud-btn.is-rec.is-err { color: var(--abort); border-color: var(--abort); }
+
+/* the same feed card, floated over the FPV view — a confirm must never be
+   invisible just because the operator is flying the camera. */
+.fpv-ask {
+  position: fixed; z-index: 21; top: 56px; left: 50%; transform: translateX(-50%);
+  width: min(520px, calc(100vw - 40px));
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--r-s); padding: 4px 12px;
+  background: rgba(6, 6, 7, 0.86); backdrop-filter: blur(6px);
+  animation: fpv-rise 240ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
 
 .rep-list-frame { width: min(560px, 92vw); height: auto; max-height: 80dvh; }
 .rep-list { overflow-y: auto; padding: 10px 14px 16px; }
@@ -1817,7 +1745,7 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .rep-open b { font: 700 13px/1.2 var(--grotesk); color: var(--ink); }
 .rep-open small { font: 500 10.5px/1.2 var(--mono); color: var(--ink-3); }
 .rep-open:hover b { color: var(--accent); }
-/* rec sits in the fpv hud with the other pad-labelled buttons; armed it pulses red */
+
 .hud-btn.is-rec.is-on {
   color: var(--abort); border-color: var(--abort);
   animation: recPulse 1.4s ease-in-out infinite;
@@ -1825,11 +1753,8 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 @keyframes recPulse { 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .hud-btn.is-rec.is-on { animation: none; } }
 
-/* ───────── icons ─────────
-   the drawings live in public/icons/*.svg and are used as a mask, not an <img>,
-   so they take the colour of whatever text they sit in (currentColor) — an
-   <img> would be stuck one colour on a ui that is amber, white and red by turn.
-   never emoji: a different picture on every machine, and colour on a mono ui. */
+/* ---- icons ---- */
+/* every icon is a mask, so it takes currentColor and the font size around it */
 .icn {
   display: inline-block; width: 1em; height: 1em; vertical-align: -0.15em; flex: none;
   background: currentColor;
@@ -1846,12 +1771,10 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .icn-timer { --icn: url("/icons/timer.svg"); }
 .icn-warn { --icn: url("/icons/warn.svg"); }
 .icn-gear { --icn: url("/icons/gear.svg"); }
+.icn-shield { --icn: url("/icons/shield.svg"); }
+.icn-shield-off { --icn: url("/icons/shield-off.svg"); }
 
-/* ============================================================
-   judge view — telemetry-only client in presentation layout
-   nothing interactive lives here on purpose: it is read across a table,
-   so everything is one size bigger and one thing per row.
-   ============================================================ */
+/* ---- judge view ---- */
 .judge {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
   gap: var(--gap); padding: var(--gap);
@@ -1879,7 +1802,7 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .judge-grid {
   flex: 1; min-width: 0; display: grid; gap: var(--gap);
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-rows: minmax(0, 1fr);   /* fills the column — a half-empty board reads as broken */
+  grid-auto-rows: minmax(0, 1fr);
 }
 .judge-cell {
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
@@ -1896,24 +1819,61 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 }
 .judge-val i { font: 500 13px/1 var(--mono); font-style: normal; color: var(--ink-3); margin-left: 4px; }
 .judge-cell.is-dead .judge-val { font-size: 13px; color: var(--warn); letter-spacing: 0.1em; }
+/* the operator's agent transcript on the judge tablet. column-reverse over a
+   reversed list pins it to the newest line with no scroll effect. Read-only:
+   a yes/no card is the operator's to press. */
+.judge-chat {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  padding: 12px 14px;
+}
+.judge-chat-log {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column-reverse; gap: 8px;
+}
+.judge-chat .fl-btns { display: none; }
+
 .judge-say {
   font: 500 14px/1.5 var(--mono); color: var(--ink-2);
   border: 1px solid var(--line); border-radius: var(--r);
   background: var(--panel); padding: 12px 16px;
 }
 
-/* a sensor sending a bare 0 has nothing wired to it — dim the tile so the number
-   isn't read as a measurement, and colour the pill so it isn't read as "normal". */
 .reading.is-dead .reading-num,
 .reading.is-dead .meter { opacity: 0.28; }
 .reading.is-dead .pill {
   color: var(--warn); background: var(--warn-bg); border-color: transparent;
-  font-size: 8px; letter-spacing: 0.08em; padding: 4px 6px;  /* the label is long — leave the sensor name its room */
+  font-size: 8px; letter-spacing: 0.08em; padding: 4px 6px;
 }
 
-/* cloud reachability pills (topbar) */
 .top-cloud { display: inline-flex; gap: 6px; }
 
-/* per-device mode picker in the roster */
 .device-mode { cursor: pointer; }
 .device-mode.is-on { color: var(--go); border-color: var(--go); }
+
+/* ---- tapes (console drawer) ---- */
+.tapes { display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow: auto; }
+.tapes-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tapes-name { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
+  font: 500 12px/1 var(--mono, monospace); padding: 8px 10px; min-width: 160px; }
+.tapes-hint { color: var(--ink-2); font: 500 11px/1.4 var(--grotesk); }
+.tapes-err { color: var(--abort); font: 500 11.5px/1.4 var(--grotesk); }
+.btn.is-rec { color: var(--bg); background: var(--abort); border-color: var(--abort); }
+.tapes-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.tapes-row { display: flex; align-items: center; gap: 6px; }
+.tapes-row-name { flex: 1; font: 500 12px/1 var(--mono, monospace); color: var(--ink); }
+.tapes-edit { display: flex; flex-direction: column; gap: 8px; }
+.tapes-json { width: 100%; min-height: 300px; resize: vertical; background: var(--panel-2);
+  border: 1px solid var(--line); color: var(--ink); font: 500 11.5px/1.5 var(--mono, monospace); padding: 10px; }
+
+.boost-row { align-items: center; margin-top: 8px; }
+.boost-row .label { margin-right: 2px; }
+
+/* CONSOLE -> SECOND FEED off. Hidden, not unmounted: the stream stays open so
+   swapping back costs nothing (see CamStage in app.js). */
+body.no-pip .stage-view--cam.is-pip { display: none; }
+
+/* CONSOLE -> FEED ZOOM. A label wearing the .serial-btn chrome so it lines up
+   with the toggles beside it; the range itself stays a native input. */
+.drawer-zoom { display: inline-flex; align-items: center; gap: 8px; cursor: default; }
+.drawer-zoom input { width: 90px; accent-color: var(--accent); cursor: pointer; }

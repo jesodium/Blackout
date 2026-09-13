@@ -1,11 +1,9 @@
-// imperative three.js rover scene, wrapped for react.
-// uses global THREE / THREE.GLTFLoader loaded via <script> in index.html.
-// createRoverScene(canvas, { onLog }) -> { setData, setCamera, dispose }
+// three.js rover view
 
-const ACCENT = 0x948979;       // bone-gray rim / dust
-const ACCENT_DARK = 0x39362f;  // grid major
-const GRID2 = 0x171715;        // grid minor
-const RED = 0xff3b2f;          // signal red — obstacle
+const ACCENT = 0x948979;
+const ACCENT_DARK = 0x39362f;
+const GRID2 = 0x171715;
+const RED = 0xff3b2f;
 
 export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   const THREE = window.THREE;
@@ -38,7 +36,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   rim.position.set(-5, 2, -4);
   scene.add(rim);
 
-  // drifting dust motes
+  // ---- lights, dust, ground ----
   const N = 60;
   const dustGeo = new THREE.BufferGeometry();
   const dustPos = new Float32Array(N * 3);
@@ -71,7 +69,6 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
     scene.add(ring);
   }
 
-  // obstacle marker
   const wallMat = new THREE.MeshStandardMaterial({
     color: RED, transparent: true, opacity: 0.25, roughness: 0.1, metalness: 0.9,
     emissive: RED, emissiveIntensity: 0.3,
@@ -96,11 +93,11 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   const SENSOR_Z = 0.55;
   let compassEl = null;
 
-  // free-orbit drag state (spherical coords around origin)
+  // ---- orbit ----
   const orbit = {
     active: false,
-    theta: Math.atan2(3.2, 4.8),   // azimuth, matches isometric preset
-    phi: 1.19,                      // polar angle (clamped above ground)
+    theta: Math.atan2(3.2, 4.8),
+    phi: 1.19,
     radius: Math.sqrt(3.2 * 3.2 + 2.4 * 2.4 + 4.8 * 4.8),
     dragging: false, lastX: 0, lastY: 0,
   };
@@ -127,6 +124,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   window.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
 
+  // ---- model ----
   const loader = new THREE.GLTFLoader();
   loader.load(
     "models/rover.glb",
@@ -153,6 +151,8 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   );
 
   let raf;
+
+  // ---- frame ----
   function animate() {
     raf = requestAnimationFrame(animate);
     if (orbit.active) {
@@ -227,7 +227,6 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
     },
     setCamera(preset) {
       if (preset === "free") {
-        // sync orbit angles from wherever the camera currently is
         const cx = cam.x, cy = cam.y, cz = cam.z;
         orbit.radius = Math.sqrt(cx * cx + cy * cy + cz * cz);
         orbit.phi = Math.acos(Math.max(-1, Math.min(1, cy / orbit.radius)));

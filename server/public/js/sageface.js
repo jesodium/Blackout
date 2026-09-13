@@ -1,27 +1,18 @@
+// the ascii face. moods live here, the motion is in style.css — a mood with no css
+// rule renders blank.
+
 import React, { useEffect, useRef } from "react";
 import htm from "htm";
 const html = htm.bind(React.createElement);
 
-/* sage's face — ascii glyphs, animated.
-   every eye is two stacked glyphs (open + shut) and the blink is a step-timed
-   opacity swap, so it snaps like text instead of fading like a shape. the mood
-   picks the glyphs here; everything that moves is `.sage-face.is-<mood>` in
-   style.css. adding a mood without its css rule renders a still face —
-   `npm run test:face` is the check.
-
-   IMPORTANT NOTE: no animation library. the whole rig is 3 spans and a handful
-   of keyframes; a tweening lib would be more code than the face. */
-
-// the moods app.js may ask for. test-sageface.mjs checks each one has css.
 export const MOODS = ["idle", "scanning", "thinking", "clear", "caution", "alert", "work"];
 
-// [left eye, mouth, right eye] — same glyph set the old face used.
 const FACES = {
   idle:     ["-", "_", "-"],
   scanning: ["o", "_", "o"],
-  thinking: ["o", "_", "O"],
+  thinking: [">", "_", "<"],
   clear:    ["^", "_", "^"],
-  caution:  [":", "0", ""],   // right eye blank — reads `:0`, css hides the span
+  caution:  [":", "O", ""],
   alert:    ["x", "_", "x"],
   work:     ["O", "_", "O"],
 };
@@ -31,7 +22,6 @@ const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 export function SageFace({ mood = "idle", gaze = true }) {
   const ref = useRef(null);
 
-  // eyes follow the pointer. written straight to css vars — no state, no re-render.
   useEffect(() => {
     const el = ref.current;
     if (!gaze || !el) return;

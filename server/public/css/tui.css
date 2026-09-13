@@ -1,0 +1,372 @@
+/* ---------------------------------------------------------------------------
+   TUI skin — the console reads as a boxed terminal, driven by buttons.
+
+   Loaded AFTER style.css, and it owns three things only: the tokens, the shell
+   (status line / nav / body / action bar) and the chrome every component draws
+   with (frames, buttons, pills). Component internals stay in style.css — this
+   file re-skins them through the tokens rather than by re-listing their rules,
+   which is why the token block at the top is doing most of the work.
+
+   IMPORTANT NOTE: --r is 0 everywhere on purpose. A terminal has no rounded
+   corners, and every radius in style.css reads var(--r*).
+   --------------------------------------------------------------------------- */
+
+:root {
+  --bg:      #04060a;
+  --panel:   transparent;   /* boxes are lines, not filled cards */
+  --panel-2: #0c111a;
+  --inset:   #080b11;
+  --glass:   #04060a;
+
+  --line:   #1c2430;
+  --line-2: #33404f;
+
+  --ink:   #e6ebe4;
+  --ink-2: #97a3ae;
+  --ink-3: #5b6875;
+
+  /* brand amber stays: the LED strip's "clear" hue is this number */
+  --accent: #e1a95f;
+  --accent-2: #4a3313;
+
+  --go:   #43d68f;  --go-bg:    rgba(67, 214, 143, 0.10);
+  --warn: #f7bf3a;  --warn-bg:  rgba(247, 191, 58, 0.10);
+  --abort: #ff4436; --abort-bg: rgba(255, 68, 54, 0.12);
+  --ask:  #63a9f5;  --ask-bg:   rgba(99, 169, 245, 0.10);
+
+  --gap: 10px;
+  --r: 0;
+  --r-s: 0;
+  --r-pill: 0;
+
+  --row: 46px;   /* one "cell" — every tappable thing is at least this tall */
+}
+
+body { letter-spacing: 0.01em; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--line-2); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---- shell ---------------------------------------------------------------
+   status line / nav / body / action bar, top to bottom. The body is the only
+   part that scrolls: the two bars are always reachable, which is the whole
+   point of putting the stop button in one of them. */
+
+.shell.tui { background: var(--bg); }
+
+.tui-status {
+  flex-shrink: 0;
+  display: flex; align-items: stretch;
+  height: 34px;
+  border-bottom: 1px solid var(--line-2);
+  font: 700 11px/1 var(--mono);
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  overflow: hidden;
+}
+
+.tui-status > * { display: flex; align-items: center; gap: 8px; padding: 0 12px; flex-shrink: 0; }
+.tui-status > * + * { border-left: 1px solid var(--line); }
+.tui-status .st-fill { flex: 1 1 auto; min-width: 0; padding: 0; }
+
+.st-name { color: var(--accent); letter-spacing: 0.24em; }
+.st-name img { height: 14px; width: auto; display: block; }
+
+.st-link { color: var(--ink-3); }
+.st-link.is-on   { color: var(--go); }
+.st-link.is-warn { color: var(--warn); }
+.st-link.is-off  { color: var(--abort); }
+.st-dot { width: 7px; height: 7px; background: currentColor; flex-shrink: 0; }
+.st-link.is-off .st-dot { animation: tui-blink 1.1s steps(1) infinite; }
+@keyframes tui-blink { 50% { opacity: 0.2; } }
+
+.st-kv { color: var(--ink-3); }
+.st-kv b { color: var(--ink); font-weight: 700; }
+
+.st-cloud.is-off { color: var(--ink-3); text-decoration: line-through; }
+.st-cloud.is-on  { color: var(--ink-2); }
+
+.st-btn {
+  font: inherit; letter-spacing: inherit; text-transform: inherit;
+  color: var(--ink-2); background: none; border: 0; cursor: pointer;
+  padding: 0 12px; display: flex; align-items: center; gap: 7px;
+}
+.st-btn:hover { color: var(--accent); background: var(--panel-2); }
+.tui-status select.st-btn { appearance: none; }
+.tui-status select.st-btn option { background: var(--bg); color: var(--ink); }
+
+@media (max-width: 1100px) { .tui-status .st-drop { display: none; } }
+
+/* ---- nav ---- */
+
+.tui-nav {
+  flex-shrink: 0;
+  display: flex;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.nav-btn {
+  flex: 1 1 0; min-width: 0;
+  min-height: 52px; padding: 0 8px;
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  font: 700 13px/1 var(--mono); letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--ink-3); background: none; border: 0; cursor: pointer;
+  border-right: 1px solid var(--line);
+  transition: color 0.12s, background 0.12s;
+}
+.nav-btn:last-child { border-right: 0; }
+.nav-btn::before { content: "["; color: var(--line-2); }
+.nav-btn::after  { content: "]"; color: var(--line-2); }
+.nav-btn:hover { color: var(--ink); background: var(--panel-2); }
+.nav-btn.is-on { color: var(--bg); background: var(--accent); }
+.nav-btn.is-on::before, .nav-btn.is-on::after { color: var(--accent-2); }
+.nav-btn .icn { font-size: 15px; }
+
+@media (max-width: 720px) { .nav-btn { font-size: 11px; letter-spacing: 0.12em; } .nav-btn .icn { display: none; } }
+
+/* ---- body ---- */
+
+.tui-body {
+  flex: 1; min-height: 0;
+  overflow: auto;
+  padding: var(--gap);
+  display: grid; gap: var(--gap);
+  align-content: start;
+}
+.tui-body.v-mission { grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; align-content: stretch; }
+.tui-body.v-control { grid-template-columns: minmax(0, 1fr); }
+.tui-body.v-sage    { grid-template-columns: minmax(0, 1fr); align-content: stretch; }
+.tui-body.v-data    { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+.tui-body.v-setup   { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+
+/* ---- action bar ---- */
+
+.tui-act {
+  flex-shrink: 0;
+  display: flex; gap: 1px;
+  background: var(--line-2);
+  border-top: 1px solid var(--line-2);
+}
+
+.act-btn {
+  flex: 1 1 0; min-width: 0;
+  min-height: 58px; padding: 0 10px;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  font: 700 14px/1 var(--mono); letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink); background: var(--bg); border: 0; cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.act-btn::before { content: "[ "; color: var(--line-2); }
+.act-btn::after  { content: " ]"; color: var(--line-2); }
+.act-btn:hover:not(:disabled) { background: var(--panel-2); color: var(--accent); }
+.act-btn:disabled { color: var(--ink-3); cursor: not-allowed; }
+.act-btn .icn { font-size: 16px; }
+
+.act-btn.is-go     { color: var(--go); }
+.act-btn.is-live   { color: var(--bg); background: var(--go); }
+.act-btn.is-live::before, .act-btn.is-live::after { color: rgba(0,0,0,0.35); }
+.act-btn.is-stale  { color: var(--bg); background: var(--warn); }
+.act-btn.is-stale::before, .act-btn.is-stale::after { color: rgba(0,0,0,0.35); }
+.act-btn.is-stop   { color: var(--abort); }
+.act-btn.is-stop:hover:not(:disabled) { color: var(--bg); background: var(--abort); }
+.act-btn.is-stop:hover::before, .act-btn.is-stop:hover::after { color: rgba(0,0,0,0.35); }
+.act-btn.is-busy   { color: var(--accent); }
+
+@media (max-width: 720px) { .act-btn { font-size: 11px; letter-spacing: 0.1em; min-height: 52px; } .act-btn .icn { display: none; } }
+
+/* ---- the box: every panel is a labelled frame -----------------------------
+   The label sits ON the top border rather than in a header bar. That is what
+   makes a stack of these read as a terminal instead of a stack of cards, and
+   it costs one absolutely-positioned span. */
+
+.box, .zone, .reading, .tui-body .agent, .tui-body .drive {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: 0;
+  min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  /* the title notch sits ON the top border, so the frame cannot clip its own
+     children -- the bodies below do the clipping instead */
+  overflow: visible;
+}
+.stage-body, .zone-body, .dbg, .tapes { overflow: auto; }
+.stage-cam .stage-body, .stage-3d .stage-body { overflow: hidden; }
+
+.box-t, .zone-title {
+  position: absolute; top: 0; left: 12px;
+  transform: translateY(-50%);
+  background: var(--bg); padding: 0 8px;
+  font: 700 10px/1 var(--mono); letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap; max-width: calc(100% - 40px); overflow: hidden; text-overflow: ellipsis;
+  z-index: 1;
+}
+
+.box > .box-body { flex: 1; min-height: 0; padding: 16px 14px 12px; overflow: auto; }
+
+/* zone-head keeps its slot for the tag/buttons on its right, but the title
+   itself has left the bar for the border above it */
+.zone-head {
+  border-bottom: 1px solid var(--line);
+  min-height: 34px; padding: 4px 12px;
+  justify-content: flex-end;
+}
+.zone-head:has(.zone-title:only-child) { border-bottom: 0; min-height: 12px; }
+
+/* ---- buttons: everything bracketed ---- */
+
+.btn, .serial-btn, .chip, .console-btn, .bridge-btn, .hud-btn, .drawer-tab {
+  border-radius: 0;
+  font-family: var(--mono);
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.btn, .serial-btn, .chip {
+  min-height: 38px;
+  border: 1px solid var(--line-2);
+  background: var(--inset);
+}
+.btn:hover:not(:disabled), .serial-btn:hover:not(:disabled), .chip:hover:not(:disabled) {
+  color: var(--accent); border-color: var(--accent); background: var(--inset); transform: none;
+}
+.btn--primary { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.btn--primary:hover:not(:disabled) { color: var(--bg); background: #f2c281; border-color: #f2c281; }
+
+.pill {
+  border-radius: 0; font-family: var(--mono);
+  border: 1px solid var(--line-2); background: transparent;
+}
+.pill.is-go    { color: var(--go);    border-color: var(--go);    background: var(--go-bg); }
+.pill.is-warn  { color: var(--warn);  border-color: var(--warn);  background: var(--warn-bg); }
+.pill.is-abort { color: var(--abort); border-color: var(--abort); background: var(--abort-bg); }
+
+.conn-seg { border-radius: 0; border: 1px solid var(--line-2); background: var(--inset); }
+.conn-seg button { font-family: var(--mono); letter-spacing: 0.16em; min-height: 40px; }
+.conn-seg-thumb { border-radius: 0; }
+
+/* ---- mission view -------------------------------------------------------- */
+
+.tui-mission-verdict {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 14px;
+  min-height: 54px; padding: 0 16px;
+  border: 1px solid currentColor;
+  font: 700 13px/1 var(--mono); letter-spacing: 0.2em; text-transform: uppercase;
+}
+.tui-mission-verdict strong { font-size: 20px; letter-spacing: 0.14em; }
+.tui-mission-verdict .vd-why {
+  flex: 1; min-width: 0;
+  font: 500 12px/1.4 var(--mono); letter-spacing: 0.04em; text-transform: none;
+  color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tui-mission-verdict.is-go    { color: var(--go);    background: var(--go-bg); }
+.tui-mission-verdict.is-warn  { color: var(--warn);  background: var(--warn-bg); }
+.tui-mission-verdict.is-abort { color: var(--abort); background: var(--abort-bg); }
+.tui-mission-verdict.is-idle  { color: var(--ink-3); background: transparent; }
+.vd-lamp { width: 12px; height: 12px; background: currentColor; flex-shrink: 0; }
+.tui-mission-verdict.is-abort .vd-lamp { animation: tui-blink 0.7s steps(1) infinite; }
+
+.tui-body.v-mission .stage-cam { grid-column: 1; grid-row: 2; }
+.tui-body.v-mission .tui-side  { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; gap: var(--gap); min-height: 0; }
+
+/* dot-leader readout: the one place a monospace grid actually pays off */
+/* rows share the box evenly — a half-empty readout reads as a broken one */
+.rd-list { flex: 1; min-height: 0; padding: 16px 14px 10px; display: flex; flex-direction: column; overflow: auto; }
+.rd {
+  flex: 1 1 auto; min-height: 40px;
+  display: flex; align-items: baseline; gap: 8px;
+  font: 500 13px/1.2 var(--mono);
+  background: none; border: 0; border-bottom: 1px solid var(--line);
+  padding: 10px 0; width: 100%; text-align: left; color: inherit;
+}
+.rd:last-child { border-bottom: 0; }
+button.rd { cursor: pointer; }
+button.rd:hover .rd-k { color: var(--accent); }
+.rd-k { color: var(--ink-3); letter-spacing: 0.14em; text-transform: uppercase; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.rd-dots { flex: 1; min-width: 12px; border-bottom: 1px dotted var(--line-2); transform: translateY(-4px); }
+.rd-v { color: var(--ink); font-weight: 700; font-size: 19px; white-space: nowrap; }
+.rd-u { color: var(--ink-3); font-size: 11px; margin-left: 3px; }
+.rd-s { font-size: 10px; font-weight: 700; letter-spacing: 0.14em; width: 8ch; text-align: right; white-space: nowrap; }
+.rd-s.is-go { color: var(--go); } .rd-s.is-warn { color: var(--warn); } .rd-s.is-abort { color: var(--abort); }
+.rd.is-dead .rd-v, .rd.is-dead .rd-s { color: var(--ink-3); }
+
+.tui-say { flex: none; }
+.tui-say-body { padding: 18px 14px 14px; display: flex; gap: 12px; align-items: flex-start; }
+.tui-say-body p { font: 500 13px/1.55 var(--mono); color: var(--ink); margin: 0; }
+.tui-say-body p::before { content: "> "; color: var(--accent); }
+
+.tui-hint {
+  grid-column: 1 / -1;
+  font: 500 11px/1.5 var(--mono); color: var(--ink-3); letter-spacing: 0.06em;
+  padding: 2px 2px 0;
+}
+.tui-hint b { color: var(--ink-2); font-weight: 700; }
+
+@media (max-width: 1024px) {
+  .tui-body.v-mission { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+  .tui-body.v-mission .stage-cam, .tui-body.v-mission .tui-side { grid-column: 1; grid-row: auto; }
+  .tui-body.v-mission .stage-cam .stage-body { height: min(44dvh, 420px); flex: none; }
+}
+
+/* ---- control / sage / data / setup --------------------------------------- */
+
+.tui-body .drive, .tui-body .agent { flex: 1; min-height: 0; }
+.tui-body.v-control .drive { max-width: 760px; margin: 0 auto; width: 100%; }
+.tui-body.v-sage .agent { min-height: 0; }
+.tui-body.v-data .zone, .tui-body.v-setup .zone { min-height: 240px; }
+.tui-body.v-data .strip { display: contents; }
+.tui-body.v-data .reading { padding: 20px 14px 14px; }
+
+.setup-box { padding: 18px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+.setup-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.setup-row .serial-btn, .setup-row .btn { flex: 1 1 auto; }
+.setup-note { font: 500 11px/1.5 var(--mono); color: var(--ink-3); }
+
+/* ---- fpv: the new bars hide with the old ones ---- */
+.is-fpv .tui-status, .is-fpv .tui-nav, .is-fpv .tui-act { display: none; }
+.is-fpv .tui-body { display: block; padding: 0; overflow: hidden; }
+.is-fpv .tui-mission-verdict, .is-fpv .tui-side, .is-fpv .tui-hint { display: none; }
+
+/* ---- modals: square frames, no glass ---- */
+.blk-modal-frame, .modal, .tour-card { border-radius: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .st-link.is-off .st-dot, .tui-mission-verdict.is-abort .vd-lamp { animation: none; }
+}
+
+/* ---- corrections after the first pass on a real page ---------------------- */
+
+/* a pressed toggle was a solid white block (style.css); accent reads as "on"
+   everywhere else in here, so it does here too */
+.serial-btn[aria-pressed="true"], .btn[aria-pressed="true"] {
+  color: var(--accent); background: var(--accent-2); border-color: var(--accent);
+}
+.serial-btn.is-on, .chip.is-on { color: var(--accent); border-color: var(--accent); background: var(--accent-2); }
+.conn-seg-thumb { background: var(--accent); }
+.conn-seg button.is-active { color: var(--bg); }
+
+/* the drive pad is the one thing a client presses hard: give it real targets */
+.tui-body .pad-btn { min-height: 82px; border: 1px solid var(--line-2); background: var(--inset); font-size: 20px; }
+.tui-body .pad-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
+/* views fill the height instead of hugging the top */
+.tui-body.v-control, .tui-body.v-sage { grid-template-rows: minmax(0, 1fr); }
+.tui-body.v-data, .tui-body.v-setup { align-items: start; grid-auto-rows: minmax(160px, auto); }
+.tui-body.v-data .stage-3d { min-height: 320px; }
+.tui-body.v-data .logs, .tui-body.v-data .memory,
+.tui-body.v-setup .box, .tui-body.v-setup .logs, .tui-body.v-setup .serial { max-height: 60dvh; }
+.tui-body.v-data .reading { min-height: 0; }
+.tui-body.v-data .trend-cell { min-height: 200px; }
+
+/* MotorDebug is a bench grid that was sized for a full-width drawer */
+.tui-body .dbg { padding: 18px 14px 14px; }
+.tui-body .dbg-body { flex-direction: column; gap: 12px; }
+.tui-body .dbg-grid { flex: 1 1 auto; min-width: 0; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+
+/* the notch needs the page ground behind it wherever a box sits on a fill */
+.tui-mission-verdict + .stage-cam .zone-title { background: var(--bg); }

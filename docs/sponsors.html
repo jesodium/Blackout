@@ -11,9 +11,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
-/* IMPORTANT NOTE: tokens and the shared bits are copied from index.html, not imported —
-   index.html keeps its css inline, and one small page is cheaper to duplicate than to split
-   a stylesheet out of it. Change a token there, change it here. */
+
 :root{
   --bg:#0e0e10; --bg-2:#141416;
   --line:rgba(255,255,255,.09); --line-2:rgba(255,255,255,.18);
@@ -48,7 +46,6 @@ h1{font-weight:400;line-height:1.06;letter-spacing:.01em}
 header.page{padding:clamp(48px,9vh,96px) 0 clamp(24px,4vh,44px)}
 header.page h1{font-size:clamp(2rem,5vw,3.4rem);margin:12px 0 18px}
 
-/* ============ ranks ============ */
 .ranks{display:grid;gap:10px;padding-bottom:clamp(36px,6vh,64px)}
 .rank{--rank:var(--dim);
   border:1px solid var(--line);border-left:2px solid var(--rank);border-radius:12px;
@@ -63,7 +60,7 @@ header.page h1{font-size:clamp(2rem,5vw,3.4rem);margin:12px 0 18px}
 .rank .taken li{padding:8px 14px;font-size:12.5px;color:var(--ink);
   border:1px solid var(--line);border-radius:8px;height:max-content}
 .rank .taken li.open{color:var(--dim);border-style:dashed;background:transparent}
-/* logos keep their own white background — see the note in index.html */
+
 .rank .taken li img{height:40px;width:auto;border-radius:6px;filter:grayscale(1);opacity:.9}
 .rank .taken li a:hover img{filter:none;opacity:1}
 .rank .taken li a:hover{color:var(--accent)}
@@ -102,7 +99,7 @@ footer nav a:hover{color:var(--accent)}
   </div>
 </header>
 
-<!-- sponsor names come from sponsors.json (see sponsors.js) — add one there and both pages pick it up -->
+<!-- sponsor names come from sponsors.json via sponsors.js — add one there and both pages pick it up -->
 <div class="wrap">
   <div class="ranks">
     <article class="rank diamond">
@@ -153,8 +150,7 @@ footer nav a:hover{color:var(--accent)}
 
 <script src="sponsors.js"></script>
 <script>
-/* same flat [data-i18n] pass and the same 'blk-lang' key as index.html, minus the wipe —
-   this page has no animation to keep in sync, so a re-render is the whole switch. */
+
 const DICT = {
   en: {
     title: "Blackout · Sponsors",

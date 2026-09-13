@@ -1,0 +1,59 @@
+{
+  "sage_can_use": true,
+  "show_in_app": true,
+  "sage_ask_permission_for_this": true,
+  "steps": [
+    {
+      "ms": 0,
+      "cmd": "arm,4,100"
+    },
+    {
+      "ms": 82,
+      "cmd": "arm,4,0"
+    },
+    {
+      "ms": 870,
+      "cmd": "arm,4,100"
+    },
+    {
+      "ms": 908,
+      "cmd": "arm,4,100"
+    },
+    {
+      "ms": 1054,
+      "cmd": "arm,4,0"
+    },
+    {
+      "ms": 3201,
+      "cmd": "arm,4,-100"
+    },
+    {
+      "ms": 3299,
+      "cmd": "arm,4,0"
+    },
+    {
+      "ms": 4050,
+      "cmd": "arm,4,100"
+    },
+    {
+      "ms": 4150,
+      "cmd": "arm,4,0"
+    },
+    {
+      "ms": 5050,
+      "cmd": "arm,4,100"
+    },
+    {
+      "ms": 5171,
+      "cmd": "arm,4,0"
+    },
+    {
+      "ms": 5700,
+      "cmd": "arm,4,100"
+    },
+    {
+      "ms": 5821,
+      "cmd": "arm,4,0"
+    }
+  ]
+}

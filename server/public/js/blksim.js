@@ -1,13 +1,9 @@
-// blksim — toy rover physics so a .blk program can be run (and watched) without
-// the robot. open-loop like the real thing: timed bursts, no odometry, plus a
-// raycast "ultrasonic" so `dist` conditions actually mean something on screen.
-// IMPORTANT NOTE: kinematics are a guess (30 cm/s, 180 °/s at full pwm) — tune
-// SPEED_CMS/TURN_DPS against the bench once the real rover is measured.
+// offline rover sim for the blk editor
 
-export const ARENA = { w: 300, h: 220 }; // cm
-export const SPEED_CMS = 30;   // forward speed at pwm 255
-export const TURN_DPS = 180;   // spin rate at pwm 255
-export const MAX_RANGE = 200;  // ultrasonic ceiling, cm
+export const ARENA = { w: 300, h: 220 };
+export const SPEED_CMS = 30;
+export const TURN_DPS = 180;
+export const MAX_RANGE = 200;
 
 export const LAYOUTS = {
   corridor: [
@@ -26,30 +22,29 @@ export const LAYOUTS = {
 
 const inRect = (x, y, r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 
+// the rover is a point with a heading; walls are rectangles and dist is a ray cast
 export class Sim {
   constructor(layout = "cave") {
     this.layout = layout;
     this.reset();
   }
   reset() {
-    // copy: the arena gets edited by clicking, the layout constant must not
     this.obs = (LAYOUTS[this.layout] || LAYOUTS.cave).map(r => ({ ...r }));
-    this.x = 40; this.y = 110; this.th = 0; // th: degrees, 0 = +x
+    this.x = 40; this.y = 110; this.th = 0;
     this.trail = [[this.x, this.y]];
     this.bumps = 0;
-    this.t = 0; // sim ms elapsed
+    this.t = 0;
     this.env = { temp: 22, humid: 45, smoke: 0, airq: 120, co: 0, pressure: 1008 };
     this.led = 0;
   }
   setLayout(name) { this.layout = name; this.reset(); }
 
-  // click-to-edit arena: drop a 24 cm block, or clear the one under the pointer
   toggleObstacle(x, y) {
     const hit = this.obs.findIndex(r => inRect(x, y, r));
     if (hit >= 0) this.obs.splice(hit, 1);
     else this.obs.push({ x: x - 12, y: y - 12, w: 24, h: 24 });
   }
-  // drop the rover somewhere else (shift-click), keeping its heading
+
   place(x, y) {
     this.x = Math.max(6, Math.min(ARENA.w - 6, x));
     this.y = Math.max(6, Math.min(ARENA.h - 6, y));
@@ -61,7 +56,6 @@ export class Sim {
     return this.obs.some(r => inRect(x, y, r));
   }
 
-  // distance straight ahead, cm (marched, 2 cm resolution — plenty for `dist < 20`)
   range() {
     const rad = (this.th * Math.PI) / 180;
     for (let d = 2; d <= MAX_RANGE; d += 2) {
@@ -70,7 +64,6 @@ export class Sim {
     return MAX_RANGE;
   }
 
-  // advance `ms` of driving. verb: fwd|back|left|right|stop
   advance(verb, pwm, ms) {
     const k = Math.max(0, Math.min(255, pwm)) / 255;
     const dt = ms / 1000;
@@ -84,14 +77,13 @@ export class Sim {
     const rad = (this.th * Math.PI) / 180;
     const d = SPEED_CMS * k * dt * dir;
     const nx = this.x + Math.cos(rad) * d, ny = this.y + Math.sin(rad) * d;
-    if (this.blocked(nx, ny)) { this.bumps++; return; } // wall stops it dead
+    if (this.blocked(nx, ny)) { this.bumps++; return; }
     this.x = nx; this.y = ny;
     const last = this.trail[this.trail.length - 1];
     if (Math.hypot(nx - last[0], ny - last[1]) > 1.5) this.trail.push([nx, ny]);
     if (this.trail.length > 4000) this.trail.shift();
   }
 
-  // telemetry packet shaped exactly like the real one, so conditions behave the same
   sensors() {
     const jitter = (v, a) => +(v + (Math.random() - 0.5) * a).toFixed(1);
     return {
@@ -152,7 +144,7 @@ export class Sim {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    if (this.led > 0) { // headlamp cone
+    if (this.led > 0) {
       const g = ctx.createRadialGradient(this.x, this.y, 2, this.x, this.y, 60);
       g.addColorStop(0, `rgba(255,240,190,${(this.led / 255) * 0.35})`);
       g.addColorStop(1, "rgba(255,240,190,0)");

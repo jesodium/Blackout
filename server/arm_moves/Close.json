@@ -1,0 +1,19 @@
+{
+  "sage_can_use": true,
+  "show_in_app": true,
+  "sage_ask_permission_for_this": true,
+  "steps": [
+    {
+      "ms": 0,
+      "cmd": "arm,5,-100"
+    },
+    {
+      "ms": 570,
+      "cmd": "arm,5,-100"
+    },
+    {
+      "ms": 631,
+      "cmd": "arm,5,0"
+    }
+  ]
+}

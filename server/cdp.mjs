@@ -1,5 +1,5 @@
-// minimal CDP driver — the bit test-blk-editor.mjs does inline, pulled out so
-// record-blk.mjs (the landing page's editor recording) can reuse it.
+// minimal chrome devtools protocol client for the browser tests
+
 import WebSocket from "ws";
 const CDP = process.env.CDP || "http://localhost:9333";
 
