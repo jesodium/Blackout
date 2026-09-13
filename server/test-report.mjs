@@ -1,7 +1,5 @@
-// smoke test for the agent session report. the modal document and the .json
-// export come from one object, so this checks both read the same session.
-// same CDP pattern as test-fpv.mjs:
-//   PORT=3111 node server.js  +  chrome --headless=new --remote-debugging-port=9333
+// builds a session report over cdp and checks the rows and the download
+
 import WebSocket from "ws";
 const URL_PAGE = process.env.REPORT_URL || "http://localhost:3111/";
 const CDP = process.env.REPORT_CDP || "http://localhost:9333";
@@ -30,7 +28,6 @@ await send("Runtime.enable");
 await send("Page.enable");
 await sleep(2200);
 
-// seed a briefed session with findings + messages, then reload so the app picks it up
 await evaluate(`
   localStorage.setItem("chats", JSON.stringify([{
     id: "s1", title: "Cave sweep", mission: "Map the east tunnel and flag anything painted",
@@ -59,7 +56,6 @@ check("conversation shown", /narrow passage/.test(body));
 check("environment section shown", /Temp|Temperature|Distance/i.test(body), body.slice(0, 0));
 check("status section shown", /Entry Status|Estado de Entrada/i.test(body));
 
-// export: stub the anchor click and capture what would download
 const dl = await evaluate(`
   let got = null;
   const realClick = HTMLAnchorElement.prototype.click;
@@ -71,11 +67,11 @@ const dl = await evaluate(`
   return { name: got.name, text };`);
 check("export triggered a download", !!dl, dl?.name || "no anchor click");
 let json = null;
-try { json = JSON.parse(dl.text); } catch { /* handled by the check below */ }
+try { json = JSON.parse(dl.text); } catch {  }
 check("download is valid json", !!json);
 check("filename is a .blackout .json", /^blackout-cave-sweep-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.json$/.test(dl?.name || ""), dl?.name);
 check("json carries the mission", json?.session?.mission?.includes("east tunnel"));
-// live telemetry can add more while the page sits there — the seeded two must survive
+
 check("json carries findings", json?.findings?.length >= 2 && json.findings.some(f => f.text === "Smoke rising"), `${json?.findings?.length} findings`);
 check("json carries conversation", json?.conversation?.length === 2);
 check("json carries environment rows", json?.environment?.length === 5);

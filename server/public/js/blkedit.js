@@ -1,15 +1,3 @@
-// blk workflow editor — blocks view, text view, simulator, debugger, Sage.
-// the program tree is the single working copy; .blk text only materialises at
-// save/load/import/export/undo and when the text view is showing.
-//
-// TOUCH FIRST: dragging is built on pointer events, not the html5 drag-and-drop
-// api, which never fires on a touchscreen. every destructive action has a target
-// you can hit with a finger (select → action bar, or drag to the bin); keyboard
-// shortcuts are accelerators on top, never the only way in.
-//
-// IMPORTANT NOTE: ui-only flags (_collapsed/_bp) live on nodes, so undo (which
-// round-trips through text) forgets them. cheap trade, they're one tap back.
-
 import {
   NODE_META, SENSORS, CMPS, FLAGS, LIMITS, DEFAULT_PWM,
   parse, serialize, parseCond, parseExpr, condStr, exprStr,
@@ -19,7 +7,7 @@ import { Sim, LAYOUTS, ARENA } from "./blksim.js";
 import { icon, prefixIcon } from "./icons.mjs";
 
 const $ = (id) => document.getElementById(id);
-const bc = new BroadcastChannel("blk"); // nudges the console to refresh its list
+const bc = new BroadcastChannel("blk");
 const el = (tag, cls, txt) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -27,8 +15,7 @@ const el = (tag, cls, txt) => {
   return n;
 };
 
-/* ───────────────────────── templates ───────────────────────── */
-
+// ---- templates ----
 const TEMPLATES = {
   "Patrol + avoid": `speed 140
 say Starting patrol
@@ -97,15 +84,14 @@ end
 say Hottest reading was {best} degrees`,
 };
 
-/* ───────────────────────── state ───────────────────────── */
-
+// ---- editor state ----
 let program = parse(TEMPLATES["Patrol + avoid"]).program;
 let selected = null;
 let view = "blocks";
 let activeCat = "all";
 const undoStack = [], redoStack = [];
-const nodeEls = new Map(); // node -> element, for run highlighting
-const simHits = new Map(); // node -> times the last simulated run entered it
+const nodeEls = new Map();
+const simHits = new Map();
 const DRAFT = "blkDraft";
 
 const setStatus = (msg, cls = "", ico = "") => {
@@ -115,11 +101,8 @@ const setStatus = (msg, cls = "", ico = "") => {
   s.className = "blk-status " + cls;
 };
 
-/* ───────────────────────── undo / autosave ───────────────────────── */
-
 function snapshot() { return serialize(program); }
-// `base` is the text as of the last committed state — commit() runs *after* the
-// tree was mutated, so the undo entry has to be the text from before it.
+
 let base = snapshot();
 
 function commit(label) {
@@ -131,10 +114,10 @@ function commit(label) {
 function afterChange(label) {
   base = snapshot();
   render();
-  try { localStorage.setItem(DRAFT, JSON.stringify({ name: $("name").value, text: base, at: Date.now() })); } catch { /* quota */ }
+  try { localStorage.setItem(DRAFT, JSON.stringify({ name: $("name").value, text: base, at: Date.now() })); } catch {  }
   if (label) setStatus(label);
 }
-// wholesale swap (load, import, template, Sage, text view) — one undo step
+
 function replaceProgram(next, label) {
   undoStack.push(base);
   redoStack.length = 0;
@@ -157,8 +140,7 @@ function redo() {
   afterChange("redo");
 }
 
-/* ───────────────────────── tree helpers ───────────────────────── */
-
+// ---- tree edits ----
 const subLists = (n) => [n.body, n.elseBody].filter(Boolean);
 function findList(list, node) {
   for (const n of list) {
@@ -176,8 +158,6 @@ function ownsList(node, list) {
 }
 const clone = (n) => JSON.parse(JSON.stringify(n));
 
-// where a palette tap lands: inside an open container if one is selected,
-// else right after the selection, else at the end of the program
 function insertNode(node) {
   if (selected?.body && !selected._collapsed && selected !== node) {
     selected.body.push(node);
@@ -215,15 +195,11 @@ function moveNode(node, dir) {
   commit();
 }
 
-/* ───────────────────────── pointer drag ─────────────────────────
-   one code path for mouse, pen and finger. the block under the finger stays
-   put (dimmed) while a ghost follows the pointer; drop targets are hit-tested
-   with elementFromPoint, and every block element carries its node + list. */
-
+// ---- dragging ----
+// pointer events, not html5 drag-and-drop: that never fires on a touchscreen
 let drag = null;
 
 function attachDrag(head, opts) {
-  // opts: { node, list } for a canvas block, { factory } for a palette one
   head.addEventListener("pointerdown", (e) => {
     if (e.button > 0) return;
     const startX = e.clientX, startY = e.clientY;
@@ -241,7 +217,7 @@ function attachDrag(head, opts) {
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
       if (started) return dragEnd(ev);
-      // no movement = a tap: palette adds a block, canvas selects one
+
       if (opts.factory) insertNode(opts.factory());
       else { selected = opts.node; render(); }
     };
@@ -260,7 +236,7 @@ function dragStart({ node, factory }, head, ev) {
   document.body.appendChild(ghost);
   drag = { node, factory, ghost, offX: ev.clientX - r.left, offY: ev.clientY - r.top, target: null };
   if (node) head.parentElement.classList.add("is-drag");
-  $("trash").hidden = !node; // nothing to bin when the block came from the palette
+  $("trash").hidden = !node;
   dragMove(ev);
 }
 
@@ -277,7 +253,6 @@ function dragMove(ev) {
   clearMarks();
   drag.target = null;
 
-  // keep the canvas scrolling when the finger sits near an edge
   const cv = $("canvas"), cr = cv.getBoundingClientRect();
   if (ev.clientY < cr.top + 70) cv.scrollTop -= 14;
   else if (ev.clientY > cr.bottom - 70) cv.scrollTop += 14;
@@ -312,7 +287,7 @@ function dragEnd(ev) {
   d.ghost.remove();
   clearMarks();
   $("trash").hidden = true;
-  if (!d.target) return render(); // dropped nowhere — put it back
+  if (!d.target) return render();
   if (d.target.trash) return removeNode(d.node);
 
   const { list } = d.target;
@@ -320,8 +295,8 @@ function dragEnd(ev) {
   let node;
   if (d.factory) node = d.factory();
   else {
-    if (ownsList(d.node, list)) return render(); // can't drop a loop into itself
-    if (ev.altKey) node = clone(d.node);          // desktop shortcut: alt-drag copies
+    if (ownsList(d.node, list)) return render();
+    if (ev.altKey) node = clone(d.node);
     else {
       const src = findList(program, d.node);
       if (!src) return render();
@@ -336,9 +311,6 @@ function dragEnd(ev) {
   commit();
 }
 
-/* ───────────────────────── inputs ───────────────────────── */
-
-// interactive bits inside a block head must not start a drag
 const stopDrag = (n) => {
   n.addEventListener("pointerdown", (e) => e.stopPropagation());
   return n;
@@ -352,8 +324,7 @@ function inlineBtn(cls, txt, title, fn) {
   return b;
 }
 
-/* what each condition variable actually is, so the picker can't build nonsense
-   like "answer <= 20". unit + range also drive the number field. */
+// ---- block inputs ----
 const DEG = { unit: "°", min: -180, max: 360, def: 45 };
 const PPM = { unit: "ppm", min: 0, max: 1000, def: 300 };
 const VAR_SPEC = {
@@ -371,7 +342,6 @@ const VAR_SPEC = {
 const ANY = { unit: "", min: -1000000, max: 1000000, def: 1 };
 const varSpec = (name) => VAR_SPEC[name] || ANY;
 
-// variables the operator made with set/change — they belong in the picker too
 function userVars() {
   const out = new Set();
   const walk = (list) => {
@@ -397,31 +367,22 @@ function varOptions(cur) {
     + (known.includes(cur) ? "" : group("This program", [cur]));
 }
 
-// keep the three widgets consistent: swapping the variable fixes up the
-// comparator and the value instead of leaving the old ones behind
 function coerce(p, prevVar) {
   const spec = varSpec(p.v);
   if (spec.flag) return { v: p.v, cmp: ["=", "!="].includes(p.cmp) ? p.cmp : "=", n: p.n === 0 ? 0 : 1 };
   const cameFromFlag = varSpec(prevVar).flag;
   let n = cameFromFlag ? spec.def : p.n;
   if (n < spec.min || n > spec.max) n = spec.def;
-  // a reading is a moving number: "=" almost never fires, so coming off a
-  // yes/no flag lands on "<" rather than carrying the flag's "is"
+
   let cmp = CMPS.includes(p.cmp) ? p.cmp : "<";
   if (cameFromFlag) cmp = "<";
   return { v: p.v, cmp, n };
 }
 
-// simple `<sensor|var> <cmp> <number>` conditions get the 3-widget scratch look;
-// anything richer (and/or/not, math) — or one the operator forced open with ƒx —
-// falls back to an editable text field.
-// both shapes read as one row of widgets; for a 1/0 flag, `answer` alone reads
-// as "answer is yes"
 const simpleParts = (c) => (c.k === "cmp"
   ? { v: c.l.v, cmp: c.c, n: c.r.n }
   : varSpec(c.e.v).flag ? { v: c.e.v, cmp: "=", n: 1 } : { v: c.e.v, cmp: "!=", n: 0 });
-// a flag compared to anything but 0/1 (only the text view can write that) stays
-// in the text field — the picker never shows something the file doesn't say
+
 const isCoherent = (p) => !varSpec(p.v).flag || (["=", "!="].includes(p.cmp) && (p.n === 0 || p.n === 1));
 const isSimpleCond = (c) => !!c && !c._text
   && ((c.k === "cmp" && c.l?.v && c.r?.n != null) || (c.k === "truthy" && c.e?.v))
@@ -433,7 +394,7 @@ function condInputs(node, key) {
   if (isSimpleCond(cond)) {
     const p = simpleParts(cond);
     const spec = varSpec(p.v);
-    // editing any widget writes a plain comparison back, whatever shape it was
+
     const write = (patch, prevVar) => { const q = coerce(patch, prevVar); node[key] = { k: "cmp", c: q.cmp, l: { v: q.v }, r: { n: q.n } }; commit(); };
 
     const vs = stopDrag(el("select"));
@@ -442,7 +403,7 @@ function condInputs(node, key) {
     frag.appendChild(vs);
 
     const cs = stopDrag(el("select"));
-    // a 1/0 answer can only be "is" or "isn't" — the rest would always be true
+
     const cmps = spec.flag ? ["=", "!="] : CMPS;
     cs.innerHTML = cmps.map(o => `<option value="${o}"${o === p.cmp ? " selected" : ""}>${spec.flag ? (o === "=" ? "is" : "is not") : o}</option>`).join("");
     cs.onchange = () => write({ ...p, cmp: cs.value }, p.v);
@@ -492,7 +453,6 @@ const UNIT = { ms: "ms", pwm: "pwm", count: "times", led: "of 255" };
 function argInput(node, kind) {
   const frag = document.createDocumentFragment();
   if (typeof node.arg === "number") {
-    // −/+ either side of the field: typing a number on a tablet is the slow path
     const box = stopDrag(el("span", "stepper"));
     const num = el("input");
     num.type = "number";
@@ -554,8 +514,7 @@ function nameInput(node) {
   return txt;
 }
 
-/* ───────────────────────── block rendering ───────────────────────── */
-
+// ---- rendering ----
 function renderNode(node, list) {
   const meta = NODE_META[node.op] || { cat: "control", label: node.op };
   const wrap = el("div", `blk-node cat-${meta.cat}`);
@@ -581,8 +540,6 @@ function renderNode(node, list) {
   }
   head.appendChild(el("span", "lbl", meta.label));
 
-  // how many times the last simulated run went through this block — dead
-  // branches show up as the ones with no badge at all
   const hits = simHits.get(node);
   if (hits) head.appendChild(el("span", "hits", "×" + hits));
 
@@ -687,7 +644,6 @@ function render() {
   updateMeta();
 }
 
-/* the selection's toolbar — this is what replaces "press backspace" */
 function renderActionBar() {
   const bar = $("actionbar");
   if (!selected || view !== "blocks") { bar.hidden = true; return; }
@@ -697,7 +653,6 @@ function renderActionBar() {
   $("act-bp").classList.toggle("is-on", !!selected._bp);
 }
 
-/* lint + stats strip under the workspace */
 function updateMeta() {
   const warns = lint(program);
   $("meta").textContent = `${countNodes(program)} blocks · ~${fmtMs(estimate(program))} per pass`;
@@ -707,9 +662,7 @@ function updateMeta() {
   box.hidden = !warns.length;
 }
 
-/* ───────────────────────── palette ───────────────────────── */
-
-// one inline glyph per category ring — no icon font, no cdn (comp-day rule).
+// ---- palette ----
 const ICONS = {
   all:     '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>',
   motion:  '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>',
@@ -780,7 +733,7 @@ function buildCats() {
     const b = el("button", "cat-btn" + (activeCat === key ? " is-on" : ""));
     b.type = "button";
     const ring = el("span", "ring");
-    ring.innerHTML = ICONS[key]; // trusted, hard-coded markup — not user input
+    ring.innerHTML = ICONS[key];
     ring.style.background = color;
     b.appendChild(ring);
     b.appendChild(el("span", null, label));
@@ -825,20 +778,16 @@ function buildPalette(filter = "") {
   if (!box.children.length) box.appendChild(el("div", "blk-hint", "no blocks match"));
 }
 
-/* ───────────────────────── panels ───────────────────────── */
-
+// ---- drawers and sheets ----
 const narrow = (px) => window.matchMedia(`(max-width: ${px}px)`).matches;
 function setDrawer(which, open) {
-  // the run controls live in the rail: closing it while a run is going would
-  // leave a simulation nobody can see or stop, so close = stop.
   if (which === "rail" && !open && simRunning) stopSim();
   document.body.classList.toggle(which + "-open", open);
   $(which === "rail" ? "rail-toggle" : "palette-toggle").classList.toggle("is-on", open);
   if (which === "rail" && open) drawSim();
   syncScrim();
 }
-// hide after the .is-closing animation. reopening clears the class, which makes
-// the pending timeout a no-op — no need to track timers.
+
 function fadeOut(el) {
   if (el.hidden || el.classList.contains("is-closing")) return;
   el.classList.add("is-closing");
@@ -862,11 +811,9 @@ function closeSheets() {
   syncScrim();
 }
 
-/* ───────────────────────── views ───────────────────────── */
-
 function setView(v) {
   if (v === view) return;
-  if (view === "text" && !syncFromText()) return; // refuse to leave broken text
+  if (view === "text" && !syncFromText()) return;
   view = v;
   $("pane-blocks").hidden = v !== "blocks";
   $("pane-text").hidden = v !== "text";
@@ -883,7 +830,6 @@ function syncFromText() {
   return true;
 }
 
-// live lint while typing in the text view (doesn't touch the tree)
 let typeTimer;
 function onType() {
   clearTimeout(typeTimer);
@@ -897,15 +843,13 @@ function onType() {
   }, 250);
 }
 
-/* ───────────────────────── simulator + debugger ───────────────────────── */
-
+// ---- simulator ----
+// live telemetry replaces the fake sensors when the page can see a rover
 const sim = new Sim("cave");
 let simToken = 0, mySimToken = 0, simRunning = false;
 let simPaused = false, stepMode = false, simSpeed = 2;
 let simResume = null;
 
-// live telemetry: the rover still drives in the sim, but conditions can read the
-// real robot instead of the fake arena — handy for tuning thresholds on the bench.
 let livePacket = null, liveMode = false;
 if (window.io) {
   const sock = window.io();
@@ -916,7 +860,7 @@ if (window.io) {
   });
   sock.on("disconnect", () => { livePacket = null; $("live-dot").classList.remove("on"); });
 }
-// what the interpreter's conditions read
+
 const sensorSrc = () => (liveMode && livePacket ? livePacket : sim.sensors());
 
 const PAUSE_LABEL = icon("pause") + " Pause";
@@ -937,7 +881,6 @@ function drawSim() {
     `${liveMode && livePacket ? "LIVE " : ""}dist ${Math.round(s.dist)}cm · yaw ${s.yaw}° · temp ${s.temp}°C · smoke ${s.smoke} · bumps ${sim.bumps} · t ${(sim.t / 1000).toFixed(1)}s`;
 }
 
-// advance sim time in slices so motion animates and conditions stay live
 async function simAdvance(verb, pwm, ms) {
   const SLICE = 40;
   for (let done = 0; done < ms; done += SLICE) {
@@ -947,7 +890,7 @@ async function simAdvance(verb, pwm, ms) {
     sim.advance(verb, pwm, chunk);
     drawSim();
     if (simSpeed < 99) await realSleep(chunk / simSpeed);
-    else if (done % 400 === 0) await realSleep(0); // let the ui breathe at max speed
+    else if (done % 400 === 0) await realSleep(0);
   }
 }
 
@@ -1045,7 +988,7 @@ async function startSim() {
     if (simToken === my) { simToken++; mySimToken = simToken; }
     setSimRunning(false);
     for (const n of nodeEls.values()) n.classList.remove("is-live");
-    render(); // repaint with the hit counts from this run
+    render();
   }
 }
 
@@ -1059,14 +1002,13 @@ function stopSim() {
 }
 const toggleSim = () => (simRunning ? stopSim() : startSim());
 
-/* ───────────────────────── save / load ───────────────────────── */
-
+// ---- saved files ----
 async function refreshSaved(keep) {
   try {
     const { files } = await (await fetch("/api/blk")).json();
     $("saved").innerHTML = '<option value="">— saved —</option>' +
       files.map(f => `<option${f === keep ? " selected" : ""}>${f}</option>`).join("");
-  } catch { /* server offline — editor still works */ }
+  } catch {  }
 }
 
 async function save() {
@@ -1101,25 +1043,18 @@ function loadText(text, name, sourceLabel) {
   setStatus(errors.length ? "skipped bad lines:\n" + errors.join("\n") : sourceLabel, errors.length ? "is-err" : "is-ok");
 }
 
-/* ───────────────────────── Sage ───────────────────────── */
-
+// ---- sage chat ----
 const sageHist = [];
 let sagePending = false;
 const CODE_RE = /```(?:blk)?\s*\n([\s\S]*?)```/;
 
-/* saved chats. a chat belongs to the operator, not to a workflow, so it lives in
-   localStorage — no server round trip, and it survives a reload or a second tab.
-   the live chat rewrites its own entry after every exchange; picking an old one
-   restores its history, which is what gets sent back to Sage, so it continues.
-   IMPORTANT NOTE: browser-local and capped. move to ./workflows-style files if
-   chats ever need to follow the operator to another machine. */
 const CHATS = "blk.sage.chats";
-const CHAT_MAX = 20;   // chats kept, newest first
-const CHAT_MSGS = 40;  // messages kept per chat
+const CHAT_MAX = 20;
+const CHAT_MSGS = 40;
 let chatId = null;
 
 const readChats = () => { try { return JSON.parse(localStorage.getItem(CHATS)) || []; } catch { return []; } };
-const writeChats = (l) => { try { localStorage.setItem(CHATS, JSON.stringify(l.slice(0, CHAT_MAX))); } catch { /* full/private mode — chats just don't persist */ } };
+const writeChats = (l) => { try { localStorage.setItem(CHATS, JSON.stringify(l.slice(0, CHAT_MAX))); } catch {  } };
 
 function saveChat() {
   if (!sageHist.length) return;
@@ -1178,7 +1113,6 @@ function renderChats() {
   }
 }
 
-// crude line diff (common prefix/suffix) — enough to see what Sage changed
 function diffLines(a, b) {
   const A = a.split("\n"), B = b.split("\n");
   let s = 0;
@@ -1252,7 +1186,7 @@ async function sendSage(text) {
   sageHist.push({ role: "user", content: text });
   sagePending = true;
   $("sage-send").disabled = true;
-  showChats(false);   // sending from the chat list snaps back to the conversation
+  showChats(false);
   try {
     const r = await fetch("/api/blk-sage", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -1284,11 +1218,7 @@ function closeSage() {
   setTimeout(() => { m.hidden = true; m.classList.remove("is-closing"); }, 200);
 }
 
-/* ───────────────────────── clipboard ───────────────────────── */
-
-// blocks travel as .blk text, so a copy pastes into any editor (or a chat
-// message) and back. the system clipboard is best-effort — an iframe without
-// permission falls back to this in-page one.
+// ---- clipboard ----
 let clip = "";
 function copy() {
   if (!selected) return;
@@ -1301,7 +1231,7 @@ async function paste() {
   try {
     const sys = await navigator.clipboard?.readText();
     if (sys && !parse(sys).errors.length) text = sys;
-  } catch { /* no permission — use the in-page clipboard */ }
+  } catch {  }
   if (!text) return setStatus("clipboard is empty");
   const { program: p, errors } = parse(text);
   if (errors.length || !p.length) return setStatus("clipboard isn't blk", "is-err");
@@ -1309,14 +1239,12 @@ async function paste() {
   setStatus(`pasted ${p.length} block${p.length === 1 ? "" : "s"}`, "is-ok");
 }
 
-/* ───────────────────────── wiring ───────────────────────── */
-
 $("menu-btn").onclick = () => openSheet("files-sheet");
 $("files-close").onclick = closeSheets;
 $("scrim").onclick = closeSheets;
 
 $("save").onclick = save;
-// hand it straight to the console panel that owns the ble link — it runs it
+
 $("save-run").onclick = async () => {
   const warns = lint(program);
   if (warns.length && !confirm(`Lint says:\n\n${warns.join("\n")}\n\nRun it on the rover anyway?`)) return;
@@ -1351,7 +1279,7 @@ $("saved").onchange = async () => {
 };
 $("export").onclick = () => {
   if (view === "text" && !syncFromText()) return;
-  // desktop shell: native save sheet. storage stays /api/blk either way.
+
   if (window.blackout) {
     window.blackout.saveFile({
       defaultName: ($("name").value.trim() || "workflow") + ".blk",
@@ -1403,7 +1331,6 @@ $("code").oninput = onType;
 $("code").onblur = () => { if (view === "text") syncFromText(); };
 $("search").oninput = (e) => buildPalette(e.target.value);
 
-/* selection action bar — the touch replacement for delete/duplicate keys */
 $("act-up").onclick = () => selected && moveNode(selected, -1);
 $("act-down").onclick = () => selected && moveNode(selected, 1);
 $("act-dup").onclick = () => selected && duplicateNode(selected);
@@ -1439,7 +1366,7 @@ $("live-toggle").onchange = (e) => {
     : "conditions back on the simulated arena");
   drawSim();
 };
-// arena editing: tap drops or clears a wall, two-finger (or shift) tap moves the rover
+
 $("sim-canvas").addEventListener("pointerup", (e) => {
   const r = e.currentTarget.getBoundingClientRect();
   const x = ((e.clientX - r.left) / r.width) * ARENA.w;
@@ -1470,7 +1397,7 @@ $("sage-explain").onclick = () => openSage("Explain what this workflow does, ste
 $("sage-fix").onclick = () => openSage("Check this workflow for mistakes and safety problems, then give me a corrected version.");
 $("sage-improve").onclick = () => openSage("Improve this workflow — make it smarter and safer without changing what it's for.");
 
-/* keyboard — accelerators only, everything here is reachable by touch too */
+// ---- shortcuts + boot ----
 window.addEventListener("keydown", (e) => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
   const meta = e.metaKey || e.ctrlKey;
@@ -1498,18 +1425,16 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "ArrowDown" && e.altKey) { e.preventDefault(); return moveNode(selected, 1); }
 });
 
-/* boot */
 try {
   const d = JSON.parse(localStorage.getItem(DRAFT) || "null");
   if (d?.text && d.text !== serialize(program)) {
     program = parse(d.text).program;
-    base = snapshot(); // the restored draft is the starting point, not the template
+    base = snapshot();
     setName(d.name || "");
     setStatus("restored your unsaved draft" + (d.name ? ` ("${d.name}")` : ""), "is-ok");
   }
-} catch { /* no draft */ }
+} catch {  }
 
-// panels start open on a desktop-sized console, closed on a tablet
 document.body.classList.toggle("palette-open", !narrow(900));
 document.body.classList.toggle("rail-open", !narrow(1280));
 $("rail-toggle").classList.toggle("is-on", !narrow(1280));

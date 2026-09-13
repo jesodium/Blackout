@@ -24,20 +24,19 @@ profiles = [
     ('esp32-cam/main',      'esp32:esp32:esp32cam',          'wchusbserial','ESP32-CAM'),
 ]
 
-seen = set()
+# one line per PORT, not per sketch dir: two esp32-cams are two boards running
+# the same source, and de-duping on the dir is why only one of them ever got
+# flashed. the inner break still stops a port matching two profiles.
 for port_info in data.get('detected_ports', []):
     addr = port_info['port']['address']
     boards = port_info.get('matching_boards', []) or []
     detected_fqbns = {b['fqbn'] for b in boards}
     for d, fqbn, pattern, label in profiles:
-        if d in seen:
-            continue
         # trust a reported fqbn over the port-name guess: a uno r4 also shows up
         # on a usbmodem port, and the giga profile would otherwise swallow it.
         hit = fqbn in detected_fqbns if detected_fqbns else (pattern and pattern in addr)
         if hit:
             print(f'{d}|{fqbn}|{addr}|{label}')
-            seen.add(d)
             break
 "
 }
@@ -89,6 +88,41 @@ EOT
   fi
 }
 
+# Each ESP32-CAM sorts itself into a slot in CAM_CHIPS off its eFuse MAC, and
+# esptool prints that MAC on every upload — so a new board can be claimed straight
+# out of the upload log, with no serial read and no reset dance. The eFuse id is
+# the MAC's bytes reversed (it's read into a little-endian uint64), which is why
+# a1:b2:c3:d4:e5:f6 goes in as 0xf6e5d4c3b2a1.
+# CAM_CLAIM=0 to leave the table alone.
+INO="$ROOT/esp32-cam/main/main.ino"
+
+claim_cam() {
+  [[ "${CAM_CLAIM:-1}" == "0" ]] && return 1
+  local mac
+  # esptool pads this line out with spaces ("MAC:" then a column), so match any
+  # run of whitespace — a single-space pattern silently claimed nothing at all.
+  mac=$(grep -m1 -oiE '([0-9a-f]{2}:){5}[0-9a-f]{2}' "$log") || true
+  [[ -z "$mac" ]] && return 1
+  python3 - "$INO" "$mac" <<'EOT'
+import re, sys
+ino, mac = sys.argv[1], sys.argv[2]
+chip = "".join(reversed(mac.split(":")))
+src = open(ino).read()
+table = re.search(r"CAM_CHIPS\[\] = \{(.*?)\}", src, re.S)
+body = table.group(1)
+if chip in body.lower():
+    slot = [i for i, l in enumerate(body.strip().splitlines()) if chip in l.lower()][0] + 1
+    print(f"known|{slot}|{chip}")
+    sys.exit(0)
+if "0x000000000000ULL" not in body:
+    print(f"full||{chip}")
+    sys.exit(0)
+slot = [i for i, l in enumerate(body.strip().splitlines()) if "0x000000000000ULL" in l][0] + 1
+open(ino, "w").write(src.replace("0x000000000000ULL", f"0x{chip.upper()}ULL", 1))
+print(f"claimed|{slot}|{chip}")
+EOT
+}
+
 boards=$(detect_boards)
 if [[ -z "$boards" ]]; then
   echo "No boards found. Connect Giga R1 or ESP32-CAM." >&2
@@ -134,17 +168,48 @@ while IFS='|' read -r dir fqbn port label; do
     sleep 1
   fi
 
-  # Giga R1 re-enumerates after compile — get fresh port
-  fresh=$(detect_boards | grep "^$dir|" | head -1 | cut -d'|' -f3)
-  port="${fresh:-$port}"
+  # Giga R1 re-enumerates after compile, so its port can move under us. The cams
+  # do not — and two of them share $dir, so a `head -1` here handed cam 2 cam 1's
+  # port and flashed the same board twice while reporting both. Only go looking
+  # if the port we were handed has actually gone away.
+  fresh="$port"
+  if [[ ! -e "$port" ]]; then
+    fresh=$(detect_boards | grep "^$dir|" | grep -v "|$port|" | head -1 | cut -d'|' -f3)
+    port="${fresh:-$port}"
+  fi
 
   # one silent retry: the board is mid-re-enumeration often enough that the first
   # upload hits a port that existed a second ago. anything that fails twice is real.
   ( arduino-cli upload -p "$port" --fqbn "$fqbn" "$src" >"$log" 2>&1 ||
-    { sleep 2; port=$(detect_boards | grep "^$dir|" | head -1 | cut -d'|' -f3 || true)
+    { sleep 2; [[ -e "$port" ]] || port=$(detect_boards | grep "^$dir|" | head -1 | cut -d'|' -f3 || true)
       arduino-cli upload -p "${port:-$fresh}" --fqbn "$fqbn" "$src" >"$log" 2>&1; } ) &
   spin $! "  Upload → $port"
-  record "$dir" "$ref"
+
+  # the cams are told apart by chip, not by which cable they're on, so the key in
+  # .last-flash is the chip — otherwise flashing one cam marks both up to date.
+  chip=""
+  if [[ "$label" == "ESP32-CAM" ]]; then
+    IFS='|' read -r verdict slot chip <<<"$(claim_cam || echo '||')"
+    case "$verdict" in
+      known)
+        printf "     cam slot %s (%s)\n" "$slot" "$chip" ;;
+      claimed)
+        printf "  \033[33m✚\033[0m claimed cam slot %s for %s — reflashing so the board knows\n" "$slot" "$chip"
+        if ! ( arduino-cli compile --fqbn "$fqbn" "$src" >"$log" 2>&1 &&
+               arduino-cli upload -p "$port" --fqbn "$fqbn" "$src" >"$log" 2>&1 ); then
+          echo "  ⚠  slot written to main.ino but the reflash failed — hold GPIO0→GND, press RST, run ./flash.sh again" >&2
+        fi ;;
+      full)
+        echo "  ⚠  $chip is a third camera and CAM_CHIPS only has two slots — add one in main.ino" >&2 ;;
+      *)
+        # no verdict at all: the MAC never came out of the upload log, so this
+        # board is still unclaimed and will come up on DHCP with no static IP.
+        # Silence here is what made two unclaimed cams look like a clean run.
+        [[ "${CAM_CLAIM:-1}" == "0" ]] ||
+          echo "  ⚠  no MAC in the upload log — cam left UNCLAIMED (no static IP)" >&2 ;;
+    esac
+  fi
+  record "$dir${chip:+@$chip}" "$ref"
 done < "$boards_ts"
 
 printf "\n\033[32mDone — %s\033[0m\n" "$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo "?")"

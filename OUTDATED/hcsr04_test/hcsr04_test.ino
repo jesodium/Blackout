@@ -1,5 +1,5 @@
-#define TRIG 11
-#define ECHO 12
+#define TRIG 3
+#define ECHO 2
 
 void setup() {
   Serial.begin(9600);

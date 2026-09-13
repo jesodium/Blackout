@@ -1,6 +1,5 @@
-// screen-records the blk editor being used, for the landing page.
-// needs: PORT=3111 node server.js  +  a debuggable chrome on 9333 (see test-blk-editor.mjs)
-//   node record-blk.mjs   ->  /tmp/blkcast/*.jpg  ->  ffmpeg
+// drives the blk editor over cdp and records it
+
 import { open, sleep } from "./cdp.mjs";
 import fs from "fs";
 
@@ -14,7 +13,7 @@ await sleep(1200);
 await p.evaluate("localStorage.clear(); location.reload(); return 1").catch(() => {});
 await sleep(2200);
 
-// a visible cursor, so the recording reads as someone using it
+// a fake cursor, so the recording shows where the taps land
 await p.evaluate(`
   const c = document.createElement('div');
   c.id='__cur';
@@ -28,7 +27,6 @@ await p.evaluate(`
 
 const PTR = `const P=(el,type,x,y)=>{el.dispatchEvent(new PointerEvent(type,{bubbles:true,clientX:x,clientY:y,button:0,isPrimary:true,pointerId:1}));window.__cur(x,y,type!=='pointerup')};`;
 
-// glide the cursor to a point over `steps` frames
 const glide = (sel, nth = 0, dx = 40, dy = 0, steps = 18) => p.evaluate(`${PTR}
   const el=document.querySelectorAll('${sel}')[${nth}]; if(!el) return 0;
   const r=el.getBoundingClientRect(); const x1=r.left+${dx}, y1=r.top+r.height/2+${dy};
@@ -47,7 +45,6 @@ const tap = (sel, nth = 0, dx = 40) => p.evaluate(`${PTR}
   P(el,'pointerdown',x,y); await new Promise(r=>setTimeout(r,90)); P(window,'pointerup',x,y);
   return 1;`);
 
-// press on `from`, drag to `to` over `steps` frames, release
 const drag = (fromSel, nth, toSel, toNth = 0, dy = 0, steps = 22) => p.evaluate(`${PTR}
   const a=document.querySelectorAll('${fromSel}')[${nth}], b=document.querySelectorAll('${toSel}')[${toNth}];
   if(!a||!b) return 0;
@@ -64,7 +61,6 @@ const drag = (fromSel, nth, toSel, toNth = 0, dy = 0, steps = 22) => p.evaluate(
   await new Promise(r=>setTimeout(r,120));
   return 1;`);
 
-/* --- record --- */
 let n = 0;
 const frames = [];
 p.on((m) => {
@@ -77,12 +73,12 @@ p.on((m) => {
 await p.send("Page.startScreencast", { format: "jpeg", quality: 80, everyNthFrame: 1 });
 
 await sleep(700);
-// 1. drag a turn block in from the palette, under the first say
+
 await glide("#palette .blk-head", 2);
 await sleep(200);
 await drag("#palette .blk-head", 2, "#canvas .blk-head", 1, 24);
 await sleep(500);
-// 2. retype its duration
+
 await glide("#canvas input[type=number]", 1, 30);
 await p.evaluate(`
   const el=[...document.querySelectorAll('#canvas input[type=number]')][1];
@@ -91,13 +87,13 @@ await p.evaluate(`
   el.value="900"; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true}));
   el.blur(); return 1;`);
 await sleep(700);
-// 3. tap a block to select it — the action bar comes up
+
 await glide("#canvas .blk-head", 4);
 await tap("#canvas .blk-head", 4);
 await sleep(900);
-await tap("#canvas", 0, 700); // deselect
+await tap("#canvas", 0, 700);
 await sleep(400);
-// 4. run it in the simulator
+
 await glide("#sim-run", 0, 90);
 await sleep(200);
 await p.evaluate(`${PTR}

@@ -11,18 +11,64 @@ const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
-const { eyeParts, grabFrames, setLed, getLed, pingCam } = require("./vision");
-const { parseSage } = require("./sage");
+const { eyeParts, grabFrames, setFrameSource, setLed: visionSetLed, getLed, pingCam, setCamRot, camCount } = require("./vision");
+// One wrapper so every lamp change -- the slider, Sage, the dark ramp -- lands on
+// every dashboard's slider. The browser posts /api/led and hears its own echo back.
+const setLed = async (v) => { const r = await visionSetLed(v); io.emit("led", getLed()); return r; };
+const ledStrip = require("./ledstrip");
+const { parseSage, snapSummary, wantsTool, armMovesFor } = require("./sage");
 const recorder = require("./recorder");
 
-const openai = new OpenAI({
-  baseURL: "https://api.cerebras.ai/v1",
-  // "unset" keeps the client constructable with no key (fresh desktop install,
-  // no .env yet) — the dashboard must boot; Sage calls just fail with an auth
-  // error until a real key lands in settings.
-  apiKey: process.env.CEREBRAS_API_KEY || "unset",
-});
+// ---- brains ----
+// Cerebras only. The fallback chain (openrouter/groq/gemini/lmstudio) is gone —
+// four spare providers meant four sets of keys to keep alive for a venue with no
+// internet, and the one that answers fast is this one. Still a list, so chat()'s
+// retry pass is unchanged and a second brain is one line if it is ever wanted.
+// qwen puts a paragraph of thinking in front of every reply unless this is off;
+// gemma has no reasoning mode and 400s on the param, so it is per-model.
+const CEREBRAS_TUNE = (process.env.CEREBRAS_MODEL || "").startsWith("qwen") ? { reasoning_effort: "none" } : {};
+const BRAINS = [
+  ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "qwen-3.8-27b", CEREBRAS_TUNE],
+].filter(([, key]) => key).map(([name, key, baseURL, model, tune]) => ({ name, model, tune, baseURL, client: new OpenAI({ baseURL, apiKey: key, maxRetries: 0 }) }));
+const hasAI = BRAINS.length > 0;
 
+const BRAIN_DEAD = new Set([401, 402, 403, 404]);
+
+async function chat(params) {
+  // Cerebras 400s ("System message must be at the beginning") on the SECOND system
+  // message, which is exactly what langMsg() adds when the dashboard is in Spanish —
+  // so every es turn died with a bodyless 400. Fold them into one, here rather than at
+  // the four call sites, so a new prompt can't reintroduce it.
+  const sys = params.messages.filter((m) => m.role === "system");
+  if (sys.length > 1) params = { ...params, messages: [
+    { role: "system", content: sys.map((m) => m.content).join("\n\n") },
+    ...params.messages.filter((m) => m.role !== "system"),
+  ] };
+  let last;
+  for (let pass = 0; pass < 2; pass++) {
+    for (const b of BRAINS) {
+      // A brain dropped on an earlier call leaves nothing to throw, and the
+      // caller then reported "AI key not set" for a key that was set fine — a
+      // wrong CEREBRAS_MODEL read as a missing key for a whole session. Carry
+      // the reason it died.
+      if (b.dead) { last = last || b.deadErr; continue; }
+      if (pass && b.cooled) continue;
+      try { return await b.client.chat.completions.create({ model: b.model, ...b.tune, ...params }); }
+      catch (e) {
+        last = e;
+
+        if (e.status === 429) { b.cooled = true; console.error(`${b.name} rate-limited — skipping the retry pass`); continue; }
+        if (BRAIN_DEAD.has(e.status)) { b.dead = e.status; b.deadErr = new Error(`${b.name} (${b.model}) is out for this session: ${e.status} ${e.message}`); }
+        console.error(`${b.name} (${b.model}) failed:`, e.status || "", e.message, b.dead ? "— dropping it for this session" : "");
+      }
+    }
+    if (BRAINS.every((b) => b.dead)) break;
+    await new Promise((r) => setTimeout(r, 800));
+  }
+  throw last || new Error("AI key not set");
+}
+
+// ---- http + sockets ----
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -46,22 +92,17 @@ app.get("/api/ports", async (req, res) => {
   res.json({ ports, current: serialPort?.path || null });
 });
 
-// tts proxy. deepgram aura-2 when deepgram_api_key is
-// set, else falls back to microsoft edge neural voices (free).
-// lets <audio> play progressively.
+// ---- tts / stt ----
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const DG_RETRIES = parseInt(process.env.DEEPGRAM_RETRIES || "3", 10);
 
 async function speakDeepgram(text, res, voice = "en") {
-  // match model language to voice, else spanish gets spoken
-  // by an english model. override per-language via env.
   const isEs = voice.toLowerCase().startsWith("es");
   const model = isEs
-    ? process.env.DEEPGRAM_VOICE_ES || "aura-2-celeste-es"   // celeste — female, colombian; clearest aura-2 spanish. alts: estrella-es (mx), carina-es (es-ES)
-    : process.env.DEEPGRAM_VOICE || "aura-2-thalia-en";      // thalia (sage) — female. one fixed female voice; override via deepgram_voice
+    ? process.env.DEEPGRAM_VOICE_ES || "aura-2-celeste-es"
+    : process.env.DEEPGRAM_VOICE || "aura-2-thalia-en";
   const url = `https://api.deepgram.com/v1/speak?model=${model}&encoding=mp3`;
-  // retry the fetch (transient 429/5xx/network blips) before we start streaming —
-  // once audio is piping we can't retry. 4xx other than 429 is permanent, bail fast.
+
   let r, lastErr;
   for (let i = 0; i <= DG_RETRIES; i++) {
     try {
@@ -73,12 +114,12 @@ async function speakDeepgram(text, res, voice = "en") {
       if (r.ok && r.body) break;
       const body = await r.text().catch(() => "");
       lastErr = new Error(`Deepgram ${r.status}: ${body}`);
-      if (r.status < 500 && r.status !== 429) throw lastErr; // permanent (401/402/400) — don't retry, fall back now
+      if (r.status < 500 && r.status !== 429) throw lastErr;
     } catch (e) {
-      if (e === lastErr) throw e; // permanent error — stop, let caller fall back to edge
-      lastErr = e;               // network/transient error — keep retrying
+      if (e === lastErr) throw e;
+      lastErr = e;
     }
-    if (i < DG_RETRIES) await sleep(250 * (i + 1)); // 250/500/750ms backoff
+    if (i < DG_RETRIES) await sleep(250 * (i + 1));
   }
   if (!r || !r.ok || !r.body) throw lastErr || new Error("Deepgram failed");
   res.setHeader("Content-Type", "audio/mpeg");
@@ -89,14 +130,18 @@ async function speakEdge(text, voice, res) {
   const tts = new MsEdgeTTS();
   await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
   res.setHeader("Content-Type", "audio/mpeg");
-  tts.toStream(text).audioStream.on("error", () => res.destroy()).pipe(res);
+  // She reads a touch fast on purpose: a presentation tape now WAITS for each
+  // line to finish before the next step fires, so every spoken second is a
+  // second the arm is standing still. TTS_RATE is the knob (SSML relative %).
+  tts.toStream(text, { rate: process.env.TTS_RATE || "+12%" })
+    .audioStream.on("error", () => res.destroy()).pipe(res);
 }
 
 async function ttsHandler(req, res) {
   const src = req.method === "GET" ? req.query : req.body;
   const voice = src?.voice || process.env.TTS_VOICE || "en-US-AndrewNeural";
   const text = (src?.text || "").trim();
-  const provider = src?.provider || "auto"; // "edge", "deepgram", or "auto"
+  const provider = src?.provider || "auto";
   if (!text) return res.status(400).json({ error: "text required" });
   try {
     const wantDeep = provider === "deepgram" || (provider === "auto" && process.env.DEEPGRAM_API_KEY && (voice.startsWith("en") || voice.startsWith("es")));
@@ -112,48 +157,67 @@ async function ttsHandler(req, res) {
 app.get("/api/tts", ttsHandler);
 app.post("/api/tts", ttsHandler);
 
+app.post("/api/stt", express.raw({ type: "audio/*", limit: "10mb" }), async (req, res) => {
+  if (!process.env.DEEPGRAM_API_KEY) return res.status(503).json({ error: "no DEEPGRAM_API_KEY" });
+  const lang = String(req.query.lang || "en").slice(0, 2);
+  const model = process.env.DEEPGRAM_STT_MODEL || "nova-2";
+  try {
+    const r = await fetch(`https://api.deepgram.com/v1/listen?model=${model}&smart_format=true&language=${lang}`, {
+      method: "POST",
+      headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`, "Content-Type": req.get("content-type") || "audio/webm" },
+      body: req.body,
+    });
+    if (!r.ok) throw new Error(`Deepgram ${r.status}: ${await r.text().catch(() => "")}`);
+    const j = await r.json();
+    res.json({ text: j.results?.channels?.[0]?.alternatives?.[0]?.transcript || "" });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 app.get("/api/tts/providers", (req, res) => {
   res.json({ edge: true, deepgram: !!process.env.DEEPGRAM_API_KEY });
 });
 
-// ask-questions mode: operator chats with sage. client sends the running
-// message array (no server-side history); we prepend persona + live telemetry.
 app.post("/api/chat", async (req, res) => {
-  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  if (!hasAI) return res.status(503).json({ error: "AI key not set" });
   const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-12) : [];
   if (!msgs.length) return res.status(400).json({ error: "messages required" });
   const lang = LANG_INSTRUCT[req.body?.lang] ? req.body.lang : "en";
+
+  const moves = req.body?.moves !== false;
+  // CONSOLE -> SAGE LAMP. Off, she can talk about the light but never writes it:
+  // she reached for it every other turn and the operator lost the level they set.
+  // The word check is the "SAGE, brighten the lamp" escape hatch, so the toggle
+  // stays off for the whole run. The black-frame ramp is not this and is
+  // unaffected.
+  if (typeof req.body?.lamp === "boolean") lampAllowed = req.body.lamp;
+  const lastSaid = String(msgs[msgs.length - 1]?.content || "");
+  const lamp = lampAllowed || LAMP_ASKED.test(lastSaid);
   try {
     const d = freshData();
     const ctx = d ? buildChatContext(d) : "No live readings right now — running dark.";
     const mapped = msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }));
-    // attach the live cam frame to the operator's latest turn so gemma sees it.
-    const eyes = await eyeParts();
-    if (eyes.length && mapped.length) {
-      const last = mapped[mapped.length - 1];
-      last.content = [{ type: "text", text: last.content + "\n(Attached is your live forward-camera view.)" }, ...eyes];
-    }
-    const sage = await askSage([
+
+    const { reply, steps } = await agentLoop([
       { role: "system", content: CHAT_SYSTEM },
       ...langMsg(lang),
       { role: "system", content: ctx },
+      ...(moves ? armLine() : []),
+      ...(moves ? tapeLine() : []),
+      ...(moves ? [] : [{ role: "system", content: "MOVE LOCK: your drive, your arm and the runs the crew recorded are all locked out right now — say so in your own words as a scout would (\"I'm parked until the crew unlocks me\"), never by naming these fields. Never offer to move, and never set \"move\", \"arm\" or \"tape\" this turn." }]),
+      ...(lamp ? [] : [{ role: "system", content: "LAMP LOCK: your headlamp is held where the crew left it this turn. Set \"led\" to null whatever you think of the light, and don't mention the lamp unless they bring it up." }]),
+      ...camLine(),
       ...mapped,
-    ], { maxTokens: 400 });
-    res.json({ reply: sage });
+    ], { maxTokens: 400, confirm: req.body?.confirm === true, lamp });
+    if (!moves && reply) { reply.move = null; reply.arm = null; reply.tape = null; }
+    res.json({ reply, steps });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// take a look: sage asked for a fresh view (action:"analyze"). grabs a still and
-// lets sage narrate what it sees. same json reply shape as /api/chat.
-// the camera is fixed forward — it used to ride a pin-9 servo and this grabbed
-// several stills across a slow pan, hence the frame-count arg below.
 app.post("/api/scan", async (req, res) => {
-  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  if (!hasAI) return res.status(503).json({ error: "AI key not set" });
   try {
-    // 1 frame: the view no longer moves, so extra stills would be the same picture
-    // at more base64 bytes — and 4 svga stills blow past cerebras' request cap (413).
     const frames = await grabFrames(1);
     const d = freshData();
     const ctx = d ? buildChatContext(d) : "No live readings right now — running dark.";
@@ -172,37 +236,22 @@ app.post("/api/scan", async (req, res) => {
   }
 });
 
-// elevation from the bme280's pressure — same barometric formula Adafruit's
-// readAltitude() runs, derived here so the reference is a knob, not a reflash.
-// the reference defaults to the FIRST valid reading, so the tile reads elevation
-// *relative to where the rover started*: metres climbed/descended, self-zeroing at
-// any venue. that's the number a rover in a cave needs, and 1013.25 was flat wrong
-// anywhere the day's QNH differed (it read tens of metres off, often negative).
-// set SEA_LEVEL_HPA (venue QNH) to get true height above sea level instead.
-// IMPORTANT NOTE: pressure 0 means no bme wired, not sea level — no reading, not 0m.
-//
-// the zero LEAKS toward ambient (REF_TAU). a fixed zero looks broken over a session
-// and it isn't the code: the weather moves the air 1-2 hPa an hour, which the same
-// formula reads as 8-17 m of climbing while the rover sits still. leaking the
-// reference is a high-pass — anything slower than REF_TAU is absorbed as weather,
-// anything faster than it shows. a ramp takes seconds, so it lands well inside.
-// IMPORTANT NOTE: the cost is that a HELD height decays to 0 over ~REF_TAU, and
-// ~1m of instantaneous noise is the bme's own, not fixable here. sub-metre absolute
-// height needs a different sensor (tof/sonar to the floor), not a better filter.
-const REF_TAU = +process.env.REF_TAU_S || 300; // s. shorter = flatter but forgets a climb sooner.
-const absRef = !!process.env.SEA_LEVEL_HPA; // an explicit QNH is absolute — never leak it
+// ---- telemetry ----
+// elevation comes off the bme's pressure. the reference leaks toward ambient (REF_TAU) or
+// the day's weather reads as tens of metres of climbing while the rover sits still.
+const REF_TAU = +process.env.REF_TAU_S || 300;
+const absRef = !!process.env.SEA_LEVEL_HPA;
 let refHPa = absRef ? parseFloat(process.env.SEA_LEVEL_HPA) : null;
 let refT = 0;
 const altitudeM = (hPa) => {
   if (!(hPa > 0)) return 0;
   const now = Date.now();
-  if (refHPa == null) refHPa = hPa;  // first reading is the zero
+  if (refHPa == null) refHPa = hPa;
   else if (!absRef) refHPa += (hPa - refHPa) * (1 - Math.exp(-(now - refT) / 1000 / REF_TAU));
   refT = now;
   return 44330 * (1 - Math.pow(hPa / refHPa, 1 / 5.255));
 };
 
-// process a raw line: emit to serial monitor, parse "S:" telemetry for dashboard.
 function processLine(raw) {
   const line = raw.trim();
   if (!line) return;
@@ -222,33 +271,26 @@ function processLine(raw) {
     co: parts.length > 8 ? parseFloat(parts[8]) : 0,
     co_alert: parts.length > 9 ? parts[9].trim() === "1" : false,
     pressure: parts.length > 10 ? parseFloat(parts[10]) : 0,
-    // board says whether a motion routine is running. absent on older firmware —
-    // false keeps auto-analysis behaving as before.
     routine: parts.length > 11 ? parts[11].trim() === "1" : false,
-    // bh1750 ambient light. parsed so runs record it; nothing displays it yet.
-    lux: parts.length > 12 ? parseFloat(parts[12]) : 0,
+    lux: parts.length > 12 ? parseFloat(parts[12]) : null,
     timestamp: Date.now(),
   };
-  // derived, not a csv field. 2dp = cm resolution, which the dashboard's cm view reads.
+
   data.alt = Math.round(altitudeM(data.pressure) * 100) / 100;
   latestData = data;
   dataHistory.push(data);
   if (dataHistory.length > 1000) dataHistory.shift();
-  recorder.push(data); // no-op unless a run is being recorded
+  recorder.push(data);
   io.emit("sensor-data", data);
   maybeAutoAnalyze(data);
   pushHud(data);
 }
 
-// pipe a readline parser onto a port.
 function attachParser(sp) {
   const parser = sp.pipe(new ReadlineParser({ delimiter: "\n" }));
   parser.on("data", (raw) => processLine(raw));
 }
 
-// sensor data pushed over http — the r4 wifi's ble notify data arrives via the
-// browser's own web bluetooth (no server-side native bt lib), which forwards
-// each line here. also usable directly over wifi if a board posts here itself.
 app.post("/api/mega/sensor", (req, res) => {
   let raw = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
   if (!raw || !raw.length) return res.status(400).json({ error: "empty" });
@@ -257,12 +299,9 @@ app.post("/api/mega/sensor", (req, res) => {
   res.json({ ok: true, lines: lines.length });
 });
 
-// --- mission recordings: telemetry + cam stills, played back in the dashboard ---
-// not gated behind mirror-mode grant: recording touches nothing on the robot.
 app.use("/recordings", express.static(recorder.DIR));
 app.get("/api/rec", (req, res) => res.json({ now: recorder.state(), runs: recorder.list() }));
-// no cam, no recording — a run with no video is a scrubber over a black screen,
-// and the operator finds out after the run instead of before it.
+
 app.post("/api/rec/start", async (req, res) => {
   if (!(await pingCam())) return res.status(503).json({ error: "camera offline — nothing to record" });
   res.json({ now: recorder.start(req.body?.name) });
@@ -277,15 +316,16 @@ app.get("/api/rec/:id", (req, res) => {
 });
 app.delete("/api/rec/:id", (req, res) => res.json({ ok: recorder.remove(req.params.id) }));
 
-// --- bluetooth "bridge" intent flag ---
-// the actual ble connection lives in the browser (web bluetooth). these just
-// track intent server-side so usb serial and bt stay mutually exclusive.
 let bleActive = false;
 
-app.get("/api/bridge", (req, res) => res.json({ running: bleActive, last: "" }));
+// The giga reads the same command strings off usb that it reads off BLE
+// (Serial.readStringUntil in loop()), so the cable is a second transport and
+// nothing downstream learns a second shape. The \n is the terminator it waits for.
+const usbWrite = (w) => { if (serialPort?.isOpen) serialPort.write(w + "\n"); };
 
-// the laptop's lan address, so the judges' tablet can be pointed at this dashboard
-// without anyone opening a terminal. first non-internal ipv4 — on a hotspot that's the only one.
+app.get("/api/bridge", (req, res) =>
+  res.json({ running: bleActive || !!serialPort?.isOpen, usb: !!serialPort?.isOpen, last: "" }));
+
 const lanIp = () => Object.values(os.networkInterfaces()).flat()
   .find(i => i.family === "IPv4" && !i.internal)?.address;
 
@@ -294,12 +334,7 @@ app.get("/api/lan", (req, res) => {
   res.json({ url: ip ? `http://${ip}:${PORT}` : null, host: `http://blackout.local:${PORT}` });
 });
 
-// cloud reachability for the dashboard's pills. the venue has no internet and both of
-// these fail silently without it. a 401/404 still means the host answered — only a thrown
-// request counts as unreachable. cached, because every dashboard on the lan polls it.
-// the api roots, not real endpoints: the question is only whether the host answers at
-// all. an authenticated path hangs for an unauthenticated probe and reads as "offline".
-const CLOUD_HOSTS = { sage: "https://api.cerebras.ai/", tts: "https://api.deepgram.com/" };
+const CLOUD_HOSTS = { sage: BRAINS[0] ? new URL(BRAINS[0].baseURL).origin + "/" : "https://api.cerebras.ai/", tts: "https://api.deepgram.com/" };
 let cloudSeen = { at: 0, state: null };
 app.get("/api/cloud", async (_req, res) => {
   if (cloudSeen.state && Date.now() - cloudSeen.at < 25000) return res.json(cloudSeen.state);
@@ -313,20 +348,140 @@ app.get("/api/cloud", async (_req, res) => {
 });
 
 app.post("/api/bridge/start", (req, res) => {
-  disconnectSerial(); // close usb when bt takes over
+  // one link at a time: the board answers both, but two centrals writing at once
+  // is two operators on one stick.
+  if (req.body?.usb) {
+    bleActive = false;
+    connectSerial(req.body.port, (err) => res.json(err ? { error: err.message } : { ok: true, usb: true }));
+    return;
+  }
+  disconnectSerial();
   bleActive = true;
   res.json({ ok: true });
 });
 
 app.post("/api/bridge/stop", (req, res) => {
   bleActive = false;
+  disconnectSerial();
   res.json({ ok: true });
 });
 
-// --- blk workflows: plain .blk text files in ./workflows, name comes from url ---
+// ---- arm moves ----
+// Recorded on the bench by armrec.py (python3 server/armrec.py) and replayed by
+// the dashboard as one tap per move — the arrows and hold sliders are the thing
+// that overdrives a joint, so the overdriving happens once, here, off-line.
+// Read-only: recording needs the usb cable, which the dashboard does not have.
+// One file per take in arm_moves/, filename = the move's name: a take can be
+// opened, diffed, copied to another rig or deleted in Finder without the
+// recorder running, and there is no index file to fall out of step with it.
+const ARM_DIR = path.join(__dirname, "arm_moves");
+
+// arm takes and tapes are the same file in two folders — a name, a list of
+// {ms, cmd} steps and the two flags — so one reader and one filter (armMovesFor)
+// serve both. Nothing caches: the folder IS the index.
+function readTakes(dir) {
+  const out = {};
+  let files;
+  try { files = fs.readdirSync(dir).sort(); }
+  catch { return out; }              // no folder yet = no moves, not a 500
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    try { out[f.slice(0, -5)] = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")); }
+    catch { }                        // a half-written take is skipped, not fatal
+  }
+  return out;
+}
+const readArmMoves = () => readTakes(ARM_DIR);
+
+app.get("/api/arm-moves", (req, res) => res.json(armMovesFor(readArmMoves(), "show_in_app")));
+
+// The takes are the whole of Sage's arm, so the list goes into her prompt from
+// the file rather than being written into chat.md — record one in
+// arm-configurator.sh and she can ask for it on the next turn, no edit anywhere.
+function armLine() {
+  const names = Object.keys(armMovesFor(readArmMoves(), "sage_can_use"));
+  return [{ role: "system", content: names.length
+    ? `ARM MOVES the crew recorded — these names, exactly as written, are the only arm moves you can ask for: ${names.map((n) => `"${n}"`).join(", ")}.`
+    : "ARM: nothing has been recorded yet, so you have no arm moves at all. Never set \"arm\", and tell the operator there is nothing recorded if they ask for it." }];
+}
+
+// ---- tapes ----
+// A whole manual run written down: every command the dashboard puts on the wire,
+// with its gaps, plus PC-side "@" events (say/analyze/log/led) the operator adds
+// by hand afterwards. Same {ms, cmd} shape as an arm take, so the arm player
+// replays it and drive + arm live in one list. One file per tape, filename = the
+// name — no index to fall out of step with it, editable in any text editor.
+// NOT giga-r1/main/routines.h: those are Step tables compiled into flash and
+// they have no arm op. A tape runs from the PC, which is also the only place
+// analyze/say exist at all.
+const TAPE_DIR = path.join(__dirname, "tapes");
+fs.mkdirSync(TAPE_DIR, { recursive: true });
+
+const tapePath = (name) => {
+  const safe = String(name).replace(/[^a-z0-9 _-]/gi, "").trim().slice(0, 60);
+  return safe ? path.join(TAPE_DIR, safe + ".json") : null;
+};
+
+app.get("/api/tapes", (req, res) => res.json({
+  files: fs.readdirSync(TAPE_DIR).filter(f => f.endsWith(".json")).map(f => f.slice(0, -5)).sort(),
+}));
+
+// The same two flags an arm take carries, read by the same filter: a debug tape
+// is exactly what should not be in Sage's hands during a presentation. There is
+// no toggle in the drawer — the file is the editor, so it is a line of json.
+// `sage_can_use` defaults to true (a bare take counts everywhere), same as arm.
+const sageTapes = () => armMovesFor(readTakes(TAPE_DIR), "sage_can_use");
+
+function tapeLine() {
+  const names = Object.keys(sageTapes());
+  return [{ role: "system", content: names.length
+    ? `RECORDED RUNS the crew drove and kept — these names, exactly as written, are the only runs you can ask to play: ${names.map((n) => `"${n}"`).join(", ")}.`
+    : "RECORDED RUNS: nothing has been recorded, so you have none. Never set \"tape\"." }];
+}
+
+app.get("/api/tapes/:name", (req, res) => {
+  const p = tapePath(req.params.name);
+  if (!p || !fs.existsSync(p)) return res.status(404).json({ error: "not found" });
+  res.type("application/json").send(fs.readFileSync(p, "utf8"));
+});
+
+app.post("/api/tapes/:name", (req, res) => {
+  const p = tapePath(req.params.name);
+  if (!p) return res.status(400).json({ error: "bad name" });
+  const steps = req.body?.steps;
+  // hand-edited json arrives here, so the shape is checked before it can be
+  // saved as a tape the operator will later press play on
+  if (!Array.isArray(steps) || steps.length > 5000) return res.status(400).json({ error: "steps must be an array (max 5000)" });
+  for (const s of steps) {
+    if (!s || !Number.isFinite(s.ms) || s.ms < 0 || typeof s.cmd !== "string" || !s.cmd)
+      return res.status(400).json({ error: "every step needs {ms: number >= 0, cmd: string}" });
+  }
+  const flags = {};
+  for (const k of ["sage_can_use", "show_in_app"]) if (typeof req.body[k] === "boolean") flags[k] = req.body[k];
+  fs.writeFileSync(p, JSON.stringify({ steps, ...flags }, null, 2));
+  res.json({ ok: true });
+});
+
+app.delete("/api/tapes/:name", (req, res) => {
+  const p = tapePath(req.params.name);
+  if (!p || !fs.existsSync(p)) return res.status(404).json({ error: "not found" });
+  fs.unlinkSync(p);
+  res.json({ ok: true });
+});
+
+// A rig with one camera in CAM_URL has no gripper eye, and chat.md hands her the
+// "armcam" tool either way -- so tell her, or she reaches for it and reports her
+// gripper view as dark. Once, though: repeating it every turn is how it ends up
+// in an answer nobody asked for.
+function camLine() {
+  return camCount > 1 ? [] : [{ role: "system", content:
+    "NO GRIPPER EYE: this rig has only the forward camera. Never set \"tool\" to \"armcam\". If the operator asks about the arm camera, say once, plainly, that you have no eye down on the arm — then drop it and never mention it again." }];
+}
+
+// ---- workflows ----
 const BLK_DIR = path.join(__dirname, "workflows");
 fs.mkdirSync(BLK_DIR, { recursive: true });
-// sanitized name -> path, null if nothing safe remains (also kills traversal)
+
 function blkPath(name) {
   const safe = String(name).replace(/[^a-z0-9 _-]/gi, "").trim().slice(0, 60);
   return safe ? path.join(BLK_DIR, safe + ".blk") : null;
@@ -358,12 +513,6 @@ app.delete("/api/blk/:name", (req, res) => {
   res.json({ ok: true });
 });
 
-// sage as workflow author: editor chats here, sage replies with prose + one
-// fenced blk program. plain text reply — not the json persona used elsewhere.
-// own path (not /api/blk/:name) so it can't collide with a workflow's name.
-// no client-picked mode — sage reads the operator's message itself and decides
-// whether it's a write/explain/fix/improve job. `program` is whatever is on
-// the editor canvas right now, so "add a turn at the end" has something to add to.
 const BLK_SAGE_JOB =
   "Read the operator's message and the current program (if any) and figure out what job this is: " +
   "writing or changing a workflow, explaining one, auditing it for mistakes, or improving it. Then do that job. " +
@@ -372,7 +521,7 @@ const BLK_SAGE_JOB =
   "If they want mistakes found or the program improved, say what's wrong or what you changed in a couple of lines, then give the corrected/improved complete program.";
 
 app.post("/api/blk-sage", async (req, res) => {
-  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  if (!hasAI) return res.status(503).json({ error: "AI key not set" });
   const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-20) : [];
   if (!msgs.length) return res.status(400).json({ error: "messages required" });
   const program = String(req.body?.program || "").slice(0, 8000);
@@ -383,11 +532,11 @@ app.post("/api/blk-sage", async (req, res) => {
     }
     const d = freshData();
     if (d) ctx.push({ role: "system", content: `Live readings right now (useful for picking thresholds):\n${readingLines(d)}` });
-    const resp = await openai.chat.completions.create({
-      model: process.env.CEREBRAS_MODEL || "gemma-4-31b",
+    const resp = await chat({
       messages: [
         { role: "system", content: BLK_SYSTEM },
         ...ctx,
+        ...langMsg(currentLanguage),
         ...msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") })),
       ],
       max_tokens: 900,
@@ -398,15 +547,12 @@ app.post("/api/blk-sage", async (req, res) => {
   }
 });
 
-// yes/no judgement for the blk `ask` and `find` ops. one shared helper: both
-// want a decision the program can branch on, not prose, so the model is pinned
-// to a tiny json shape and anything unparseable reads as "no".
 async function sageDecide(question, { images = [], extra = "" } = {}) {
   const text = `${question}\n\n${extra}\nAnswer with JSON only: {"yes": true|false, "why": "<one short sentence>"}`;
-  const resp = await openai.chat.completions.create({
-    model: process.env.CEREBRAS_MODEL || "gemma-4-31b",
+  const resp = await chat({
     messages: [
       { role: "system", content: CHAT_SYSTEM },
+      ...langMsg(currentLanguage),
       { role: "system", content: "In this turn you are making a yes/no call for a running workflow. Reply with the JSON object and nothing else." },
       { role: "user", content: images.length ? [{ type: "text", text }, ...images] : text },
     ],
@@ -422,13 +568,11 @@ async function sageDecide(question, { images = [], extra = "" } = {}) {
   }
 }
 
-// `ask <question>` — judged from telemetry (+ the live view when there is one).
 app.post("/api/blk-ask", async (req, res) => {
-  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  if (!hasAI) return res.status(503).json({ error: "AI key not set" });
   const question = String(req.body?.question || "").trim().slice(0, 400);
   if (!question) return res.status(400).json({ error: "question required" });
   try {
-    // the simulator has no camera and its own fake telemetry — take what it sends
     const sim = !!req.body?.sim;
     const d = sim ? req.body.telemetry : freshData();
     const images = sim ? [] : await eyeParts();
@@ -442,10 +586,8 @@ app.post("/api/blk-ask", async (req, res) => {
   }
 });
 
-// `find <thing>` — camera-backed: is that thing in view right now? a hit is
-// logged to the analysis panel like any other discovery.
 app.post("/api/blk-find", async (req, res) => {
-  if (!process.env.CEREBRAS_API_KEY) return res.status(503).json({ error: "AI key not set" });
+  if (!hasAI) return res.status(503).json({ error: "AI key not set" });
   const thing = String(req.body?.thing || "").trim().slice(0, 200);
   if (!thing) return res.status(400).json({ error: "thing required" });
   try {
@@ -461,7 +603,54 @@ app.post("/api/blk-find", async (req, res) => {
   }
 });
 
-// headlamp from a workflow's `led` step (0-255). fire-and-forget on the cam side.
+// ---- a tape's spoken lines ----
+// A presentation read off a script is the same words every run, and it sounds
+// like it. A tape's "@sage <cue>" step is a CUE, not a line: she writes the
+// sentence herself, in her own voice, off what the rover can actually read right
+// now — so the run is different every time and grounded in the room instead of
+// in the file. The browser asks for these when the tape STARTS, not when the
+// step fires, because a two-second wait for a model mid-presentation is dead
+// air; if this never answers (the venue has no internet) the cue is spoken as
+// written, so a tape always talks.
+const TAPE_LINE_JOB =
+  "You are mid-run in front of an audience and the crew wrote you a cue for this exact moment. " +
+  "Say ONE short spoken line — 20 words at the most — that covers the cue in your own words, in character, " +
+  "using what you can actually read right now if it fits naturally. Never read the cue back word for word, " +
+  "never mention the cue or that you were given one, never ask a question. Normal JSON, only \"text\" filled in.";
+
+app.post("/api/tape-line", async (req, res) => {
+  if (!hasAI) return res.status(503).json({ error: "AI key not set" });
+  const cue = String(req.body?.cue || "").trim().slice(0, 300);
+  if (!cue) return res.status(400).json({ error: "cue required" });
+  const lang = LANG_INSTRUCT[req.body?.lang] ? req.body.lang : "en";
+  try {
+    const d = freshData();
+    const resp = await chat({ messages: [
+      { role: "system", content: CHAT_SYSTEM },
+      ...langMsg(lang),
+      { role: "system", content: d ? buildChatContext(d) : "No live readings right now — running dark." },
+      { role: "system", content: TAPE_LINE_JOB },
+      { role: "user", content: cue },
+    ], max_tokens: 120 });
+    const text = parseSage(resp.choices[0]?.message?.content).text;
+    res.json({ text: text || null });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// the room strip, held or released. {hue 0-359, sat/val 0-1000} pins it there,
+// null hands it back to the status colours.
+app.post("/api/strip", (req, res) => {
+  const b = req.body || {};
+  if (b.fx !== undefined) return res.json({ ok: true, fx: ledStrip.fx(b.fx), fxNames: ledStrip.fxNames });
+  if (b.frame === null || b.frame === undefined) { ledStrip.manual(null); return res.json({ ok: true, manual: null }); }
+  const n = (v, hi) => Math.max(0, Math.min(hi, Math.round(Number(v) || 0)));
+  const f = { h: n(b.frame.h, 359), s: n(b.frame.s ?? 1000, 1000), v: n(b.frame.v ?? 1000, 1000) };
+  ledStrip.manual(f);
+  res.json({ ok: true, manual: f });
+});
+
 app.post("/api/led", async (req, res) => {
   const v = Math.max(0, Math.min(255, Math.round(Number(req.body?.value))));
   if (isNaN(v)) return res.status(400).json({ error: "value 0-255 required" });
@@ -469,25 +658,96 @@ app.post("/api/led", async (req, res) => {
   catch (err) { res.status(502).json({ error: err.message }); }
 });
 
+// The dashboard's ROTATE button. Sage grabs her own stills, so the mount angle has
+// to reach the server too or a flipped cam leaves her reading sideways frames.
+app.post("/api/cam-rot", (req, res) => {
+  const v = Number(req.body?.value);
+  if (!Number.isFinite(v)) return res.status(400).json({ error: "value in degrees required" });
+  const cam = Number(req.body?.cam) || 0;
+  setCamRot(v, cam);
+  res.json({ ok: true, value: v, cam });
+});
+
+// ---- the cam over usb ----
+// The same three paths the wifi cam serves, on this server's own origin, so a cam
+// on a cable is reached by adding ONE host to the list (location.host in app.js,
+// 127.0.0.1 in vision.js) and nothing else learns a second shape. The serial port
+// is opened on the first request and only when something asks, so a rig with no
+// cable plugged in pays nothing.
+const camusb = require("./camserial");
+const CAM_USB_BOUNDARY = "blackoutusb";
+
+app.get("/capture", async (_req, res) => {
+  try {
+    const f = await camusb.frame();
+    res.set({ "Content-Type": "image/jpeg", "Access-Control-Allow-Origin": "*" }).send(f);
+  } catch (err) { res.status(503).send(err.message); }
+});
+
+// Pull one frame, write it, pull the next: the board only ever sends what was asked
+// for, so a client that stops reading can never back the serial port up.
+app.get("/stream", async (req, res) => {
+  let alive = true;
+  req.on("close", () => { alive = false; });
+  try {
+    while (alive) {
+      const f = await camusb.frame();
+      if (!alive) break;
+      if (!res.headersSent) res.set({
+        "Content-Type": `multipart/x-mixed-replace;boundary=${CAM_USB_BOUNDARY}`,
+        "Access-Control-Allow-Origin": "*",
+      });
+      res.write(`\r\n--${CAM_USB_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${f.length}\r\n\r\n`);
+      res.write(f);
+    }
+  } catch (err) {
+    if (!res.headersSent) return res.status(503).send(err.message);
+  }
+  res.end();
+});
+
+app.get("/control", async (req, res) => {
+  const { var: v, val } = req.query;
+  try {
+    await camusb.set(String(v), Number(val));
+    res.set("Access-Control-Allow-Origin", "*").type("text").send(`OK:${v}=${Number(val)}`);
+  } catch (err) { res.status(503).send(err.message); }
+});
+
+// ---- sage ----
 let latestData = null;
 let dataHistory = [];
-// latestdata is only "current" while the link is alive — telemetry lands every
-// ~100ms, so anything older than 10s means the link died. don't present a
-// minutes-old reading to sage as "right now".
-const freshData = () => (latestData && Date.now() - latestData.timestamp < 10000 ? latestData : null);
-let currentMission = "";   // operator's briefing — colors all agent replies until changed
-let currentLanguage = "en"; // ui language — the agent must reply in this language
 
-// one extra system line forcing the reply language. english is the default
-// (prompts are written in english), so it needs no instruction.
+const freshData = () => (latestData && Date.now() - latestData.timestamp < 10000 ? latestData : null);
+let currentMission = "";
+let currentLanguage = "en";
+
 const LANG_INSTRUCT = {
-  es: "IMPORTANTE: Responde SIEMPRE en español natural y fluido, sin importar el idioma de las lecturas, etiquetas o del mensaje del operador. Mantén tu personaje y tono.",
+  es: "IMPORTANTE: Responde SIEMPRE en español natural y fluido, sin importar el idioma de las lecturas, etiquetas o del mensaje del operador. Mantén tu personaje y tono. Las CLAVES y los VALORES fijos del JSON (text, status, tool, led, finding, snapshot, move, arm, tape; clear/caution/danger; camera/armcam/sensors) se escriben SIEMPRE en inglés: solo el texto que se lee en voz alta va en español.",
 };
 const langMsg = (lang) => (LANG_INSTRUCT[lang] ? [{ role: "system", content: LANG_INSTRUCT[lang] }] : []);
 
-// onboarding lines spoken during the briefing wizard. pre-rendered to
-// public/audio on boot so the wizard plays them instantly (no 5-7s synth wait).
-// text + voices must match public/js/i18n.js (onboarding + langs).
+// The same instruction again, short, to be appended AFTER the picture. Recency
+// is the only lever: with an image in the turn, a language line sitting up in
+// the system block loses to the image and she answers in English -- measured on
+// this cam's own stills, 1 reply in 8 came back Spanish that way against 7 in 8
+// with the line moved below the image. Text-only turns hold either way.
+const LANG_TAIL = {
+  es: 'RECUERDA: el valor de "text" del JSON va en ESPA\u00d1OL. Nada de ingl\u00e9s en "text".',
+};
+const langOf = (msgs) => Object.keys(LANG_INSTRUCT).find(
+  (l) => msgs.some((m) => m.role === "system" && m.content === LANG_INSTRUCT[l]));
+
+// Append that reminder to the last user turn, past any image parts.
+function langLast(msgs) {
+  const tail = LANG_TAIL[langOf(msgs)];
+  const i = msgs.map((m) => m.role).lastIndexOf("user");
+  if (!tail || i < 0) return msgs;
+  const c = msgs[i].content, out = msgs.slice();
+  out[i] = { ...msgs[i], content: Array.isArray(c) ? [...c, { type: "text", text: tail }] : `${c}\n\n${tail}` };
+  return out;
+}
+
 const ONBOARDING = {
   en: {
     voice: "en-US-AvaNeural",
@@ -511,8 +771,6 @@ const ONBOARDING = {
   },
 };
 
-// generate any missing onboarding clips by hitting our own /api/tts and saving
-// the audio to disk. runs once on boot; skips files that already exist.
 async function pregenOnboarding() {
   const dir = path.join(__dirname, "public", "audio");
   fs.mkdirSync(dir, { recursive: true });
@@ -531,30 +789,16 @@ async function pregenOnboarding() {
   }
 }
 
-// system prompts live in prompts/*.md so they're easy to tweak without touching code.
 const loadPrompt = (name) => fs.readFileSync(path.join(__dirname, "prompts", name), "utf8").trim();
 const AI_SYSTEM = loadPrompt("analysis.md");
 const CHAT_SYSTEM = loadPrompt("chat.md");
 const BLK_SYSTEM = loadPrompt("blk.md");
-// the presentation routine's closing look is a greeting to the judges, not a cave
-// read — same camera grab, different system prompt.
+
 const PRESENT_SYSTEM = loadPrompt("present.md");
 
-// sage's discoveries land in the dashboard's analysis panel with the still she saw.
-// the image is written to disk and the finding carries only its url: findings ride
-// inside `chats` in the browser, which is json.stringify'd to localstorage on every
-// change — base64 stills there would blow the ~5mb quota and throw on every later
-// chat edit. public/ is already static-served, so /findings/x.jpg just resolves, and
-// the file outliving a restart is why no findings list is kept server-side.
-// important note: never pruned — ~40kb a find. cap it if a session ever makes enough
-// to matter.
 const FINDINGS_DIR = path.join(__dirname, "public", "findings");
 fs.mkdirSync(FINDINGS_DIR, { recursive: true });
 
-// the still sage actually saw is already in the messages we sent her — pull it back
-// out rather than re-grabbing (a second grab would be a different moment, and would
-// hit the flaky ai-thinker board again). covers every path, including /api/scan's
-// grabframes(1), which bypasses vision's framecache.
 function lastImage(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     const c = messages[i]?.content;
@@ -566,10 +810,6 @@ function lastImage(messages) {
   return null;
 }
 
-// the prompt tells sage to log a find once, but she's staring at the same drawing for
-// as long as it's in frame — so guard the repeat here rather than trusting her, same
-// as the lamp hook checks getled() first. re-logging the identical text is a dupe;
-// the same find seen again much later is worth its own row.
 let lastFinding = { text: "", at: 0 };
 const FINDING_DEDUPE_MS = 5 * 60 * 1000;
 
@@ -585,34 +825,181 @@ function recordFinding(text, dataUrl) {
     try {
       fs.writeFileSync(path.join(FINDINGS_DIR, file), Buffer.from(b64, "base64"));
       img = `/findings/${file}`;
-    } catch (e) { console.error("finding still:", e.message); } // log it text-only
+    } catch (e) { console.error("finding still:", e.message); }
   }
   io.emit("sage-finding", { id: `${at}-${Math.random()}`, text, img, timestamp: at });
   recorder.mark("finding", text);
 }
 
-// sage now answers in json: { text, status, action, led, finding }. text is the only
-// thing voiced/shown; status tints the ui; action:"analyze" lets sage ask for a fresh
-// look; led (0-255) drives the cam lamp; finding logs a discovery to the analysis
-// panel. parsesage lives in ./sage so it's testable without booting the server. every
-// caller goes through here, so the lamp and finding hooks live here too — the lamp
-// fire-and-forget, since a cam that won't answer must not stall the reply.
-async function askSage(messages, { maxTokens = 400 } = {}) {
-  const resp = await openai.chat.completions.create({
-    model: process.env.CEREBRAS_MODEL || "gemma-4-31b",
-    messages,
-    max_tokens: maxTokens,
-  });
-  const sage = parseSage(resp.choices[0]?.message?.content);
-  if (sage.led != null && sage.led !== getLed()) {
-    setLed(sage.led).catch((e) => console.error("cam led:", e.message));
+// ---- headlamp ----
+// NOTHING adjusts the lamp automatically any more. It was lux < 100 (which fires
+// in a normally lit room -- a bh1750 pointed at the floor reads a fraction of
+// what the ceiling puts out), then the mean luma of the analysis frame; both were
+// a machine guessing at "can she see?" when the one thing in the loop that can
+// actually answer that is Sage looking at the picture. So lux is a DISPLAY
+// READING and nothing else, and the rule is one line in her prompt: too dark to
+// make out, raise the lamp.
+// Sage's own "led" field, gated by CONSOLE -> SAGE LAMP (the flag rides on
+// /api/chat like SAGE MOVES, so it lands on her first turn). Default ON since
+// 2026-09-09: she is the only thing that touches the lamp now, so OFF means
+// nobody does. Turn it off to pin a level by hand for a run.
+let lampAllowed = true;
+const LAMP_ASKED = /\b(lamp|headlamp|light|lights|led|bright|brighter|brighten|dim|dimmer|darker)\b|luz|linterna|foco|brillo|ilumina|oscur/i;
+
+const SNAP_DIR = path.join(__dirname, "public", "snapshots");
+fs.mkdirSync(SNAP_DIR, { recursive: true });
+const SNAP_MS = parseInt(process.env.SNAP_MS || "10000", 10);
+
+function takeSnapshot(reason) {
+  const at = Date.now();
+  const packets = dataHistory.filter((d) => at - d.timestamp <= SNAP_MS);
+  if (!packets.length) return;
+  try { fs.writeFileSync(path.join(SNAP_DIR, `${at}.json`), JSON.stringify({ at, reason, packets })); }
+  catch (e) { console.error("snapshot:", e.message); }
+  const text = `SNAPSHOT: ${reason} — ${snapSummary(packets)}`;
+  io.emit("sage-finding", { id: `${at}-snap`, text, img: null, timestamp: at });
+  recorder.mark("finding", text);
+}
+
+async function askSage(messages, { maxTokens = 400, confirm = false, lamp = false } = {}) {
+  // one choke point for every model call, so the strip's "thinking" and her
+  // verdict colour come for free in chat, analysis and the autonomous loop
+  ledStrip.busy(true);
+  let resp;
+  try {
+    resp = await chat({
+      // json_object because the language instruction costs her the envelope:
+      // asked to answer in Spanish she answered in Spanish PROSE, and a reply
+      // with no json is a reply with no status, no tool and no card -- 3 of 8
+      // carried a status against 8 of 8 with the mode on. parseSage still takes
+      // bare prose, so this is belt over braces, not a new contract.
+      messages: langLast(messages),
+      max_tokens: maxTokens,
+      response_format: { type: "json_object" },
+    });
+  } finally {
+    ledStrip.busy(false);
   }
-  if (sage.finding) recordFinding(sage.finding, lastImage(messages));
+  // names the cause when parseSage has to salvage: "length" is her running out
+  // of max_tokens mid-json, which the Spanish dashboard hits first (same
+  // sentence, ~25% more tokens). Raise maxTokens if this starts showing up.
+  if (resp.choices[0]?.finish_reason === "length") console.warn(`sage: reply cut off at ${maxTokens} tokens`);
+  const sage = parseSage(resp.choices[0]?.message?.content, readArmMoves(), readTakes(TAPE_DIR));
+  // a finding and a snapshot are side effects of the reply, not loop steps —
+  // they get the same gate as the tools or ASK FIRST only covers half of what
+  // she reaches for. Declined = skipped, silently: it changed nothing.
+  const allow = (name, arg) => (confirm ? askConfirm(name, arg) : true);
+  // The lamp ALWAYS asks, in BYPASS too: it is the one side effect the operator
+  // sets by hand and then watches Sage undo. It is asked off the main path (no
+  // await) so the analysis loop is never parked 60s on a card nobody is watching
+  // — a silent browser still reads as NO, so the lamp just holds.
+  if (lamp && sage.led != null && sage.led !== getLed()) {
+    const from = getLed();
+    askConfirm("lamp", String(sage.led)).then((ok) => ok && setLed(sage.led)
+      .then(() => emitStep({ kind: "tool", name: "lamp", detail: `${from} → ${sage.led}` }))
+      .catch((e) => {
+        console.error("cam led:", e.message);
+        emitStep({ kind: "tool", name: "lamp", detail: `${from} → ${sage.led} · failed: ${e.message}` });
+      }));
+  }
+  if (sage.status) ledStrip.sage(sage.status);
+  if (sage.finding && await allow("finding", sage.finding)) recordFinding(sage.finding, lastImage(messages));
+  if (sage.snapshot && await allow("snapshot", sage.snapshot)) takeSnapshot(sage.snapshot);
   return sage;
 }
 
-// ponytail: status thresholds live here (server), single source of truth. the
-// model only verbalizes the tag — it must not re-judge from the raw number.
+// one turn can take a few passes, but the last one has to answer
+const MAX_TOOL_STEPS = parseInt(process.env.SAGE_MAX_STEPS || "3", 10);
+
+// ---- tool confirmation ----
+// CONSOLE -> ASK FIRST puts a yes/no card in the operator's feed before Sage's
+// tool actually runs. The flag rides on /api/chat, so it only ever gates the
+// operator's own turns: gating the autonomous analysis would park the loop for a
+// minute with nobody watching the feed.
+// A silent browser reads as NO, same rule as blk's ask/find — a lost tab must
+// never mean "go ahead".
+const CONFIRM_MS = 60000;
+const pendingConfirm = new Map();
+
+function askConfirm(name, arg) {
+  const id = `${Date.now()}-${Math.random()}`;
+  return new Promise((resolve) => {
+    const done = (ok) => { clearTimeout(timer); pendingConfirm.delete(id); resolve(ok); };
+    const timer = setTimeout(() => done(false), CONFIRM_MS);
+    pendingConfirm.set(id, done);
+    io.emit("sage-confirm", { id, name, arg: arg || null, timestamp: Date.now() });
+  });
+}
+
+const SHOT_DIR = path.join(__dirname, "public", "shots");
+fs.mkdirSync(SHOT_DIR, { recursive: true });
+const SHOT_KEEP = 20;
+function saveShot(parts) {
+  const url = parts?.[0]?.image_url?.url || "";
+  const b64 = url.startsWith("data:image/jpeg;base64,") ? url.slice("data:image/jpeg;base64,".length) : null;
+  if (!b64) return null;
+  const file = `${Date.now()}.jpg`;
+  try {
+    fs.writeFileSync(path.join(SHOT_DIR, file), Buffer.from(b64, "base64"));
+    const old = fs.readdirSync(SHOT_DIR).sort().slice(0, -SHOT_KEEP);
+    for (const f of old) fs.unlinkSync(path.join(SHOT_DIR, f));
+    return `/shots/${file}`;
+  } catch (e) { console.error("shot:", e.message); return null; }
+}
+const emitStep = (step) => io.emit("sage-step", { id: `${Date.now()}-${Math.random()}`, timestamp: Date.now(), ...step });
+
+async function runTool(name, arg) {
+  if (name === "sensors") {
+    const d = freshData();
+    if (!d) return { arg, detail: "nothing coming in", text: "No readings are coming up the line right now." };
+
+    return { arg, detail: `${d.dist} cm ahead · ${d.temp}°C`, text: `Readings as of right now:\n${readingLines(d)}${trendLine(d)}` };
+  }
+  if (name === "camera" || name === "armcam") {
+    const cam = name === "armcam" ? 1 : 0;
+    const what = cam ? "gripper eye" : "eye";
+    const eyes = await eyeParts(cam);
+    if (!eyes.length) return { detail: `${what} came back dark`, text: `Your ${what} came back dark — no view. Answer from the readings alone and don't mention the camera.` };
+    return { detail: cam ? "gripper view" : "fresh view", img: saveShot(eyes), images: eyes,
+      text: `This is what your ${what} sees right now — ${cam ? "the arm and whatever is in front of the gripper" : "the passage ahead"}. Answer the operator from it, in your own voice.` };
+  }
+  return null;
+}
+
+async function agentLoop(messages, { maxTokens = 400, confirm = false, lamp = false } = {}) {
+  const msgs = messages.slice();
+  const steps = [];
+  let sage;
+  // A tool result is English prose pushed after the system block, so on a turn
+  // where she looks or re-reads the sensors the last thing the model sees is
+  // English and it answers in English. langLast() in askSage is what repeats the
+  // language line below it -- and below the image, which is the half that a note
+  // pasted onto the text part here could never do.
+  for (let i = 0; i < MAX_TOOL_STEPS; i++) {
+    sage = await askSage(msgs, { maxTokens, confirm, lamp });
+    if (!wantsTool(sage, i, MAX_TOOL_STEPS)) break;
+    if (confirm && !(await askConfirm(sage.tool, sage.toolArg))) {
+      const step = { kind: "tool", name: sage.tool, arg: sage.toolArg || null,
+        detail: "operator said no", say: sage.text || null };
+      steps.push(step);
+      emitStep(step);
+      msgs.push({ role: "assistant", content: sage.text || `(reaching for ${sage.tool})` });
+      msgs.push({ role: "user", content: "The operator turned that down. Answer them now from what you already have, and don't reach for anything else this turn." });
+      continue;
+    }
+    const out = await runTool(sage.tool, sage.toolArg);
+    if (!out) break;
+    const step = { kind: "tool", name: sage.tool, arg: out.arg || null, detail: out.detail, img: out.img || null, say: sage.text || null };
+    steps.push(step);
+    emitStep(step);
+    recorder.mark("analysis", `tool ${sage.tool}: ${out.detail}`);
+    msgs.push({ role: "assistant", content: sage.text || `(reaching for ${sage.tool})` });
+    msgs.push({ role: "user", content: out.images?.length ? [{ type: "text", text: out.text }, ...out.images] : out.text });
+  }
+  return { reply: sage, steps };
+}
+
+// ---- status bands + blurts ----
 function band(v, warn, danger) {
   if (v == null || isNaN(v)) return "UNKNOWN";
   return v >= danger ? "DANGER" : v >= warn ? "CAUTION" : "NORMAL";
@@ -624,11 +1011,8 @@ function statuses(d) {
   };
 }
 
-// severity rank so we can tell when a reading got worse (not just changed).
 const RANK = { CLEAR: 0, NORMAL: 0, UNKNOWN: 0, NEAR: 1, CAUTION: 1, DANGER: 2 };
 
-// instant in-character one-liners fired the moment a reading worsens — no llm
-// round-trip, so the agent reacts immediately while the full analysis catches up.
 const BLURTS = {
   en: {
     dist:  { NEAR: "Wall's right up on us — easing around it." },
@@ -640,7 +1024,6 @@ const BLURTS = {
   },
 };
 
-// short memory line so replies reference the recent past, not just this instant.
 function buildTrend(d) {
   const h = dataHistory;
   if (h.length < 8) return "";
@@ -652,52 +1035,44 @@ function buildTrend(d) {
   return bits.length ? `Trend over the last little while: ${bits.join(", ")}.` : "";
 }
 
-// edge-triggered analysis: fire only when a status actually changes, blurt the
-// instant the change is for the worse, and rate-limit the full llm analysis.
 let lastStatuses = null;
 let lastAutoAnalysis = 0;
 let lastBlurt = 0;
 let pendingAnalysis = null;
 const AUTO_MIN_GAP = parseInt(process.env.AUTO_ANALYSIS_GAP || "12", 10) * 1000;
-const BLURT_MIN_GAP = 6000; // don't let a flapping sensor spam instant reactions
+const BLURT_MIN_GAP = 6000;
 
-// cam has no wire to the giga (own wifi, own power) — the giga's oled can only
-// learn cam state secondhand. this is the only clock-driven poll in the server;
-// everything else here is event-triggered off telemetry. "cmd" is the same
-// channel drive commands already ride — whichever browser tab holds the real
-// ble link relays it on (app.js's socket "cmd" listener), same as "drv,"/"go,".
-let camConnected = null; // null = not checked yet
+let camConnected = null;
 setInterval(async () => {
   const up = await pingCam();
   if (up === camConnected) return;
   camConnected = up;
-  io.emit("cmd", `cam,${up ? "connected" : "not connected"}`);
+  const w = `cam,${up ? "connected" : "not connected"}`;
+  usbWrite(w);
+  io.emit("cmd", w);
 }, 5000);
 
-// the giga's oled hud. the board draws it but decides nothing: the safety level is
-// the worst of the same statuses() the agent reasons over, and the metrics line is
-// formatted here, so the screen can never contradict what the agent is saying.
-// rides the same "cmd" channel drive commands do — the tab holding the ble link relays it.
 let lastHud = "";
 let lastHudAt = 0;
-const HUD_REPEAT = 3000; // telemetry is 10hz, the screen isn't. resend anyway on this
-                         // beat so a board that reconnected mid-stream fills in.
-// IMPORTANT NOTE: ble does one write at a time. a hand waving at the sonar changes
-// the metrics line every 100ms, and at 10hz those writes collide and get dropped —
-// the screen ends up lagging the dashboard by seconds. 4hz is faster than an eye
-// reads a 4px font and leaves the link free for drive commands.
+const HUD_REPEAT = 3000;
+
 const HUD_MIN_GAP = 250;
 function pushHud(d) {
   const s = statuses(d);
   const level = ["ok", "warn", "bad"][Math.max(...Object.values(s).map(v => RANK[v] ?? 0))];
-  // 999 = sonar timeout = nothing within range, not a real 999cm reading.
+
   const dist = d.dist >= 999 ? "CLEAR" : `${Math.round(d.dist)}cm`;
+  // a wall inside 10cm is amber to the board (warn = intermittent beep, not a
+  // held tone) but RED on the room strip: the strip is what an operator across
+  // the room is watching, and proximity is the one thing they can act on.
+  ledStrip.level(s.dist === "NEAR" ? "bad" : level);
   const msg = `hud,${level},${Math.round(d.temp)}C ${Math.round(d.humid)}%|${dist}`;
   const now = Date.now();
   if (now - lastHudAt < HUD_MIN_GAP) return;
   if (msg === lastHud && now - lastHudAt < HUD_REPEAT) return;
   lastHud = msg;
   lastHudAt = now;
+  usbWrite(msg);
   io.emit("cmd", msg);
 }
 
@@ -720,28 +1095,23 @@ function emitBlurt(prev, cur) {
 function maybeAutoAnalyze(data) {
   const s = statuses(data);
   const changed = lastStatuses && Object.keys(s).some(k => lastStatuses[k] !== s[k]);
-  // a routine picks its own analysis moments with analyze steps. auto-analysis and
-  // blurts fire on status changes at arbitrary times — a proximity trip mid-run
-  // would talk over those deliberate reads. stay silent for the whole run. the flag
-  // rides every telemetry line, so this clears itself when the routine ends, even if
-  // the board is reset mid-run.
+
   if (data.routine) { lastStatuses = s; return; }
   if (changed && currentMission) emitBlurt(lastStatuses, s);
   lastStatuses = s;
-  if (!changed || !currentMission) return; // no active mission → agent stays quiet
+  if (!changed || !currentMission) return;
   const now = Date.now();
-  if (now - lastAutoAnalysis < AUTO_MIN_GAP) return; // don't spam the llm on flapping
+  if (now - lastAutoAnalysis < AUTO_MIN_GAP) return;
   lastAutoAnalysis = now;
   clearTimeout(pendingAnalysis);
-  pendingAnalysis = setTimeout(runAiAnalysis, 600); // debounce a burst of changes into one
+  pendingAnalysis = setTimeout(runAiAnalysis, 600);
 }
 
-// agent acknowledges the operator's mission briefing in character.
 async function ackMission(text) {
   const fallback = currentLanguage === "es"
     ? "Recibido. Misión confirmada — entrando."
     : "Copy that. Mission's locked in — heading in.";
-  if (!process.env.CEREBRAS_API_KEY) {
+  if (!hasAI) {
     io.emit("mission-ack", { text: fallback, status: null, timestamp: Date.now() });
     recorder.mark("sage", fallback);
     return;
@@ -761,14 +1131,9 @@ async function ackMission(text) {
   }
 }
 
-// plain-language readings for chat — no sensor part names to parrot, keeps the
-// model inside the cave fiction. each reading carries a pre-judged status tag.
 const missionLine = () => (currentMission ? `Your mission, briefed by the operator: ${currentMission}\n\n` : "");
 const trendLine = (data) => { const t = buildTrend(data); return t ? `\n${t}` : ""; };
 
-// one line per reading. gas/pressure/imu aren't wired yet (r4 firmware sends 0)
-// — skip their lines so sage isn't told "pressure: 0 hpa" as a real reading.
-// mock data still populates them, so the demo keeps its flavor.
 function readingLines(data) {
   const s = statuses(data);
   return [
@@ -777,62 +1142,78 @@ function readingLines(data) {
     data.pressure ? `Pressure: ${data.pressure} hPa` : null,
     data.pressure ? `Elevation: ${Math.round(data.alt)} m relative to where you started` : null,
     `Distance to the rock face ahead: ${data.dist} cm [${s.dist}]`,
+    data.lux != null ? `Ambient light: ${Math.round(data.lux)} lx` : null,
     (data.roll || data.pitch || data.yaw) ? `Tilt: roll ${data.roll}°, pitch ${data.pitch}°, yaw ${data.yaw}°` : null,
   ].filter(Boolean).join("\n");
 }
 
-const lampLine = () => `\nYour headlamp is currently at ${getLed()} of 255.`;
+const lampLine = () => `\nYour headlamp is at ${getLed()} of 255, and NOTHING moves it but you. If the picture you are looking at is too dark to make out, raise it. Judge that off the picture, never off the light reading — the lx number is there for the operator's screen, not for you to decide the lamp from.`;
 
 function buildChatContext(data) {
-  return `${missionLine()}Current readings from the rover right now (each line is already judged — trust the [STATUS] tag, do NOT re-judge from the number, and do NOT recite the raw number):
+  return `${missionLine()}Current readings from the rover right now (each line is already judged — trust the [STATUS] tag for the verdict, do NOT re-judge from the number, but DO say the number aloud with its unit when the operator asks about it):
 ${readingLines(data)}${trendLine(data)}${lampLine()}`;
 }
 
 function buildAiPrompt(data) {
-  return `${missionLine()}Latest telemetry from your sensors — read the room and report to the operator. Each line is already judged: trust the [STATUS] tag, do NOT re-judge from the raw number, and do NOT recite the raw number aloud.
+  return `${missionLine()}Latest telemetry from your sensors — read the room and report to the operator. Each line is already judged: trust the [STATUS] tag for the verdict and do NOT re-judge from the raw number — but DO say the numbers aloud, value plus unit, when they are what the operator asked about or what you are reacting to.
 
 ${readingLines(data)}${trendLine(data)}${lampLine()}`;
 }
 
-// `focus` is the optional text a workflow's `analyze <what to look at>` step
-// carries — it steers this one read without changing the persona.
-async function runAiAnalysis(mode, focus) {
+async function runAiAnalysis(mode, focus, cam = 0) {
   const present = mode === "present";
-  // always emit a result: the dashboard locks into "analyzing" on request and only
-  // an ai-analysis event releases it, so a silent return here = infinite spinner.
+
   const data = freshData();
-  if (!process.env.CEREBRAS_API_KEY || !data) {
+  if (!hasAI || !data) {
     io.emit("ai-analysis", { error: data ? "AI key not set" : "No telemetry yet.", timestamp: Date.now() });
     return;
   }
-  // grabbing eyeparts() hits the cam's /capture, which fights its /stream task for
-  // the same starved ram — tell the dashboard to drop its live feed for the grab,
-  // same trade the single-shot scan (runscan in app.js) already makes. auto-fired
-  // analysis has no client-side call site to yield from, so the signal has to come
-  // from here instead.
-  io.emit("cam-yield");
+
   try {
-    const eyes = await eyeParts();
+    // Which eye is the OPERATOR's pick (the picker next to the voice selector),
+    // not hers -- her own "camera"/"armcam" tools still choose for themselves.
+    // The greeting is ONE look at the room, so it takes a FRESH frame instead of
+    // eyeParts()' cache, which hands back a still up to VISION_MAX_AGE_MS old --
+    // a 30s-old frame of an empty room is how she ends up greeting people who
+    // are not there any more.
+    const eyes = present ? await grabFrames(1, 0, cam) : await eyeParts(cam);
+    if (present) console.log(`Presentation greeting — cam ${cam} frame: ${eyes.length ? "yes" : "NONE, greeting blind"}`);
+    emitStep({ kind: "tool", name: "analysis", arg: focus || null, img: saveShot(eyes),
+      detail: eyes.length ? "full read of the passage" : "no view — readings only" });
     const focusLine = focus ? `\nThe operator's workflow asked you to look at this specifically: ${focus}` : "";
-    const promptText = buildAiPrompt(data) + focusLine + (eyes.length
-      ? "\n(Attached is your live forward-camera view — read it for what's ahead.)"
-      : "\n(Your eye is dark right now. Don't mention this or say anything about not being able to see — just report normally from the readings you do have, as if vision were never part of it.)");
-    const sage = await askSage([
+    // A greeting is not a telemetry read: buildAiPrompt() opens with "report to
+    // the operator" and a block of sensor lines she is then told never to
+    // mention, which is what left her greeting blind-sounding with a picture in
+    // hand. Present gets its own one-liner and the picture line that MAKES her
+    // name something she sees.
+    const seeLine = present
+      ? "\n(Attached is your live camera view of the room. LOOK AT IT and say out loud ONE plain thing you can actually see about the people in it — a shirt or jacket colour, that someone is holding a phone, that one is standing — and hang your compliment on that. Anything true and ordinary counts; do not skip it because it feels too small.)"
+      : "\n(Attached is your live forward-camera view — read it for what's ahead.)";
+    // A greeting with no picture must never invent a room. The cave prompt's
+    // "just report from the readings" does not apply -- there are no readings in
+    // a greeting, so the model fills the gap with people who are not there.
+    const blindLine = present
+      ? "\n(NO PICTURE this turn — you are not seeing the room. Greet them warmly with NO number, NO count, and NO description of anybody. Never say or hint that you cannot see.)"
+      : "\n(Your eye is dark right now. Don't mention this or say anything about not being able to see — just report normally from the readings you do have, as if vision were never part of it.)";
+    const promptText = (present
+      ? "You are parked in front of the judges and the robot has settled. Give your greeting now."
+      : buildAiPrompt(data)) + focusLine + (eyes.length ? seeLine : blindLine);
+
+    const { reply: sage } = await agentLoop([
       { role: "system", content: present ? PRESENT_SYSTEM : AI_SYSTEM },
       ...langMsg(currentLanguage),
       { role: "user", content: eyes.length ? [{ type: "text", text: promptText }, ...eyes] : promptText },
-    ], { maxTokens: 400 });
+    ], { maxTokens: 400, lamp: lampAllowed });
     io.emit("ai-analysis", { analysis: sage.text || "No analysis returned.", status: sage.status, timestamp: Date.now() });
     recorder.mark("analysis", sage.text || "No analysis returned.");
   } catch (err) {
     console.error("AI analysis error:", err.message);
     io.emit("ai-analysis", { error: err.message, timestamp: Date.now() });
     recorder.mark("analysis", "analysis failed: " + err.message);
-  } finally {
-    io.emit("cam-resume");
   }
 }
 
+// ---- serial ----
 let serialPort;
 let selectedPortPath = null;
 
@@ -840,34 +1221,34 @@ function disconnectSerial() {
   if (serialPort) {
     serialPort.removeAllListeners("close");
     serialPort.removeAllListeners("error");
-    try { serialPort.close(); } catch { /* already closed */ }
+    try { serialPort.close(); } catch {  }
     serialPort = null;
   }
 }
 
-// open `path` (or auto-pick the first usbserial port) as the active link.
-// cb(err) fires once with the open result. important note: no auto-reconnect
-// anywhere, on purpose — an unplugged/closed port stays closed until the
-// dashboard explicitly picks one again.
 async function connectSerial(path, cb) {
-  if (bleActive) { cb?.(new Error("BT mode active")); return; } // bt owns the link
+  if (bleActive) { cb?.(new Error("BT mode active")); return; }
   if (!path) {
     const ports = await listSerialPorts();
-    const usbPorts = ports.filter(p => p.includes("usbserial"));
+    // the giga is cu.usbmodem*; usbserial/wchusbserial is the esp32-cam's cable
+    // (camserial.js owns that one) and writing drive commands at it does nothing.
+    const usbPorts = ports.filter(p => /usbmodem/.test(p));
     if (usbPorts.length === 0) {
-      console.log("No usbserial ports found.");
-      cb?.(new Error("no usbserial ports found"));
+      console.log("No giga (cu.usbmodem*) ports found.");
+      cb?.(new Error("no board on usb"));
       return;
     }
     path = usbPorts[0];
     console.log(`Auto-selected: ${path}`);
   }
-  disconnectSerial(); // one link at a time
+  disconnectSerial();
   selectedPortPath = path;
 
   serialPort = new SerialPort({ path, baudRate: SERIAL_BAUD }, (err) => {
     if (err) console.error(`Failed to open ${path}: ${err.message}`);
-    else console.log(`Connected to ${path}`);
+    // why the LAST link died, before the next run starts -- same `log,` the
+    // browser writes right after startNotifications
+    else { console.log(`Connected to ${path}`); usbWrite("log,"); }
     cb?.(err);
   });
 
@@ -876,16 +1257,12 @@ async function connectSerial(path, cb) {
   serialPort.on("close", () => console.log("Serial closed."));
 }
 
-/* ---- firmware flash (dashboard "Update Blackout") ----
-   the actual work is cmds/flash.sh verbatim — it already detects, compiles,
-   uploads and prints its own done line. don't reimplement it in js. */
+// ---- firmware flashing ----
 const ROOT_DIR = path.join(__dirname, "..");
 let flashing = false;
 
-// keep dir/ref in step with cmds/flash.sh — it writes .last-flash with these keys.
-// V2's sketch only exists at that one commit, so V2 is never "behind" head.
 const V2_REF = "829924d";
-// order matters, same as the script's table: an unidentified usbmodem reads as a giga.
+
 const BOARD_PROFILES = [
   { key: "giga",     fqbnPrefix: "arduino:mbed_giga:",   ports: ["usbmodem"], dir: "giga-r1/main" },
   { key: "unor4",    fqbnPrefix: "arduino:renesas_uno:", ports: [],           dir: "arduino-uno-r4/main", ref: V2_REF },
@@ -905,7 +1282,9 @@ const headRef = () => {
 
 app.get("/api/flash/boards", (req, res) => {
   execFile("arduino-cli", ["board", "list", "--format", "json"], { timeout: 5000 }, (err, stdout) => {
-    const found = { giga: false, esp32cam: false, unor4: false };
+    // counts, not flags: two esp32-cams are two boards, and "is one plugged in"
+    // can't tell you the second one was never flashed.
+    const found = { giga: 0, esp32cam: 0, unor4: 0 };
     let ports = [];
     if (!err) {
       try {
@@ -913,23 +1292,26 @@ app.get("/api/flash/boards", (req, res) => {
           addr: p.port?.address || "",
           fqbns: (p.matching_boards || []).map(b => b.fqbn),
         }));
-      } catch { /* arduino-cli printed something that isn't json — report nothing found */ }
+      } catch {  }
     }
-    // same rule as cmds/flash.sh: trust a reported fqbn, and fall back to the port
-    // name only for boards that report none — the esp32-cam's ftdi/ch340 never does.
+
     for (const { addr, fqbns } of ports) {
       const hit = BOARD_PROFILES.find(p => fqbns.length
         ? fqbns.some(f => f.startsWith(p.fqbnPrefix))
         : p.ports.some(pat => addr.includes(pat)));
-      if (hit) found[hit.key] = true;
+      if (hit) found[hit.key]++;
     }
-    // "out of date" = a connected board isn't running what this repo would flash it with
+
     const flashed = lastFlash();
     const head = headRef();
     const live = BOARD_PROFILES.filter(p => found[p.key]);
+    // flash.sh keys the cams by chip id (dir@chip) so one flashed cam can't mark
+    // the other current — fewer entries than live boards means one is unaccounted for
+    const refs = (p) => Object.entries(flashed)
+      .filter(([k]) => k === p.dir || k.startsWith(p.dir + "@")).map(([, v]) => v);
     const status = live.length === 0 ? "none"
-      : live.some(p => !flashed[p.dir]) ? "unknown"
-      : live.some(p => flashed[p.dir] !== (p.ref || head)) ? "stale"
+      : live.some(p => refs(p).length < found[p.key]) ? "unknown"
+      : live.some(p => refs(p).some(r => r !== (p.ref || head))) ? "stale"
       : "current";
     res.json({ ...found, status, head });
   });
@@ -937,7 +1319,8 @@ app.get("/api/flash/boards", (req, res) => {
 
 app.post("/api/flash/start", (req, res) => {
   if (flashing) return res.status(409).json({ error: "flash already running" });
-  disconnectSerial(); // arduino-cli needs exclusive access to the usb port
+  disconnectSerial();
+  camusb.close();   // the cam's own cable is the one flash.sh writes down
   flashing = true;
   const proc = spawn(path.join(ROOT_DIR, "cmds/flash.sh"), { cwd: ROOT_DIR });
   const strip = (buf) => buf.toString().replace(/\x1b\[[0-9;]*m/g, "");
@@ -948,27 +1331,29 @@ app.post("/api/flash/start", (req, res) => {
   res.json({ ok: true });
 });
 
-// no auto-grab at boot: the server used to blindly open the first usbserial
-// port, which stole the esp32-cam's ftdi (and isn't even the uno — that's
-// usbmodem). sensors arrive over ble anyway. connect usb only when explicitly
-// asked: pick a port in the dashboard, or set serial_autoconnect=true to
-// restore the old behavior.
 if (process.env.SERIAL_AUTOCONNECT === "true") connectSerial();
 else console.log("USB serial auto-connect off — select a port in the dashboard (SERIAL_AUTOCONNECT=true to auto-open).");
 
-// analysis is on-demand only (request-analysis below) — no auto interval.
+// ---- connected devices ----
+// the host is whoever loaded over loopback; everyone else is telemetry-only until granted
+const clients = new Map();
 
-// connected dashboards. the host is whoever loaded this over loopback — the operator's
-// own laptop. everything else is a tablet: telemetry only until the host grants it drive.
-const clients = new Map(); // socket.id -> { ip, kind, host, mode, granted }
-// grants are held by ip, not socket.id: a tablet that drops wifi for two seconds
-// reconnects as a new socket, and re-granting it blind mid-run is worse than
-// remembering. IMPORTANT NOTE: ip is the identity — dhcp handing that lease to
-// another device would inherit the grant. fine for a match-length competition lan.
-// mode: "mirror" (telemetry) | "judge" (telemetry, presentation layout) | "full" (drive).
-// granted is just mode === "full" — the client and the cmd gate below still read that.
-const grants = new Map(); // ip -> mode
+const grants = new Map();
 const isHost = (s) => ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(s.handshake.address);
+
+// Sage borrows her still off a dashboard's live feed instead of opening a second
+// stream the cam can't serve -- see setFrameSource in vision.js. The host first, any
+// other client second (a judge tablet's feed is still a feed); no client, no frame,
+// or no answer inside 800ms all resolve null and fall through to /capture.
+const frameSocket = () => {
+  const all = [...io.sockets.sockets.values()];
+  return all.find(isHost) || all[0] || null;
+};
+setFrameSource((cam) => new Promise((resolve) => {
+  const s = frameSocket();
+  if (!s) return resolve(null);
+  s.timeout(800).emit("cam-frame", cam, (err, frame) => resolve(err ? null : frame));
+}));
 const kindOf = (ua = "") => /iPad|Tablet/.test(ua) ? "iPad" : /iPhone/.test(ua) ? "iPhone"
   : /Android/.test(ua) ? "Android" : /Macintosh/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "device";
 const pushClients = () => io.emit("clients", [...clients].map(([id, c]) => ({ id, ...c })));
@@ -984,15 +1369,16 @@ io.on("connection", (socket) => {
     host, mode, granted: mode === "full",
   });
   pushClients();
+  socket.emit("led", getLed());
   socket.on("disconnect", () => { clients.delete(socket.id); pushClients(); });
-  // only the host hands out control, and its own row can't be revoked.
+
   socket.on("grant", (d) => {
     if (!isHost(socket)) return;
     const c = clients.get(d?.id);
     if (!c || c.host) return;
     const m = ["mirror", "judge", "full"].includes(d?.mode) ? d.mode : "mirror";
     if (m === "mirror") grants.delete(c.ip); else grants.set(c.ip, m);
-    // the mode belongs to the device, so it has to catch its other tabs too.
+
     for (const o of clients.values()) if (!o.host && o.ip === c.ip) { o.mode = m; o.granted = m === "full"; }
     console.log(`${c.ip} (${c.kind}) set to ${m}`);
     pushClients();
@@ -1001,10 +1387,12 @@ io.on("connection", (socket) => {
   socket.on("request-analysis", (opts) => {
     const mode = opts?.mode;
     const focus = String(opts?.prompt || "").trim().slice(0, 300) || null;
-    console.log(`On-demand analysis requested${mode ? ` (${mode})` : ""}${focus ? ` — focus: ${focus}` : ""}`);
-    runAiAnalysis(mode, focus);
+    // the operator's eye for this analysis; out of range falls back to the front cam
+    const cam = Number(opts?.cam) > 0 && Number(opts.cam) < camCount ? Number(opts.cam) : 0;
+    console.log(`On-demand analysis requested${mode ? ` (${mode})` : ""} on cam ${cam}${focus ? ` — focus: ${focus}` : ""}`);
+    runAiAnalysis(mode, focus, cam);
   });
-  // send the agent the current mission so a freshly-connected dashboard shows it.
+
   socket.emit("mission-set", { mission: currentMission });
   socket.on("set-mission", (text) => {
     currentMission = String(text || "").trim();
@@ -1012,26 +1400,34 @@ io.on("connection", (socket) => {
     io.emit("mission-set", { mission: currentMission });
     if (currentMission) ackMission(currentMission);
   });
-  // tablet clients have no web bluetooth — hand their drive commands to whichever client holds the ble link.
-  // stop is never gated — an e-stop from the judges' tablet must always land.
+
   socket.on("cmd", (w) => {
-    if (w === "stop" || clients.get(socket.id)?.granted) socket.broadcast.emit("cmd", w);
+    if (w !== "stop" && !clients.get(socket.id)?.granted) return;
+    usbWrite(w);                      // the cable, if one is open
+    socket.broadcast.emit("cmd", w);  // and the host browser, which relays over BLE
   });
+
+  // the operator's agent feed, mirrored to the judge tablets. Relay only — the host
+  // browser owns the transcript (localStorage), the server just repeats it.
+  socket.on("feed", (e) => { if (isHost(socket)) socket.broadcast.emit("feed", e); });
+  // whoever answers first wins — the gate is an operator prompt, not a permission
+  socket.on("sage-confirm-res", (d) => { if (d && d.id) pendingConfirm.get(d.id)?.(!!d.ok); });
+
+  // the only strip input the server can't derive: TTS ends in the browser
+  socket.on("speaking", (b) => { if (isHost(socket)) ledStrip.speaking(!!b); });
+
   socket.on("set-language", (code) => {
     currentLanguage = (code === "es") ? "es" : "en";
     console.log("Language set:", currentLanguage);
   });
-  // debug: fake a sensor packet so the dashboard + ai work without the arduino.
+
   socket.on("mock-data", () => {
     const r = (lo, hi, d = 0) => +(lo + Math.random() * (hi - lo)).toFixed(d);
     latestData = {
-      // pressure jitters over a few hPa, not the full 980-1030 range: elevation is
-      // relative now, and a 50 hPa swing reads as the rover teleporting 400m.
-      temp: r(20, 50, 1), humid: r(20, 90, 1), pressure: r(1011, 1015, 1), dist: r(10, 200),
+      temp: r(20, 50, 1), humid: r(20, 90, 1), pressure: r(1011, 1015, 1), dist: r(10, 200), lux: r(0, 900),
       smoke: r(0, 800), airq: r(50, 900), co: r(0, 600),
       co_alert: Math.random() > 0.7,
-      roll: r(-8, 8, 1), pitch: r(-8, 8, 1), yaw: r(0, 30, 1), // keep rover ~level
-
+      roll: r(-8, 8, 1), pitch: r(-8, 8, 1), yaw: r(0, 30, 1),
       timestamp: Date.now(),
     };
     latestData.alt = Math.round(altitudeM(latestData.pressure) * 100) / 100;
@@ -1041,14 +1437,6 @@ io.on("connection", (socket) => {
   });
 });
 
-// --- mdns: answer to blackout.local ---
-// the judges' tablet needs one address that survives dhcp. macos already
-// advertises the laptop's own hostname, but that name follows the laptop, not
-// the robot — this pins the rover's dashboard to the same naming as
-// blackout-cam.local. ios resolves .local natively, so it's http://blackout.local:PORT
-// in safari and nothing to type twice.
-// IMPORTANT NOTE: unicast responses only for A queries we're asked for. no
-// service (_http._tcp) record — nothing browses for one, add it if a client does.
 const MDNS_HOST = process.env.MDNS_HOST || "blackout.local";
 const mdnsServer = require("multicast-dns")();
 mdnsServer.on("query", (q) => {
@@ -1063,8 +1451,14 @@ mdnsServer.on("query", (q) => {
   });
 });
 
+// stale telemetry is no telemetry (PKT_STALE_MS in app.js) — same 3s here, so
+// the strip goes back to the "waiting on the rover" blue when the link drops
+setInterval(() => ledStrip.link(!!latestData && Date.now() - latestData.timestamp < 3000), 1000).unref();
+ledStrip.start();
+process.on("exit", () => ledStrip.stop());
+
 server.listen(PORT, () => {
   console.log(`Server at http://localhost:${PORT}`);
   console.log(`Tablet:   http://${MDNS_HOST}:${PORT}`);
-  pregenOnboarding(); // warm onboarding audio cache (skips already-generated clips)
+  pregenOnboarding();
 });

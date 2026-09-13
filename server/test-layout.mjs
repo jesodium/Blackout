@@ -1,6 +1,5 @@
-// the dashboard must fit the viewport — nothing scrolls, not the page, not the agent box.
-// same CDP pattern as test-fpv.mjs:
-//   PORT=3111 node server.js  +  chrome --headless=new --remote-debugging-port=9333
+// walks the dashboard at a few widths over cdp, looking for overflow and clipping
+
 import WebSocket from "ws";
 const URL_PAGE = process.env.LAYOUT_URL || "http://localhost:3111/";
 const CDP = process.env.LAYOUT_CDP || "http://localhost:9333";
@@ -27,14 +26,14 @@ await send("Runtime.enable"); await sleep(2500);
 await ev(`localStorage.clear(); location.reload(); return true;`); await sleep(2500);
 
 const fail = [];
-// 780 is the floor: below it the rail runs out of room even with every optional row shed
+
 for (const [w, h] of [[1512, 900], [1512, 860], [1440, 820], [1440, 780]]) {
   await send("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile: false });
   await sleep(500);
   const seen = [await measure("sessions")];
   await click(".chat-new"); await sleep(400);
   seen.push(await measure("briefing"));
-  for (let i = 0; i < 3; i++) {                       // walk the three briefing questions
+  for (let i = 0; i < 3; i++) {
     await ev(`const ta = document.querySelector('.mission-input');
       const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
       set.call(ta, 'test answer'); ta.dispatchEvent(new Event('input', { bubbles: true })); return true;`);
@@ -42,9 +41,9 @@ for (const [w, h] of [[1512, 900], [1512, 860], [1440, 820], [1440, 780]]) {
   }
   seen.push(await measure("review"));
   await click(".btn--go"); await sleep(1500);
-  seen.push(await measure("stage"));
-  await click(".ai-hist > summary"); await sleep(300);  // history opens over the panel, never grows it
-  seen.push(await measure("stage+history"));
+  seen.push(await measure("transcript"));
+  await click(".foot-menu > summary"); await sleep(300);
+  seen.push(await measure("term+menu"));
   console.log(w + "x" + h);
   for (const r of seen) {
     const good = r.page === 0 && r.agent === 0;

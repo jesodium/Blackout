@@ -1,7 +1,5 @@
-// smoke test for the first-run tour: it shows once, remembers that it's done,
-// and the console's restart button brings it back.
-// same CDP pattern as test-report.mjs:
-//   PORT=3111 node server.js  +  chrome --headless=new --remote-debugging-port=9333
+// runs the first-run tour over cdp end to end
+
 import WebSocket from "ws";
 const URL_PAGE = process.env.TOUR_URL || "http://localhost:3111/";
 const CDP = process.env.TOUR_CDP || "http://localhost:9333";
@@ -30,7 +28,6 @@ await send("Runtime.enable");
 await send("Page.enable");
 await sleep(2000);
 
-// fresh browser: no flag, no debug ack
 await evaluate(`localStorage.removeItem("tourDone"); localStorage.setItem("debugAck", "1"); location.reload(); return 1`);
 await sleep(3000);
 
@@ -38,13 +35,11 @@ check("tour opens on a fresh browser", (await evaluate("return !!document.queryS
 const first = await evaluate("return document.querySelector('.tour-count')?.textContent || ''");
 check("starts at step 1", /^1 \//.test(first), first);
 
-// the cockpit is locked while the tour runs
 check("app is inert behind the tour", (await evaluate("return document.getElementById('root').inert")) === true);
 await send("Input.dispatchKeyEvent", { type: "keyDown", key: "`", code: "Backquote", windowsVirtualKeyCode: 192 });
 await sleep(400);
 check("backtick can't open the console", (await evaluate("return !!document.querySelector('.drawer-bar')")) === false);
 
-// walk it to the end — the last button finishes
 const steps = Number(first.split("/")[1]);
 check("more than one step", steps > 1, String(steps));
 for (let i = 0; i < steps; i++) {
@@ -59,7 +54,6 @@ await evaluate("location.reload(); return 1");
 await sleep(3000);
 check("does not reopen on the next load", (await evaluate("return !!document.querySelector('.tour-card')")) === false);
 
-// console → restart tutorial
 await evaluate(`[...document.querySelectorAll('.console-btn')].pop().click(); return 1`);
 await sleep(400);
 check("console drawer opened", (await evaluate("return !!document.querySelector('.drawer-tour')")) === true);
@@ -68,7 +62,6 @@ await sleep(700);
 check("restart reopens the tour", (await evaluate("return !!document.querySelector('.tour-card')")) === true);
 check("restart clears the flag", (await evaluate(`return localStorage.getItem("tourDone")`)) === null);
 
-// escape skips and re-arms the flag
 await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
 await sleep(300);
 check("escape skips the tour", (await evaluate("return !!document.querySelector('.tour-card')")) === false);

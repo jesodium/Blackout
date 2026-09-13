@@ -1,0 +1,16 @@
+{
+  "sage_can_use": true,
+  "show_in_app": true,
+  "sage_ask_permission_for_this": false,
+  "steps": [
+    { "ms": 0, "cmd": "@under ARM_DEMO_V2" },
+    {
+      "ms": 200,
+      "cmd": "@sage This is my arm — six degrees of freedom with a gripper right on the end. Every joint was recorded on the bench, so I can play a move back exactly the same way every time. Down in a cave it reaches in and clears whatever is blocking the way, so the whole rover does not have to fit through."
+    },
+    {
+      "ms": 200,
+      "cmd": "@sage.es Este es mi brazo: seis grados de libertad con una pinza justo en la punta. Cada articulación se grabó en el banco de pruebas, así que puedo repetir un movimiento igual todas las veces. Allá abajo en una cueva se estira y aparta lo que bloquea el paso, para que el rover entero no tenga que caber."
+    }
+  ]
+}

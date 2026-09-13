@@ -1,10 +1,5 @@
-/* Sponsor names live in sponsors.json — one list, both pages (index.html's strip and
-   sponsors.html). An entry is { "name", "url"?, "logo"? }; logo is a path under assets/,
-   and without one the name is drawn as text. Fills every [data-tier] <ul> on the page.
-   IMPORTANT NOTE: fetch, so it needs to be served over http — open the pages through a
-   server, not file://. */
 const sponsorsRender = (() => {
-  let cache = null;                                   // one fetch, reused across language switches
+  let cache = null;
   const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   const cell = (s) => {
