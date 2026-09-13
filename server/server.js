@@ -318,7 +318,13 @@ app.delete("/api/rec/:id", (req, res) => res.json({ ok: recorder.remove(req.para
 
 let bleActive = false;
 
-app.get("/api/bridge", (req, res) => res.json({ running: bleActive, last: "" }));
+// The giga reads the same command strings off usb that it reads off BLE
+// (Serial.readStringUntil in loop()), so the cable is a second transport and
+// nothing downstream learns a second shape. The \n is the terminator it waits for.
+const usbWrite = (w) => { if (serialPort?.isOpen) serialPort.write(w + "\n"); };
+
+app.get("/api/bridge", (req, res) =>
+  res.json({ running: bleActive || !!serialPort?.isOpen, usb: !!serialPort?.isOpen, last: "" }));
 
 const lanIp = () => Object.values(os.networkInterfaces()).flat()
   .find(i => i.family === "IPv4" && !i.internal)?.address;
@@ -342,6 +348,13 @@ app.get("/api/cloud", async (_req, res) => {
 });
 
 app.post("/api/bridge/start", (req, res) => {
+  // one link at a time: the board answers both, but two centrals writing at once
+  // is two operators on one stick.
+  if (req.body?.usb) {
+    bleActive = false;
+    connectSerial(req.body.port, (err) => res.json(err ? { error: err.message } : { ok: true, usb: true }));
+    return;
+  }
   disconnectSerial();
   bleActive = true;
   res.json({ ok: true });
@@ -349,6 +362,7 @@ app.post("/api/bridge/start", (req, res) => {
 
 app.post("/api/bridge/stop", (req, res) => {
   bleActive = false;
+  disconnectSerial();
   res.json({ ok: true });
 });
 
@@ -652,6 +666,52 @@ app.post("/api/cam-rot", (req, res) => {
   const cam = Number(req.body?.cam) || 0;
   setCamRot(v, cam);
   res.json({ ok: true, value: v, cam });
+});
+
+// ---- the cam over usb ----
+// The same three paths the wifi cam serves, on this server's own origin, so a cam
+// on a cable is reached by adding ONE host to the list (location.host in app.js,
+// 127.0.0.1 in vision.js) and nothing else learns a second shape. The serial port
+// is opened on the first request and only when something asks, so a rig with no
+// cable plugged in pays nothing.
+const camusb = require("./camserial");
+const CAM_USB_BOUNDARY = "blackoutusb";
+
+app.get("/capture", async (_req, res) => {
+  try {
+    const f = await camusb.frame();
+    res.set({ "Content-Type": "image/jpeg", "Access-Control-Allow-Origin": "*" }).send(f);
+  } catch (err) { res.status(503).send(err.message); }
+});
+
+// Pull one frame, write it, pull the next: the board only ever sends what was asked
+// for, so a client that stops reading can never back the serial port up.
+app.get("/stream", async (req, res) => {
+  let alive = true;
+  req.on("close", () => { alive = false; });
+  try {
+    while (alive) {
+      const f = await camusb.frame();
+      if (!alive) break;
+      if (!res.headersSent) res.set({
+        "Content-Type": `multipart/x-mixed-replace;boundary=${CAM_USB_BOUNDARY}`,
+        "Access-Control-Allow-Origin": "*",
+      });
+      res.write(`\r\n--${CAM_USB_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${f.length}\r\n\r\n`);
+      res.write(f);
+    }
+  } catch (err) {
+    if (!res.headersSent) return res.status(503).send(err.message);
+  }
+  res.end();
+});
+
+app.get("/control", async (req, res) => {
+  const { var: v, val } = req.query;
+  try {
+    await camusb.set(String(v), Number(val));
+    res.set("Access-Control-Allow-Origin", "*").type("text").send(`OK:${v}=${Number(val)}`);
+  } catch (err) { res.status(503).send(err.message); }
 });
 
 // ---- sage ----
@@ -987,7 +1047,9 @@ setInterval(async () => {
   const up = await pingCam();
   if (up === camConnected) return;
   camConnected = up;
-  io.emit("cmd", `cam,${up ? "connected" : "not connected"}`);
+  const w = `cam,${up ? "connected" : "not connected"}`;
+  usbWrite(w);
+  io.emit("cmd", w);
 }, 5000);
 
 let lastHud = "";
@@ -1010,6 +1072,7 @@ function pushHud(d) {
   if (msg === lastHud && now - lastHudAt < HUD_REPEAT) return;
   lastHud = msg;
   lastHudAt = now;
+  usbWrite(msg);
   io.emit("cmd", msg);
 }
 
@@ -1167,10 +1230,12 @@ async function connectSerial(path, cb) {
   if (bleActive) { cb?.(new Error("BT mode active")); return; }
   if (!path) {
     const ports = await listSerialPorts();
-    const usbPorts = ports.filter(p => p.includes("usbserial"));
+    // the giga is cu.usbmodem*; usbserial/wchusbserial is the esp32-cam's cable
+    // (camserial.js owns that one) and writing drive commands at it does nothing.
+    const usbPorts = ports.filter(p => /usbmodem/.test(p));
     if (usbPorts.length === 0) {
-      console.log("No usbserial ports found.");
-      cb?.(new Error("no usbserial ports found"));
+      console.log("No giga (cu.usbmodem*) ports found.");
+      cb?.(new Error("no board on usb"));
       return;
     }
     path = usbPorts[0];
@@ -1181,7 +1246,9 @@ async function connectSerial(path, cb) {
 
   serialPort = new SerialPort({ path, baudRate: SERIAL_BAUD }, (err) => {
     if (err) console.error(`Failed to open ${path}: ${err.message}`);
-    else console.log(`Connected to ${path}`);
+    // why the LAST link died, before the next run starts -- same `log,` the
+    // browser writes right after startNotifications
+    else { console.log(`Connected to ${path}`); usbWrite("log,"); }
     cb?.(err);
   });
 
@@ -1253,6 +1320,7 @@ app.get("/api/flash/boards", (req, res) => {
 app.post("/api/flash/start", (req, res) => {
   if (flashing) return res.status(409).json({ error: "flash already running" });
   disconnectSerial();
+  camusb.close();   // the cam's own cable is the one flash.sh writes down
   flashing = true;
   const proc = spawn(path.join(ROOT_DIR, "cmds/flash.sh"), { cwd: ROOT_DIR });
   const strip = (buf) => buf.toString().replace(/\x1b\[[0-9;]*m/g, "");
@@ -1334,7 +1402,9 @@ io.on("connection", (socket) => {
   });
 
   socket.on("cmd", (w) => {
-    if (w === "stop" || clients.get(socket.id)?.granted) socket.broadcast.emit("cmd", w);
+    if (w !== "stop" && !clients.get(socket.id)?.granted) return;
+    usbWrite(w);                      // the cable, if one is open
+    socket.broadcast.emit("cmd", w);  // and the host browser, which relays over BLE
   });
 
   // the operator's agent feed, mirrored to the judge tablets. Relay only — the host

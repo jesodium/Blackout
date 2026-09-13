@@ -5,150 +5,142 @@
   "steps": [
     {
       "ms": 0,
-      "cmd": "@sage Hello! I am Sage, the A I scout riding on this rover. It is lovely to meet you — what should I call you?"
+      "cmd": "@present"
     },
     {
       "ms": 0,
-      "cmd": "@sage.es ¡Hola! Soy Sage, la exploradora de inteligencia artificial que viaja en este rover. Encantada de conocerlos, ¿cómo debería llamarlos?"
-    },
-    {
-      "ms": 959,
       "cmd": "arm,0,-100"
     },
     {
-      "ms": 1103,
+      "ms": 144,
       "cmd": "arm,0,-100"
     },
     {
-      "ms": 1209,
+      "ms": 250,
       "cmd": "arm,0,0"
     },
     {
-      "ms": 1799,
+      "ms": 840,
       "cmd": "arm,0,100"
     },
     {
-      "ms": 2004,
+      "ms": 1045,
       "cmd": "arm,0,100"
     },
     {
-      "ms": 2108,
+      "ms": 1149,
       "cmd": "arm,0,0"
     },
     {
-      "ms": 2908,
+      "ms": 1949,
       "cmd": "arm,0,-100"
     },
     {
-      "ms": 3160,
+      "ms": 2201,
       "cmd": "arm,0,0"
     },
     {
-      "ms": 4000,
+      "ms": 3041,
       "cmd": "arm,1,-100"
     },
     {
-      "ms": 4113,
+      "ms": 3154,
       "cmd": "arm,1,-100"
     },
     {
-      "ms": 4252,
+      "ms": 3293,
       "cmd": "arm,1,0"
     },
     {
-      "ms": 5197,
+      "ms": 4238,
       "cmd": "arm,1,100"
     },
     {
-      "ms": 5302,
+      "ms": 4343,
       "cmd": "arm,1,100"
     },
     {
-      "ms": 5447,
+      "ms": 4488,
       "cmd": "arm,1,0"
     },
     {
-      "ms": 5842,
+      "ms": 4883,
       "cmd": "arm,1,-100"
     },
     {
-      "ms": 5909,
+      "ms": 4950,
       "cmd": "arm,1,-100"
     },
     {
-      "ms": 6107,
+      "ms": 5148,
       "cmd": "arm,1,0"
     },
     {
-      "ms": 6408,
+      "ms": 5449,
       "cmd": "arm,1,100"
     },
     {
-      "ms": 6503,
+      "ms": 5544,
       "cmd": "arm,1,100"
     },
     {
-      "ms": 6659,
+      "ms": 5700,
       "cmd": "arm,1,0"
     },
     {
-      "ms": 7200,
-      "cmd": "@analyze I ALREADY said hello, gave my name and asked theirs — do not greet, introduce myself or ask names again. Just look at the people in front of me and say one warm, specific, respectful thing I can really see: how many, where they stand, what they wear. Never call them judges."
-    },
-    {
-      "ms": 15008,
+      "ms": 14049,
       "cmd": "arm,5,-100"
     },
     {
-      "ms": 15209,
+      "ms": 14250,
       "cmd": "arm,5,0"
     },
     {
-      "ms": 15701,
+      "ms": 14742,
       "cmd": "arm,5,100"
     },
     {
-      "ms": 16242,
+      "ms": 15283,
       "cmd": "arm,5,-100"
     },
     {
-      "ms": 16443,
+      "ms": 15484,
       "cmd": "arm,5,0"
     },
     {
-      "ms": 16808,
+      "ms": 15849,
       "cmd": "arm,5,100"
     },
     {
-      "ms": 17609,
+      "ms": 16650,
       "cmd": "arm,5,35"
     },
     {
-      "ms": 17910,
+      "ms": 16951,
       "cmd": "arm,5,35"
     },
     {
-      "ms": 18211,
+      "ms": 17252,
       "cmd": "arm,5,35"
     },
     {
-      "ms": 18510,
+      "ms": 17551,
       "cmd": "arm,5,35"
     },
     {
-      "ms": 18810,
+      "ms": 17851,
       "cmd": "arm,5,35"
     },
     {
-      "ms": 19110,
+      "ms": 18151,
       "cmd": "arm,5,35"
     },
     {
-      "ms": 19412,
+      "ms": 18453,
       "cmd": "arm,5,35"
     },
     {
-      "ms": 19710,
+      "ms": 18751,
       "cmd": "arm,5,35"
     }
   ]

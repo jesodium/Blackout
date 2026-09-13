@@ -31,8 +31,12 @@ const VIEWER = (() => {
 // pinned to one address dies on every move while Sage, who walks the list, keeps
 // working. That asymmetry is exactly what "Sage sees the cam but the feed is
 // blank" looks like.
+// location.host is the cam over its OWN USB CABLE -- this server re-serves the
+// serial frames at /stream, /capture and /control (camserial.js), so a cam on a
+// cable is just one more address cam 0 answers on, tried after the wifi ones.
+// There is one serial port, so cam 1 has no usb entry.
 const CAM_HOSTS = [
-  ["192.168.1.10", "172.20.10.10", "192.168.1.111", "blackout-cam.local"],
+  ["192.168.1.10", "172.20.10.10", "192.168.1.111", "blackout-cam.local", location.host],
   ["192.168.1.11", "172.20.10.11", "blackout-cam2.local"],
 ];
 const CAM_HOST_DEFAULT = CAM_HOSTS[0][0];
@@ -57,7 +61,9 @@ const camKey = (base, cam) => base + (cam || "");
 // the analysis the operator presses (and the presentation greeting, which is one).
 const anaCam = () => Math.min(Math.max(0, +localStorage.getItem("camMain") || 0), CAM_HOSTS.length - 1);
 const camHost = (cam = 0) => localStorage.getItem(camKey("camHost", cam)) || CAM_DEFAULTS[cam];
-const camUrl = (host) => `http://${host}:81/stream`;
+// a host that already carries a port is the usb bridge on this server, which
+// serves the stream beside /control instead of on the cam's own :81
+const camUrl = (host) => `http://${host.includes(":") ? host : host + ":81"}/stream`;
 
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
 
@@ -75,24 +81,6 @@ const SENSORS = [
 ];
 
 const reads = (s, v) => v != null && !isNaN(v) && (v !== 0 || s.zeroOk);
-
-// ---- demo mode ----
-// a sensor that dies mid-run blanks its tile and drags the verdict to NOT READING, in front of
-// the judges. Demo mode fills those in with plausible drifting numbers so the run carries on.
-// dist is deliberately absent: the sonar is what the rover steers on, and a faked wall is worse
-// than a blank one. Browser-side only — nothing fake reaches the server's history or Sage.
-const DEMO_RANGE = { temp: [28, 30], humid: [60, 70], alt: [-1, 0], pressure: [999.5, 1000.5], lux: [2, 15] };
-const DEMO_KEYS = Object.keys(DEMO_RANGE);
-const demoVal = (key, now = Date.now()) => {
-  const [lo, hi] = DEMO_RANGE[key];
-  const p = (Math.sin(now / 9000 + DEMO_KEYS.indexOf(key) * 1.7) + 1) / 2;  // slow wander, no state to keep
-  return lo + p * (hi - lo);
-};
-const demoFill = (pkt, now) => {
-  const out = { ...pkt };
-  for (const s of SENSORS) if (DEMO_RANGE[s.key] && !reads(s, out[s.key])) out[s.key] = demoVal(s.key, now);
-  return out;
-};
 
 const PKT_STALE_MS = 3000;
 
@@ -1625,6 +1613,17 @@ function CamView({ cam = 0, pip = false, onSwap }) {
     return () => window.removeEventListener("cam-led", on);
   }, []);
 
+  // Discovery only, and only with nothing saved yet: ask our own /capture whether
+  // a cam is on the cable before the wifi list gets walked. That walk is 5s a
+  // host, so a serial-only rig would sit red for half a minute on a cam that is
+  // plugged in. A rig with no cable gets an instant 503 and nothing changes.
+  useEffect(() => {
+    if (cam || localStorage.getItem(camKey("camHost", cam))) return;
+    fetch("/capture", { cache: "no-store" })
+      .then((r) => { if (r.ok) setHost(location.host); })
+      .catch(() => {});
+  }, []);
+
   const fail = useCallback(() => setState("offline"), []);
   const lastFrame = useRef(0);
 
@@ -2734,10 +2733,12 @@ function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lan
             disabled=${bridge.busy} onClick=${() => onBridge("toggle")}>
             <span class=${"lamp-dot " + (bridge.running && !stale ? "is-go" : "is-abort")}></span>
             ${bridge.busy ? t("mast.bridgeBusy") : !bridge.running ? t("mast.connect")
-              : stale ? t("mast.stale") : t("mast.linked")}
+              : stale ? t("mast.stale") : bridge.usb ? t("mast.linkedUsb") : t("mast.linked")}
           </button>
           <button type="button" class="bridge-repair" title=${t("mast.bridgeRepairTitle")}
             disabled=${bridge.busy} onClick=${() => onBridge("reconnect")}>⟳</button>
+          ${!bridge.running && html`<button type="button" class="bridge-repair" title=${t("mast.usbTitle")}
+            disabled=${bridge.busy} onClick=${() => onBridge("usb")}>USB</button>`}
         </div>
       </div>`}
       ${""}
@@ -2774,7 +2775,41 @@ function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lan
 
 const SAVERS = ["saverOff", "matrix", "saverBounce", "saverStars", "saverTetris"];
 
-function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, onAnalyze, onNote, onSay, enabled, onTutorial, saver, onSaver, moves, onMoves, lamp, onLamp, buzz, onBuzz, demo, onDemo }) {
+// the second cam feed, hidden with a body class rather than unmounted: the two
+// CamViews are deliberately kept alive (see CamStage) and a reopened stream is
+// ~12s of "loading", so hiding must not tear one down.
+const pipSet = (on) => document.body.classList.toggle("no-pip", !on);
+pipSet(localStorage.getItem("camPip") !== "0");
+const ZOOM_MIN = 100, ZOOM_MAX = 250;
+const zoomSet = (pct) => document.documentElement.style.setProperty("--cam-zoom", String(pct / 100));
+zoomSet(Number(localStorage.getItem("camZoom")) || 100);
+function ZoomSlider() {
+  const [pct, setPct] = useState(() => Number(localStorage.getItem("camZoom")) || 100);
+  const set = (v) => {
+    const n = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(v)));
+    setPct(n); localStorage.setItem("camZoom", String(n)); zoomSet(n);
+  };
+  return html`
+    <label class="serial-btn drawer-zoom" title=${t("drawer.zoomTitle")}>
+      ${t("drawer.zoom")}: ${pct}%
+      <input type="range" min=${ZOOM_MIN} max=${ZOOM_MAX} step="5" value=${pct}
+        aria-label=${t("drawer.zoom")}
+        onInput=${(e) => set(Number(e.target.value))}
+        onDblClick=${() => set(100)} />
+    </label>`;
+}
+
+function PipToggle() {
+  const [on, setOn] = useState(() => localStorage.getItem("camPip") !== "0");
+  const flip = () => setOn(v => { localStorage.setItem("camPip", v ? "0" : "1"); pipSet(!v); return !v; });
+  return html`
+    <button type="button" class=${"serial-btn drawer-pip" + (on ? " is-on" : "")}
+      aria-pressed=${on} onClick=${flip} title=${t("drawer.pipTitle")}>
+      ${t("drawer.pip")}: ${t(on ? "drawer.on" : "drawer.off")}
+    </button>`;
+}
+
+function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, onAnalyze, onNote, onSay, enabled, onTutorial, saver, onSaver, moves, onMoves, lamp, onLamp, buzz, onBuzz }) {
   if (!open) return null;
   const tabs = [["logs", t("zone.logs")], ["findings", t("zone.analysis")], ["serial", t("zone.serial")], ["motor", t("colo.motor")], ["tapes", "Tapes"]];
   return html`
@@ -2796,10 +2831,9 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
           ${t("drawer.lamp")}: ${t(lamp ? "drawer.on" : "drawer.off")}
         </button>
         ${""}
-        <button type="button" class=${"serial-btn drawer-demo" + (demo ? " is-on" : "")}
-          aria-pressed=${!!demo} onClick=${onDemo} title=${t("drawer.demoTitle")}>
-          ${t("drawer.demo")}: ${t(demo ? "drawer.on" : "drawer.off")}
-        </button>
+        <${PipToggle} />
+        ${""}
+        <${ZoomSlider} />
         ${""}
         <button type="button" class=${"serial-btn drawer-buzz" + (buzz ? " is-on" : "")}
           aria-pressed=${!!buzz} onClick=${onBuzz} title=${t("drawer.buzzTitle")}>
@@ -3395,16 +3429,7 @@ function App() {
     const id = setInterval(() => setFresh(Date.now() - lastPkt.current < PKT_STALE_MS), 1000);
     return () => clearInterval(id);
   }, []);
-  const [demo, setDemo] = useState(() => localStorage.getItem("demoMode") === "1");
-  const toggleDemo = useCallback(() => setDemo(d => { localStorage.setItem("demoMode", d ? "0" : "1"); return !d; }), []);
-  const [demoTick, setDemoTick] = useState(0);
-  useEffect(() => {
-    if (!demo) return;
-    const id = setInterval(() => setDemoTick(n => n + 1), 1000);  // stale packets stop re-rendering; keep the wander alive
-    return () => clearInterval(id);
-  }, [demo]);
-
-  const view = demo ? demoFill(fresh ? packet : {}, Date.now()) : fresh ? packet : null;
+  const view = fresh ? packet : null;
   const live = connected && fresh;
   useEffect(() => { packetRef.current = view; }, [view]);
 
@@ -3532,6 +3557,7 @@ function App() {
     socket.on("flash-done", d => { setFlashCode(d?.code ?? -1); setFlashPhase("done"); });
     socket.on("serial-line", d => {
       if (!d?.line) return;
+      if (d.line.startsWith("E:")) onBoardLineRef.current?.(d.line, false);
       setSerialLines(p => [...p, {
         text: d.line, s: d.line.startsWith("S:"),
         time: new Date(d.timestamp || Date.now()).toLocaleTimeString(),
@@ -3616,10 +3642,11 @@ function App() {
     socketRef.current?.emit("request-analysis", { mode: mode || null, prompt: focus || null, cam: cam ?? anaCam() });
   }, []);
 
-  const onBleNotify = useCallback((e) => {
-    const line = new TextDecoder().decode(e.target.value);
-    console.log("BLE notify:", line);
-
+  // One handler for both transports: over BLE the browser owns the link, over usb
+  // the server does and relays the board's E: lines back on `serial-line`.
+  // `forward` is off for the usb ones -- they came THROUGH /api/mega/sensor, and
+  // posting them again is a loop.
+  const onBoardLine = useCallback((line, forward = true) => {
     if (line.startsWith("E:analyze")) {
       addLog(t("log.routineAnalyze"), "ai");
       analyze(presentingRef.current ? "present" : null);
@@ -3637,10 +3664,19 @@ function App() {
     }
 
     if (line.startsWith("E:blk")) { window.dispatchEvent(new CustomEvent("blk:evt", { detail: line })); return; }
+    if (!forward) return;
     fetch("/api/mega/sensor", { method: "POST", headers: { "Content-Type": "text/plain" }, body: line })
       .then((r) => { if (!r.ok) console.error("BLE forward failed:", r.status); })
       .catch((err) => console.error("BLE forward error:", err.message));
   }, [analyze, addLog]);
+
+  const onBleNotify = useCallback((e) => {
+    const line = new TextDecoder().decode(e.target.value);
+    console.log("BLE notify:", line);
+    onBoardLine(line);
+  }, [onBoardLine]);
+  const onBoardLineRef = useRef(onBoardLine);
+  onBoardLineRef.current = onBoardLine;
 
   const disconnectBle = useCallback(() => {
     const { device, char } = bleRef.current;
@@ -3721,7 +3757,7 @@ function App() {
 
   const loadBridge = useCallback(async () => {
     try { const r = await fetch("/api/bridge"); const d = await r.json();
-      setBridge(b => ({ ...b, running: d.running })); } catch {  }
+      setBridge(b => ({ ...b, running: d.running, usb: !!d.usb })); } catch {  }
   }, []);
   useEffect(() => { loadBridge(); const id = setInterval(loadBridge, 5000); return () => clearInterval(id); }, [loadBridge]);
 
@@ -3750,7 +3786,15 @@ function App() {
       if (stopping) {
         disconnectBle();
         await fetch("/api/bridge/stop", { method: "POST" });
-        setBridge({ running: false, busy: false }); toast(t("toast.bridgeOff"), "ok");
+        setBridge({ running: false, usb: false, busy: false }); toast(t("toast.bridgeOff"), "ok");
+      } else if (mode === "usb") {
+        disconnectBle();   // one link at a time
+        const r = await fetch("/api/bridge/start", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ usb: true }),
+        });
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || "no board on usb");
+        setBridge({ running: true, usb: true, busy: false }); toast(t("toast.usbOn"), "ok");
       } else {
         if (mode === "reconnect") disconnectBle();
         if (!navigator.bluetooth) throw new Error("Web Bluetooth unsupported — use Chrome/Edge");
@@ -3777,7 +3821,7 @@ function App() {
         cmd?.writeValue(new TextEncoder().encode("log,")).catch(() => {});
         const r = await fetch("/api/bridge/start", { method: "POST" });
         const d = await r.json();
-        if (d.ok) { setBridge({ running: true, busy: false }); toast(t("toast.bridgeOn"), "ok"); }
+        if (d.ok) { setBridge({ running: true, usb: false, busy: false }); toast(t("toast.bridgeOn"), "ok"); }
         else { disconnectBle(); setBridge(b => ({ ...b, busy: false })); addLog(t("log.failed", { error: d.error }), "danger"); toast(d.error, "danger"); }
       }
     } catch (e) { setBridge(b => ({ ...b, busy: false })); addLog(t("log.error", { msg: e.message }), "danger"); if (window.blackout) closeBlePicker(); }
@@ -4258,7 +4302,7 @@ function App() {
           enabled=${canDrive} onTutorial=${restartTour}
           saver=${saver} onSaver=${pickSaver} moves=${moves} onMoves=${toggleMoves}
             lamp=${lamp} onLamp=${toggleLamp}
-            buzz=${buzz} onBuzz=${toggleBuzz} demo=${demo} onDemo=${toggleDemo} />`}
+            buzz=${buzz} onBuzz=${toggleBuzz} />`}
       </div>
 
       <${Toasts} items=${toasts} />

@@ -6,6 +6,11 @@
 // eye and owns the headlamp; cam 1 is the arm/gripper view.
 const CAM_GROUPS = (process.env.CAM_URL || "http://192.168.1.111/capture")
   .split(";").map(g => g.split(",").map(s => s.trim()).filter(Boolean)).filter(g => g.length);
+// last resort for cam 0: the same board on a USB cable, re-served by our own
+// /capture (camserial.js). It costs nothing when no cable is plugged in -- the
+// route 503s and overCam moves on -- and it is what keeps Sage and the headlamp
+// working on a rig with no network at all.
+CAM_GROUPS[0]?.push(`http://127.0.0.1:${process.env.PORT || 3000}/capture`);
 const camIdx = CAM_GROUPS.map(() => 0);
 const camCount = CAM_GROUPS.length;
 const sharp = require("sharp");
