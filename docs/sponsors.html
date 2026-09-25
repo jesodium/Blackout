@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Blackout · Sponsors</title>
-<meta name="description" content="Three sponsorship ranks for Blackout, a WRO 2026 Future Innovators recon rover: Diamond, Platinum and Standard.">
+<meta name="description" content="Five sponsorship ranks for Blackout, a WRO 2026 Future Innovators recon rover: Diamond, Platinum, Gold, Standard and Mention.">
 <meta name="theme-color" content="#0e0e10">
 <link rel="icon" href="assets/mark.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -39,20 +39,52 @@ h1{font-weight:400;line-height:1.06;letter-spacing:.01em}
 
 .topbar{border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20;
   background:rgba(14,14,16,.82);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
-.topbar .wrap{display:flex;align-items:center;gap:20px;min-height:60px}
+.topbar .wrap{display:flex;align-items:center;gap:20px;min-height:84px}
+.toplogo{height:52px;width:auto;filter:drop-shadow(0 4px 18px rgba(224,164,92,.30))}
 .topbar .back{margin-left:auto;font-size:12.5px;color:var(--muted)}
 .topbar .back:hover{color:var(--accent)}
 
-header.page{padding:clamp(48px,9vh,96px) 0 clamp(24px,4vh,44px)}
+header.page{position:relative;isolation:isolate;overflow:hidden;
+  padding:clamp(48px,9vh,96px) 0 clamp(24px,4vh,44px)}
+header.page::before{content:"";position:absolute;z-index:-1;pointer-events:none;filter:blur(50px);opacity:.8;
+  width:420px;height:220px;left:-100px;top:-70px;
+  background:radial-gradient(closest-side,rgba(224,164,92,.35),transparent)}
+header.page::after{content:"";position:absolute;z-index:-1;pointer-events:none;filter:blur(50px);opacity:.7;
+  width:420px;height:220px;right:-110px;top:20px;
+  background:radial-gradient(closest-side,rgba(159,228,255,.25),transparent)}
 header.page h1{font-size:clamp(2rem,5vw,3.4rem);margin:12px 0 18px}
+.hero-row{display:flex;align-items:center;gap:40px}
+.hero-text{flex:1;min-width:0}
+.hero-logo{flex:none;width:clamp(320px,42vw,560px);height:auto;
+  filter:drop-shadow(0 12px 48px rgba(224,164,92,.35))}
+@media (max-width:820px){.hero-row{flex-direction:column;align-items:flex-start}
+  .hero-logo{width:clamp(220px,70vw,340px)}}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:20px}
+.chips .chip{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:4px 10px;
+  background:rgba(20,20,22,.5);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.chips .chip i{width:7px;height:7px;border-radius:50%;background:var(--dim)}
+.chips .chip.diamond i{background:#9fe4ff}
+.chips .chip.platinum i{background:#d9d5cd}
+.chips .chip.gold i{background:#e8c15a}
+.chips .chip.standard i{background:var(--accent)}
+.chips .chip.mention i{background:#7fd08f}
 
 .ranks{display:grid;gap:10px;padding-bottom:clamp(36px,6vh,64px)}
-.rank{--rank:var(--dim);
+.rank{--rank:var(--dim);position:relative;isolation:isolate;overflow:hidden;
   border:1px solid var(--line);border-left:2px solid var(--rank);border-radius:12px;
-  padding:20px clamp(20px,2.6vw,28px);display:grid;grid-template-columns:230px 1fr;gap:22px}
+  padding:20px clamp(20px,2.6vw,28px);display:grid;grid-template-columns:230px 1fr;gap:22px;
+  background:linear-gradient(120deg,rgba(224,164,92,.06),transparent 55%)}
+.rank:hover{border-color:var(--line-2)}
+.rank::after{content:"";position:absolute;top:0;bottom:0;width:120px;left:-160px;z-index:0;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.10),transparent);
+  transform:skewX(-12deg);transition:left 600ms ease}
+.rank:hover::after{left:calc(100% + 40px)}
 .rank.diamond{--rank:#9fe4ff}
 .rank.platinum{--rank:#d9d5cd}
+.rank.gold{--rank:#e8c15a}
 .rank.standard{--rank:var(--accent)}
+.rank.mention{--rank:#7fd08f}
 .rank h2{font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;font-weight:500;color:var(--rank)}
 .rank .side{display:flex;flex-direction:column;gap:8px}
 .rank .who{font-size:12px;color:var(--muted)}
@@ -65,6 +97,37 @@ header.page h1{font-size:clamp(2rem,5vw,3.4rem);margin:12px 0 18px}
 .rank .taken li a:hover img{filter:none;opacity:1}
 .rank .taken li a:hover{color:var(--accent)}
 @media (max-width:820px){.rank{grid-template-columns:1fr;gap:18px}}
+
+.fund{position:relative;isolation:isolate;overflow:hidden;margin:0 0 clamp(28px,5vh,48px);
+  padding:24px;border:1px solid var(--line-2);border-radius:16px;
+  background:linear-gradient(120deg,rgba(47,177,130,.12),rgba(20,20,22,.6) 55%,rgba(224,164,92,.10))}
+.fund h2{font-size:clamp(1.2rem,2.6vw,1.6rem);font-weight:400;margin-bottom:14px}
+.fund-orbs{position:absolute;inset:0;z-index:-1;pointer-events:none;filter:blur(40px);opacity:.8}
+.fund-orbs::before{content:"";position:absolute;width:280px;height:160px;left:-70px;top:-60px;
+  background:radial-gradient(closest-side,rgba(47,177,130,.40),transparent)}
+.fund-orbs::after{content:"";position:absolute;width:320px;height:180px;right:-80px;bottom:-70px;
+  background:radial-gradient(closest-side,rgba(224,164,92,.32),transparent)}
+.fund-nums{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+.fund-raised{font-size:12.5px;color:var(--muted);display:flex;align-items:baseline;gap:8px}
+.fund-raised strong{font-size:clamp(2rem,5vw,3rem);font-weight:500;color:var(--ink);letter-spacing:-.02em}
+.fund-goal{font-size:12.5px;color:var(--muted)}
+.fund-goal strong{color:var(--ink)}
+.fund-pct{margin-left:auto;font-size:13px;color:#2fb182}
+.fund-bar{height:10px;border:1px solid var(--line-2);border-radius:999px;overflow:hidden;margin:14px 0 18px;
+  background:rgba(14,14,16,.6)}
+.fund-bar span{display:block;height:100%;width:0;border-radius:999px;
+  background:linear-gradient(90deg,#2fb182,var(--accent));transition:width 600ms ease}
+.fund-methods{list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:0;padding:0}
+.fund-methods li{display:flex;align-items:center;gap:12px;padding:14px 16px;
+  border:1px solid var(--line);border-radius:12px;background:rgba(14,14,16,.5)}
+.fund-methods li>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.fund-methods strong{font-size:13px;font-weight:500}
+.fund-methods code{font-family:var(--mono);font-size:13px;color:var(--accent);cursor:pointer;word-break:break-all}
+.fund-methods span{font-size:11.5px;color:var(--dim)}
+.fund-go{margin-left:auto;flex:none;width:38px;height:38px;display:grid;place-items:center;
+  border:1px solid var(--line-2);border-radius:10px;background:transparent;color:var(--ink);
+  font-size:16px;cursor:pointer;text-decoration:none}
+.fund-go:hover{border-color:var(--accent);color:var(--accent)}
 
 .note{margin:0 0 clamp(36px,6vh,64px);font-size:12.5px;color:var(--dim);
   border-left:2px solid var(--line-2);padding-left:16px;max-width:74ch}
@@ -88,14 +151,25 @@ footer nav a:hover{color:var(--accent)}
   <div class="wrap">
     <a href="index.html#top"><img src="assets/mark.svg" alt="Blackout" height="22" style="width:auto"></a>
     <a class="back" href="index.html#sponsors" data-i18n="back">← Back to Blackout</a>
+    <img class="toplogo" src="assets/logo.svg" alt="Blackout" onerror="this.onerror=null;this.src='assets/mark.svg'">
   </div>
 </div>
 
 <header class="page">
-  <div class="wrap">
+  <div class="wrap hero-row">
+    <div class="hero-text">
     <p class="eyebrow" data-i18n="eyebrow">Sponsorship</p>
-    <h1 data-i18n="h1">Three ranks. One rover.</h1>
+    <h1 data-i18n="h1">Five ranks. One rover.</h1>
     <p class="lede" data-i18n="lede">Blackout is built by students for WRO 2026 Future Innovators. Sponsors cover parts, batteries, print time and getting the rover to the venue. What you cover decides the rank, and the rank decides where your name shows up.</p>
+    <p class="chips">
+      <span class="chip diamond"><i></i><span data-i18n="diamond.name">Diamond</span></span>
+      <span class="chip platinum"><i></i><span data-i18n="platinum.name">Platinum</span></span>
+      <span class="chip gold"><i></i><span data-i18n="gold.name">Gold</span></span>
+      <span class="chip standard"><i></i><span data-i18n="standard.name">Standard</span></span>
+      <span class="chip mention"><i></i><span data-i18n="mention.name">Mention</span></span>
+    </p>
+    </div>
+    <img class="hero-logo" src="assets/logo.svg" alt="Blackout" onerror="this.onerror=null;this.src='assets/mark.svg'">
   </div>
 </header>
 
@@ -117,13 +191,42 @@ footer nav a:hover{color:var(--accent)}
       <ul class="taken" data-tier="platinum"></ul>
     </article>
 
+    <article class="rank gold">
+      <div class="side">
+        <h2 data-i18n="gold.name">Gold</h2>
+        <p class="who" data-i18n="gold.who">Logo on the rover and the site.</p>
+      </div>
+      <ul class="taken" data-tier="gold"></ul>
+    </article>
+
     <article class="rank standard">
       <div class="side">
         <h2 data-i18n="standard.name">Standard</h2>
       </div>
       <ul class="taken" data-tier="standard"></ul>
     </article>
+
+    <article class="rank mention">
+      <div class="side">
+        <h2 data-i18n="mention.name">Mention</h2>
+        <p class="who" data-i18n="mention.who">No cash needed — a thank-you shout-out on our posts and pit wall.</p>
+      </div>
+      <ul class="taken" data-tier="mention"></ul>
+    </article>
   </div>
+
+  <!-- funding numbers + methods come from donate.json via donate.js — edit the numbers there -->
+  <section class="fund" data-donate>
+    <span class="fund-orbs" aria-hidden="true"></span>
+    <h2 data-i18n="donate.h2">Can't sponsor? Fund us instead.</h2>
+    <div class="fund-nums">
+      <p class="fund-raised"><strong data-donate-raised>$0</strong><span data-i18n="donate.raised">raised</span></p>
+      <p class="fund-goal"><span data-i18n="donate.of">of</span> <strong data-donate-goal>$20,000</strong> <span data-i18n="donate.goal">goal</span></p>
+      <p class="fund-pct"><strong data-donate-pct>0%</strong></p>
+    </div>
+    <div class="fund-bar" role="progressbar" aria-label="funding progress"><span data-donate-bar style="width:0%"></span></div>
+    <ul class="fund-methods" data-donate-methods></ul>
+  </section>
 
   <p class="note" data-i18n="note">Want a rank? Talk to the team on GitHub. Blackout is a school competition project, not a company — sponsorship pays for hardware and travel, and nothing here is a commercial offer.</p>
 </div>
@@ -149,12 +252,13 @@ footer nav a:hover{color:var(--accent)}
 </footer>
 
 <script src="sponsors.js"></script>
+<script src="donate.js"></script>
 <script>
 
 const DICT = {
   en: {
     title: "Blackout · Sponsors",
-    back: "← Back to Blackout", eyebrow: "Sponsorship", h1: "Three ranks. One rover.",
+    back: "← Back to Blackout", eyebrow: "Sponsorship", h1: "Five ranks. One rover.",
     lede: "Blackout is built by students for WRO 2026 Future Innovators. Sponsors cover parts, batteries, print time and getting the rover to the venue. What you cover decides the rank, and the rank decides where your name shows up.",
     open: "Slot open",
     diamond: {
@@ -163,16 +267,26 @@ const DICT = {
     platinum: {
       name: "Platinum"
     },
+    gold: {
+      name: "Gold", who: "Logo on the rover and the site."
+    },
     standard: {
       name: "Standard"
     },
+    mention: {
+      name: "Mention", who: "No cash needed — a thank-you shout-out on our posts and pit wall."
+    },
     note: "Want a rank? Talk to the team on GitHub. Blackout is a school competition project, not a company — sponsorship pays for hardware and travel, and nothing here is a commercial offer.",
+    donate: {
+      h2: "Can't sponsor? Fund us instead.",
+      raised: "raised", of: "of", goal: "goal",
+    },
     nav: { run: "The run", pricing: "Pricing", roadmap: "Models" },
     footer: { p: "A WRO 2026 Future Innovators project.", lang: "Language" }
   },
   es: {
     title: "Blackout · Patrocinadores",
-    back: "← Volver a Blackout", eyebrow: "Patrocinio", h1: "Tres rangos. Un róver.",
+    back: "← Volver a Blackout", eyebrow: "Patrocinio", h1: "Cinco rangos. Un róver.",
     lede: "Blackout lo construyen estudiantes para la WRO 2026 Future Innovators. Los patrocinadores cubren piezas, baterías, horas de impresión y llevar el róver a la sede. Lo que cubres decide el rango, y el rango decide dónde aparece tu nombre.",
     open: "Plaza libre",
     diamond: {
@@ -181,10 +295,20 @@ const DICT = {
     platinum: {
       name: "Platino"
     },
+    gold: {
+      name: "Oro", who: "Logo en el róver y en el sitio."
+    },
     standard: {
       name: "Estándar"
     },
+    mention: {
+      name: "Mención", who: "Sin dinero — mención de agradecimiento en nuestras publicaciones y en el muro del stand."
+    },
     note: "¿Quieres un rango? Habla con el equipo en GitHub. Blackout es un proyecto escolar de competición, no una empresa — el patrocinio paga hardware y viajes, y nada de esto es una oferta comercial.",
+    donate: {
+      h2: "¿No puedes patrocinar? Fóndéanos.",
+      raised: "recaudado", of: "de", goal: "meta",
+    },
     nav: { run: "El recorrido", pricing: "Precio", roadmap: "Modelos" },
     footer: { p: "Un proyecto de WRO 2026 Future Innovators.", lang: "Idioma" }
   }
@@ -202,6 +326,7 @@ function apply() {
   sponsorsRender(DICT[lang].open);
 }
 apply();
+donateRender();
 
 document.getElementById('langSelect').addEventListener('change', (e) => {
   lang = e.target.value;
