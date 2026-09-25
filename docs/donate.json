@@ -1,0 +1,10 @@
+{
+  "currency": "$",
+  "goal": 20000,
+  "raised": 0,
+  "methods": [
+    { "id": "yappy", "name": "Yappy", "handle": "+507 0000-0000", "note": "Banco General · TODO: replace with the real Yappy number" },
+    { "id": "transfer", "name": "Bank transfer (ACH)", "handle": "Banco · cuenta 00-00-00-000000-0", "note": "TODO: replace with the real bank + account" },
+    { "id": "paypal", "name": "PayPal", "handle": "paypal.me/blackout", "url": "https://paypal.me/", "note": "TODO: replace with the real link" }
+  ]
+}
