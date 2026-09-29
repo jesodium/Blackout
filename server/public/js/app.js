@@ -3040,7 +3040,7 @@ function SettingsModal({ open, onClose }) {
         </div>
         <div class="settings-body">
           ${field("CEREBRAS_API_KEY", t("settings.cerebrasKey"), t("settings.unset"), "password")}
-          ${field("CEREBRAS_MODEL", t("settings.cerebrasModel"), "gemma-4-31b")}
+          ${field("CEREBRAS_MODEL", t("settings.cerebrasModel"), "qwen-3.8-27b")}
           ${field("DEEPGRAM_API_KEY", t("settings.deepgramKey"), t("settings.optional"), "password")}
           ${field("TTS_VOICE", t("settings.ttsVoice"), "en-US-AndrewNeural")}
         </div>

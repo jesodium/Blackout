@@ -470,34 +470,18 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
 - `server/public/js/blk.mjs` — the BLK language (parser, serializer, evaluator,
   linter, interpreter). Text is the file format; `blkedit.js` + `blk.html` are
   the editor, `blksim.js` the offline rover simulator. See "BLK" below.
-- `server/` — Node.js dashboard + "Sage" AI agent. **Cerebras is the only brain**
-  (`BRAINS`/`chat()` in `server.js`): openrouter, groq, gemini and lm studio came
-  out 2026-09-09 — four spare providers meant four sets of keys to keep alive for
-  a venue with no internet, and Cerebras is the one that answers fast. `BRAINS` is
-  still a list and `chat()` still makes two passes, so a rate-limited call costs
-  one retry and a second brain is one line if it is ever wanted again.
-  **The model is `qwen-3.8-27b`** (2026-09-09). `gemma-4-31b` is still listed by
-  `/v1/models` and 404s on every spelling of the name — Cerebras pulled it for
-  public workloads and points at qwen — so a name that reads fine in `.env` is a
-  dead brain. `gpt-oss-120b` is the third and refuses `image_url` content outright
-  ("Only 'text' content type"), which kills Sage's vision, so qwen is the only one
-  of the three that can do the whole job. `reasoning_effort: "none"` is on qwen
-  only (`CEREBRAS_TUNE`) — without it every reply arrives behind a paragraph of
-  thinking. **Vision on it is ~0.6-1.0s for a whole svga frame** (measured off a
-  real 600x800 shot, 23KB), so there is nothing to gain by downscaling before the
-  send: 448px wide saved ~30ms and cost detail. The "~17s when she looks" figure
-  below is the old provider's.
-  **Only the FIRST message may be a system message** — a second one 400s with
-  `System message must be at the beginning` and the SDK reports it as a bodyless
-  400, so a dashboard set to Spanish (`langMsg()` adds the language instruction as
-  its own system message) took Sage out entirely. `chat()` folds every system
-  message into one before the call, at the one choke point rather than the five
-  call sites.
-  **A 404 is a dead brain for the session** (`BRAIN_DEAD`), so with nothing behind
-  it a `CEREBRAS_MODEL` the key cannot reach takes Sage out until a restart — and
-  it used to report **"AI key not set" for a key that was set fine**, because a
-  brain skipped as dead left nothing to throw. `b.deadErr` carries the real reason
-  now, which is how the 404 was finally read.
+- `server/` — Node.js dashboard + "Sage" AI agent. **Cerebras `qwen-3.8-27b` is the only
+  brain, and it is PAID** (PayGo credit since 2026-09-29; the free tier ended 2026-08-17)
+  — `BRAINS`/`chat()` in `server.js`. ~$1/M input, so a heavy day is ~$1.50; an empty
+  balance takes Sage out, it does not fall back. Measured 2026-09-29: 0.3-0.4s warm with
+  a still, 0.4-0.7s through `/api/chat`. Nothing free came close, so don't redo the
+  bake-off: groq's free qwen caps at 8k tokens/min (a camera turn is ~11k), gemini
+  flash-lite was 2.8-9s, mistral's free ministral-8b 1.5-2.2s and it invents readings.
+  The Electron app reads the key from its own settings panel (userData), not `.env`.
+  `chat()` folds every system message into one (Cerebras 400s on a second, which is
+  what `langMsg()` adds in Spanish), retries once, and drops a brain for the session on
+  401/402/403/404 (`BRAIN_DEAD`, real reason in `b.deadErr`). **Sage needs a model that
+  takes `image_url` content** and answers JSON.
   BLE is read directly by the browser (Web Bluetooth) and forwarded to
   `/api/mega/sensor`; gamepad input goes out the same way as dashboard
   drive commands. `sage.js` parses the model's JSON replies; `vision.js`
