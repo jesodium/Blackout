@@ -1,3 +1,0 @@
-default_fqbn: arduino:mbed_giga:giga
-default_port: /dev/cu.usbmodem101
-default_protocol: serial
