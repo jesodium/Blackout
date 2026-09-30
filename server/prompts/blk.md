@@ -40,16 +40,16 @@ BLK language — the ONLY ops that exist:
 **Comments**
 - `# note` is a comment line. A `~` in front of any op disables it (kept in the file, skipped at run).
 
-**Expressions** — numbers, sensors, variables, `+ - * / %`, parentheses, and `min(a,b) max(a,b) abs(a) round(a) random(a,b) clamp(v,lo,hi)`. Anywhere a number goes, an expression goes: `forward 200 + n * 100`.
+**Expressions** — numbers, sensors, variables, `+ - * / %`, parentheses, and `min(a,b) max(a,b) abs(a) round(a) random(a,b) clamp(v,lo,hi)`. Anywhere a number goes, an expression goes: `right 200 + n * 100`.
 
-**Conditions** — `<expr> <cmp> <expr>` joined with `and` / `or` / `not` and parentheses: `if dist < 20 and (temp > 35 or smoke > 300)`. Always write a comparison, even for a 1/0 flag (`if answer = 1`) — the operator's block editor shows comparisons as pickers.
+**Conditions** — `<expr> <cmp> <expr>` joined with `and` / `or` / `not` and parentheses: `if dist < 20 and (temp > 35 or humid > 90)`. Always write a comparison, even for a 1/0 flag (`if answer = 1`) — the operator's block editor shows comparisons as pickers.
 
-Sensors: `dist` (cm to obstacle ahead), `temp` (°C), `humid` (%), `smoke`, `airq`, `co`, `pressure`, `roll`, `pitch`, `yaw` (degrees), `lux` (ambient light in lux — 0 is pitch dark). Read-only extras: `time` (ms since the program started), `step` (blocks run so far), `speed` (current pwm), `answer`, `found`. Comparators: `< > <= >= = !=`. Useful bands: dist < 20 means obstacle close; temp > 35 hot; smoke > 300 bad air.
+Sensors: `dist` (cm to obstacle ahead), `temp` (°C), `humid` (%), `pressure` (hPa), `roll`, `pitch`, `yaw` (degrees), `lux` (ambient light in lux — 0 is pitch dark). `smoke`, `airq` and `co` parse but are not wired on this rover and always read 0 — never branch on them. Read-only extras: `time` (ms since the program started), `step` (blocks run so far), `speed` (current pwm), `answer`, `found`. Comparators: `< > <= >= = !=`. Useful bands: dist < 20 means obstacle close; temp > 35 hot.
 
 Rules:
 - Use ONLY the ops above. No strings in variables, no arrays, no parallel scripts — they don't exist.
 - Indent bodies with two spaces. Every repeat/forever/if/def needs its `end`.
-- Keep programs short and safe: an obstacle check (`if dist < 20`) before a long forward run is good practice, and drive-until/wait-until steps get a timeout.
+- Keep programs short. Every drive-until/wait-until gets a timeout.
 - A `forever` loop is fine — the operator has a STOP button.
 - Only ever `def` at the top level, and `call` a name you defined.
 

@@ -20,13 +20,11 @@ const { parseSage, snapSummary, wantsTool, armMovesFor } = require("./sage");
 const recorder = require("./recorder");
 
 // ---- brains ----
-// Cerebras only. The fallback chain (openrouter/groq/gemini/lmstudio) is gone —
-// four spare providers meant four sets of keys to keep alive for a venue with no
-// internet, and the one that answers fast is this one. Still a list, so chat()'s
-// retry pass is unchanged and a second brain is one line if it is ever wanted.
-// qwen puts a paragraph of thinking in front of every reply unless this is off;
-// gemma has no reasoning mode and 400s on the param, so it is per-model.
-const CEREBRAS_TUNE = (process.env.CEREBRAS_MODEL || "").startsWith("qwen") ? { reasoning_effort: "none" } : {};
+// Cerebras only, PAID (PayGo credit since 2026-09-29 — its free tier ended
+// 2026-08-17). Still a list, so chat()'s retry pass is unchanged and a second
+// brain is one row if it is ever wanted.
+// qwen puts a paragraph of thinking in front of every reply unless this is off.
+const CEREBRAS_TUNE = (process.env.CEREBRAS_MODEL || "qwen").startsWith("qwen") ? { reasoning_effort: "none" } : {};
 const BRAINS = [
   ["cerebras", process.env.CEREBRAS_API_KEY, "https://api.cerebras.ai/v1", process.env.CEREBRAS_MODEL || "qwen-3.8-27b", CEREBRAS_TUNE],
 ].filter(([, key]) => key).map(([name, key, baseURL, model, tune]) => ({ name, model, tune, baseURL, client: new OpenAI({ baseURL, apiKey: key, maxRetries: 0 }) }));
@@ -49,7 +47,7 @@ async function chat(params) {
     for (const b of BRAINS) {
       // A brain dropped on an earlier call leaves nothing to throw, and the
       // caller then reported "AI key not set" for a key that was set fine — a
-      // wrong CEREBRAS_MODEL read as a missing key for a whole session. Carry
+      // wrong model name read as a missing key for a whole session. Carry
       // the reason it died.
       if (b.dead) { last = last || b.deadErr; continue; }
       if (pass && b.cooled) continue;
@@ -334,7 +332,7 @@ app.get("/api/lan", (req, res) => {
   res.json({ url: ip ? `http://${ip}:${PORT}` : null, host: `http://blackout.local:${PORT}` });
 });
 
-const CLOUD_HOSTS = { sage: BRAINS[0] ? new URL(BRAINS[0].baseURL).origin + "/" : "https://api.cerebras.ai/", tts: "https://api.deepgram.com/" };
+const CLOUD_HOSTS = { sage: BRAINS[0] ? new URL(BRAINS[0].baseURL).origin + "/" : null, tts: "https://api.deepgram.com/" };
 let cloudSeen = { at: 0, state: null };
 app.get("/api/cloud", async (_req, res) => {
   if (cloudSeen.state && Date.now() - cloudSeen.at < 25000) return res.json(cloudSeen.state);

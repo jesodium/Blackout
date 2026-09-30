@@ -1,0 +1,9 @@
+boards:
+- name: Arduino Giga R1
+  fqbn: arduino:mbed_giga:giga
+  port: /dev/cu.usbmodem101
+  sketch: giga-r1/main
+- name: AI Thinker ESP32-CAM
+  fqbn: esp32:esp32:esp32cam
+  port: /dev/cu.wchusbserial1110
+  sketch: esp32-cam/main
