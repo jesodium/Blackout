@@ -39,13 +39,13 @@
     "test:camusb": "node camserial.js --selftest"
   },
   "dependencies": {
-    "dotenv": "^17.4.2",
+    "dotenv": "^18.0.4",
     "express": "^5.2.1",
-    "msedge-tts": "^2.0.7",
+    "msedge-tts": "^2.0.8",
     "multicast-dns": "^7.2.5",
-    "openai": "^7.8.0",
+    "openai": "^7.23.0",
     "serialport": "^13.0.0",
-    "sharp": "^0.35.4",
-    "socket.io": "^4.8.1"
+    "sharp": "^0.35.5",
+    "socket.io": "^4.8.4"
   }
 }
