@@ -703,8 +703,8 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     later: both are a machine guessing at "can she see?" when the one thing in
     the loop that can actually answer is Sage looking at the picture. So **`lux`
     is a display reading and nothing else** — a tile, a chart, a line in her
-    readings — and the whole rule is one sentence in `lampLine()` and in all
-    three prompts: *too dark to make out, raise it; judge that off the picture,
+    readings — and the whole rule is one sentence in `lampLine()` and in
+    `chat.md`/`analysis.md`: *too dark to make out, raise it; judge that off the picture,
     never off the lx number*. Gone with it: `darkCheck`, `rampLamp`, the
     `agent-blurt` line and its `lamp-auto` feed row, `LUX_DARK`/`LUX_LIGHT`, and
     `rampTo`/`autoLamp`/`lampStep` in `vision.js` (the bracket walk that was
@@ -768,10 +768,9 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     bare `forward 800` into `forward until dist < 10 timeout 800` before the card is
     built: the same burst, ended the moment the sonar sees something inside 10cm,
     which is what the board's `moveu` already does (bursts, condition re-checked every
-    `loop()` pass). She is told to write the guard herself in all three prompts that
-    can move the rover (`chat.md`, `blk.md`, and `autonomous.md`, which has no
-    condition to ride along — a raw `drv` burst checks nothing, so there the rule is a
-    distance floor); the rewrite is the belt, and the card shows the guarded text so
+    `loop()` pass). She is told to write the guard herself in both prompts that
+    can move the rover (`chat.md` and `blk.md`; `autonomous.md` was loaded by nothing
+    and was deleted 2026-09-29); the rewrite is the belt, and the card shows the guarded text so
     what the operator reads is what runs. A `dist` guard she wrote is left alone — a
     wider berth (`until dist < 25`) is the point, not a miss — and `back`/`left`/`right`
     are never guarded, because the sensor faces forward and the check would fire on the
