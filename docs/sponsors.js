@@ -60,7 +60,9 @@ const sponsorsRender = (() => {
     if (!cache) cache = await fetch('sponsors.json').then(r => r.json()).catch(() => ({}));
     for (const ul of lists) {
       const tier = cache[ul.dataset.tier] || [];
-      ul.innerHTML = tier.length ? tier.map(cell).join('') : `<li class="open">${esc(openLabel)}</li>`;
+      // data-slots: pad with open cells up to the rank's slot count
+      const open = Math.max(+ul.dataset.slots || (tier.length ? 0 : 1), tier.length) - tier.length;
+      ul.innerHTML = tier.map(cell).join('') + `<li class="open">${esc(openLabel)}</li>`.repeat(open);
     }
     highlightFromUrl();
   };
