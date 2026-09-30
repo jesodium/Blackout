@@ -2,6 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from
 import { createRoot } from "react-dom/client";
 import { createPortal, flushSync } from "react-dom";
 import htm from "htm";
+import qrcode from "qrcode";
 import { createRoverScene } from "./scene.js";
 import { t, getLang, setLang, LANGS, ttsVoice, speechLang, ONBOARDING } from "./i18n.js";
 import { parse as blkParse, run as blkRun, lint as blkLint, estimate as blkEstimate, fmtMs,
@@ -63,7 +64,8 @@ const anaCam = () => Math.min(Math.max(0, +localStorage.getItem("camMain") || 0)
 const camHost = (cam = 0) => localStorage.getItem(camKey("camHost", cam)) || CAM_DEFAULTS[cam];
 // a host that already carries a port is the usb bridge on this server, which
 // serves the stream beside /control instead of on the cam's own :81
-const camUrl = (host) => `http://${host.includes(":") ? host : host + ":81"}/stream`;
+// our own host keeps the page's scheme: over an https tunnel an http:// feed is mixed content
+const camUrl = (host) => `${host === location.host ? location.protocol : "http:"}//${host.includes(":") ? host : host + ":81"}/stream`;
 
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
 
@@ -2958,6 +2960,30 @@ function Toasts({ items }) {
   return html`<div class="toasts">${items.map(t => html`<div key=${t.id} class=${"toast k-" + t.kind + (t.leaving ? " is-leaving" : "")}>${t.msg}</div>`)}</div>`;
 }
 
+// electron only: a public https url (cloudflared, owned by electron/main.js) for a
+// tablet the LAN can't reach. Shown as a qr -- nobody types a trycloudflare url.
+function TunnelRow() {
+  const [st, setSt] = useState({ on: false, url: null });
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { window.blackout.getTunnel().then(setSt); return window.blackout.onTunnel(setSt); }, []);
+  const flip = async () => { setBusy(true); setSt(await window.blackout.tunnel(!st.on)); setBusy(false); };
+  const qr = st.url && (() => { const q = qrcode(0, "M"); q.addData(st.url); q.make(); return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); })();
+  return html`
+    <div class="tunnel-row">
+      <div class="device-row">
+        <span class="device-name">${t("devices.tunnel")}</span>
+        <button type="button" class=${"serial-btn" + (st.on ? " is-on" : "")} disabled=${busy} onClick=${flip}>
+          ${busy ? t("devices.tunnelStarting") : st.on ? t("devices.tunnelStop") : t("devices.tunnelStart")}
+        </button>
+      </div>
+      ${st.error && html`<p class="tunnel-err">${st.error}</p>`}
+      ${st.url && html`
+        <div class="tunnel-qr" dangerouslySetInnerHTML=${{ __html: qr }} />
+        <button type="button" class="lan-btn tunnel-url" title=${t("devices.tunnelCopy")}
+          onClick=${() => navigator.clipboard?.writeText(st.url)}>${st.url.replace("https://", "")}</button>`}
+    </div>`;
+}
+
 const DEV_MODES = [["mirror", "devices.view"], ["judge", "devices.judge"], ["full", "devices.full"]];
 
 function DevicesModal({ open, clients, selfId, onMode, onClose }) {
@@ -3000,6 +3026,7 @@ function DevicesModal({ open, clients, selfId, onMode, onClose }) {
                   </select>`}
             </li>`)}
         </ul>
+        ${window.blackout?.tunnel && html`<${TunnelRow} />`}
       </div>
       ${ask && html`
         <div class=${"blk-modal" + (ask.closing ? " is-closing" : "")}

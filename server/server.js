@@ -1337,7 +1337,13 @@ else console.log("USB serial auto-connect off — select a port in the dashboard
 const clients = new Map();
 
 const grants = new Map();
-const isHost = (s) => ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(s.handshake.address);
+// IMPORTANT NOTE: a tunnel (cmds/tunnel.sh) delivers every remote client FROM loopback,
+// so a request carrying a proxy header is never the host -- its ip is the header's.
+const fwdIp = (s) => {
+  const h = s.handshake.headers;
+  return h["cf-connecting-ip"] || String(h["x-forwarded-for"] || "").split(",")[0].trim() || null;
+};
+const isHost = (s) => !fwdIp(s) && ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(s.handshake.address);
 
 // Sage borrows her still off a dashboard's live feed instead of opening a second
 // stream the cam can't serve -- see setFrameSource in vision.js. The host first, any
@@ -1359,7 +1365,7 @@ const pushClients = () => io.emit("clients", [...clients].map(([id, c]) => ({ id
 io.on("connection", (socket) => {
   console.log("Client connected");
   const host = isHost(socket);
-  const ip = String(socket.handshake.address).replace("::ffff:", "");
+  const ip = fwdIp(socket) || String(socket.handshake.address).replace("::ffff:", "");
   const mode = host ? "full" : (grants.get(ip) || "mirror");
   clients.set(socket.id, {
     ip,

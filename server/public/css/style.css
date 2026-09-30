@@ -1315,6 +1315,12 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .device-empty { font: 500 12px/1 var(--mono); color: var(--ink-3); padding: 10px 2px; }
 .device-row .serial-btn { min-height: 36px; min-width: 116px; }
 .device-row .serial-btn.is-on { color: var(--go); border-color: var(--go); }
+.tunnel-row { padding: 0 12px 14px; border-top: 1px solid var(--line); }
+.tunnel-row .device-row { padding-left: 0; padding-right: 0; border-bottom: 0; }
+.tunnel-qr { width: 200px; margin: 6px auto; background: #fff; }
+.tunnel-qr svg { display: block; width: 100%; height: auto; }
+.tunnel-url { display: block; margin: 0 auto; max-width: 100%; overflow-wrap: anywhere; }
+.tunnel-err { font: 500 12px/1.4 var(--mono); color: var(--warn); margin: 4px 0 0; }
 
 .blk-modal .blk-modal { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(6, 6, 7, 0.6); }
 

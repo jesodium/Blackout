@@ -18,4 +18,7 @@ contextBridge.exposeInMainWorld("blackout", {
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSettings: (values) => ipcRenderer.invoke("settings:save", values),
   relaunch: () => ipcRenderer.invoke("app:relaunch"),
+  tunnel: (on) => ipcRenderer.invoke(on ? "tunnel:start" : "tunnel:stop"),
+  getTunnel: () => ipcRenderer.invoke("tunnel:get"),
+  onTunnel: sub("tunnel:state"),
 });

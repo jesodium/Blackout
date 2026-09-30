@@ -23,6 +23,8 @@ const FILES = {
   // createRoot, createPortal and flushSync, so no second copy of the reconciler.
   "react-dom.js": "https://esm.sh/react-dom@18.3.1/X-ZXJlYWN0/es2022/react-dom.bundle.mjs",
   "htm.js": "https://esm.sh/htm@3.1.1/es2022/htm.bundle.mjs",
+  // the tunnel url is too long to type on a tablet -- the devices modal draws it as a qr
+  "qrcode.js": "https://esm.sh/qrcode-generator@1.4.4/es2022/qrcode-generator.bundle.mjs",
 };
 
 // socket.io is NOT here: the server serves its own client at /socket.io/socket.io.js.

@@ -588,6 +588,12 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     the server holds it as telemetry-only exactly like mirror, so nothing about the
     drive gate changes. Modes are held by ip and survive a reconnect.
     `npm run test:mirror` covers all three.
+    **A tablet that can't reach the LAN gets the TUNNEL button** in CONNECTED DEVICES
+    (Electron only — `startTunnel()` in `electron/main.js` spawns a cloudflared quick
+    tunnel; the modal shows the https `trycloudflare.com` url as a QR, `vendor/qrcode.js`). Tunnel traffic arrives FROM
+    loopback, so `isHost()` refuses anything carrying `cf-connecting-ip` /
+    `x-forwarded-for` and uses that header as the client's ip (`fwdIp()`) — without
+    it every tunnel viewer would be the host. Needs internet on the PC.
   - **A sensor sending a bare 0 is not wired** — the CSV pads unlanded fields with
     zeroes, and 0 ppm rendered as "normal/good" is a green lamp for hardware that
     isn't on the robot, in the tile *and* in the go/no-go verdict. `reads()`
