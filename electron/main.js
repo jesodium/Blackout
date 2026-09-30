@@ -183,6 +183,53 @@ ipcMain.handle("dialog:open", async (_e, { filters }) => {
   return { name: path.basename(filePaths[0]), text: await fs.promises.readFile(filePaths[0], "utf8") };
 });
 
+// ---- tunnel ----
+// a public https url for a tablet that can't reach this machine over the LAN. server.js
+// never treats a tunnelled client as host (fwdIp), so it lands in mirror like any tablet.
+// IMPORTANT NOTE: cloudflared quick tunnel -- needs internet on this machine and the url
+// changes every start; a named tunnel is the upgrade if a fixed url ever matters.
+let tunnel = null; // { proc, url }
+const tunnelState = () => ({ on: !!tunnel, url: tunnel?.url || null });
+const pushTunnel = () => win?.webContents.send("tunnel:state", tunnelState());
+
+function startTunnel() {
+  if (tunnel) return Promise.resolve(tunnelState());
+  const { spawn } = require("child_process");
+  return new Promise((resolve) => {
+    const proc = spawn("cloudflared", ["tunnel", "--no-autoupdate", "--url", APP_URL], {
+      env: { ...process.env, PATH: `${process.env.PATH || ""}:/opt/homebrew/bin:/usr/local/bin` },
+    });
+    tunnel = { proc, url: null };
+    let log = "";
+    const fail = (error) => { if (tunnel?.proc === proc) tunnel = null; proc.kill(); pushTunnel(); resolve({ on: false, error }); };
+    const timer = setTimeout(() => fail("cloudflared gave no url in 30s -- is this machine online?"), 30000);
+    const read = (d) => {
+      log = (log + d).slice(-2000);
+      const m = !tunnel?.url && log.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+      if (!m) return;
+      clearTimeout(timer);
+      tunnel.url = m[0];
+      pushTunnel();
+      resolve(tunnelState());
+    };
+    proc.stdout.on("data", read);
+    proc.stderr.on("data", read);
+    proc.on("error", (e) => { clearTimeout(timer); fail(e.code === "ENOENT" ? "cloudflared not installed (brew install cloudflared)" : e.message); });
+    proc.on("exit", () => { clearTimeout(timer); if (tunnel?.proc === proc) { tunnel = null; pushTunnel(); } resolve({ on: false, error: "cloudflared exited" }); });
+  });
+}
+
+function stopTunnel() {
+  tunnel?.proc.kill();
+  tunnel = null;
+  pushTunnel();
+  return tunnelState();
+}
+
+ipcMain.handle("tunnel:start", () => startTunnel());
+ipcMain.handle("tunnel:stop", () => stopTunnel());
+ipcMain.handle("tunnel:get", () => tunnelState());
+
 ipcMain.handle("settings:get", () => readSettings());
 ipcMain.handle("settings:save", (_e, values) => { writeSettings(values); return true; });
 ipcMain.handle("app:relaunch", () => { app.relaunch(); app.exit(0); });
@@ -255,6 +302,6 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on("before-quit", () => { quitting = true; });
-  app.on("will-quit", () => { serverProc?.kill(); });
+  app.on("will-quit", () => { serverProc?.kill(); tunnel?.proc.kill(); });
   app.on("window-all-closed", () => app.quit());
 }
