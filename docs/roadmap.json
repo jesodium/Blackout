@@ -36,22 +36,6 @@
         { "label": "Funciones avanzadas de IA", "has": false },
         { "label": "Control de motor funcional", "has": false }
       ]
-    },
-    "zh": {
-      "state": "已退役",
-      "desc": "三块板卡和一个继电器。一块 Mega 读取传感器，一块 Uno 驱动电机，一块 ESP32 负责它们之间的蓝牙通信。",
-      "cap": "V1 · 三板卡版本",
-      "stats": [
-        { "label": "代码行数", "value": "3,658" },
-        { "label": "板卡", "value": "3" },
-        { "label": "传感器", "value": "2" }
-      ],
-      "features": [
-        { "label": "多块板卡", "has": false },
-        { "label": "摄像头", "has": false },
-        { "label": "高级 AI 功能", "has": false },
-        { "label": "功能性电机控制", "has": false }
-      ]
     }
   },
   {
@@ -91,30 +75,14 @@
         { "label": "Funciona de forma autónoma", "has": false }
       ],
       "cap": "V2 · en la cueva"
-    },
-    "zh": {
-      "state": "已退役",
-      "desc": "精简为单块 Uno R4 WiFi，ESP32-CAM 接入独立网络，并引入 Sage 作为机器人的语音。",
-      "stats": [
-        { "label": "代码行数", "value": "6,398" },
-        { "label": "板卡", "value": "2" },
-        { "label": "传感器", "value": "2" }
-      ],
-      "features": [
-        { "label": "AI 与摄像头协同", "has": true },
-        { "label": "摄像头", "has": true },
-        { "label": "能说出发现", "has": true },
-        { "label": "自主运行", "has": false }
-      ],
-      "cap": "V2 · 洞穴中"
     }
   },
   {
     "version": "V3",
     "codename": "Vortex",
     "now": true,
-    "thumb": null,
-    "image": null,
+    "thumb": "assets/v3-rover.jpg",
+    "image": "assets/v3-rover-cave.jpg",
     "en": {
       "state": "Testing in progress",
       "desc": "Giga R1 WiFi, runs became the BLK language, findings log with saved frames, one command flashes both boards. The competition build.",
@@ -133,7 +101,8 @@
         { "label": "Higher torque drivetrain", "has": true },
         { "label": "Bigger design", "has": true },
         { "label": "BLK language support", "has": true }
-      ]
+      ],
+      "cap": "V3 · Vortex"
     },
     "es": {
       "state": "En pruebas",
@@ -153,79 +122,8 @@
         { "label": "Tren motriz de mayor par", "has": true },
         { "label": "Diseño más grande", "has": true },
         { "label": "Soporte del lenguaje BLK", "has": true }
-      ]
-    },
-    "zh": {
-      "state": "测试中",
-      "desc": "Giga R1 WiFi，例行程序演化为 BLK 语言，发现日志支持保存画面，一条命令同时刷写两块板卡。竞赛版本。",
-      "stats": [
-        { "label": "代码行数", "value": "16,009" },
-        { "label": "板卡", "value": "2" },
-        { "label": "传感器", "value": "2" }
       ],
-      "features": [
-        { "label": "AI 与摄像头协同", "has": true },
-        { "label": "摄像头", "has": true },
-        { "label": "能说出发现", "has": true },
-        { "label": "MCP 服务器支持", "has": false },
-        { "label": "全新设计、更聪明的 Sage", "has": true },
-        { "label": "扩展端口", "has": false },
-        { "label": "更大扭矩的传动系统", "has": true },
-        { "label": "更大的设计", "has": true },
-        { "label": "BLK 语言支持", "has": true }
-      ]
-    }
-  },
-  {
-    "version": "V4",
-    "codename": "Codename Pending",
-    "now": false,
-    "thumb": null,
-    "image": null,
-    "en": {
-      "state": "In design",
-      "desc": "Not built. Machine learning on the rover: a trained model calling what it sees, closed-loop motion from wheel encoders, gas and orientation sensing.",
-      "stats": [
-        { "label": "Lines of code", "value": "—" },
-        { "label": "Boards", "value": "2" },
-        { "label": "Sensors", "value": "5" }
-      ],
-      "features": [
-        { "label": "Machine learning on board", "has": true },
-        { "label": "Closed-loop motion", "has": true },
-        { "label": "Vision on the board", "has": true },
-        { "label": "Gas and orientation", "has": true }
-      ]
-    },
-    "es": {
-      "state": "En diseño",
-      "desc": "Aún no construida. Aprendizaje automático a bordo: un modelo entrenado que reconoce lo que ve, movimiento en lazo cerrado con encoders de rueda, detección de gas y orientación.",
-      "stats": [
-        { "label": "Líneas de código", "value": "—" },
-        { "label": "Placas", "value": "2" },
-        { "label": "Sensores", "value": "5" }
-      ],
-      "features": [
-        { "label": "Aprendizaje automático a bordo", "has": true },
-        { "label": "Movimiento en lazo cerrado", "has": true },
-        { "label": "Visión a bordo", "has": true },
-        { "label": "Gas y orientación", "has": true }
-      ]
-    },
-    "zh": {
-      "state": "设计中",
-      "desc": "尚未建造。漫游车上的机器学习：训练模型识别所见，基于轮式编码器的闭环运动，气体与方位感知。",
-      "stats": [
-        { "label": "代码行数", "value": "—" },
-        { "label": "板卡", "value": "2" },
-        { "label": "传感器", "value": "5" }
-      ],
-      "features": [
-        { "label": "板载机器学习", "has": true },
-        { "label": "闭环运动", "has": true },
-        { "label": "板载视觉", "has": true },
-        { "label": "气体与方位感知", "has": true }
-      ]
+      "cap": "V3 · Vortex"
     }
   }
 ]
