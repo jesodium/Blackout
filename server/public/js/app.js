@@ -66,6 +66,9 @@ const camHost = (cam = 0) => localStorage.getItem(camKey("camHost", cam)) || CAM
 // serves the stream beside /control instead of on the cam's own :81
 // our own host keeps the page's scheme: over an https tunnel an http:// feed is mixed content
 const camUrl = (host) => `${host === location.host ? location.protocol : "http:"}//${host.includes(":") ? host : host + ":81"}/stream`;
+// Only the cloudflared tunnel serves this page over https: the cam's LAN address is
+// unreachable (and mixed content) from there, so the feed is the host's, relayed.
+const TUNNEL = location.protocol === "https:";
 
 const fmt = (v, d) => (v == null || isNaN(v) ? "--" : Number(v).toFixed(d));
 
@@ -1620,7 +1623,7 @@ function CamView({ cam = 0, pip = false, onSwap }) {
   // host, so a serial-only rig would sit red for half a minute on a cam that is
   // plugged in. A rig with no cable gets an instant 503 and nothing changes.
   useEffect(() => {
-    if (cam || localStorage.getItem(camKey("camHost", cam))) return;
+    if (TUNNEL || cam || localStorage.getItem(camKey("camHost", cam))) return;
     fetch("/capture", { cache: "no-store" })
       .then((r) => { if (r.ok) setHost(location.host); })
       .catch(() => {});
@@ -1652,7 +1655,7 @@ function CamView({ cam = 0, pip = false, onSwap }) {
     };
     (async () => {
       try {
-        const res = await fetch(camUrl(host), { signal: ctl.signal, cache: "no-store" });
+        const res = await fetch(TUNNEL ? `/relay/${cam}/stream` : camUrl(host), { signal: ctl.signal, cache: "no-store" });
         if (!res.ok || !res.body) throw new Error("HTTP " + res.status);
         const reader = res.body.getReader();
         let buf = new Uint8Array(0);
@@ -2811,7 +2814,7 @@ function PipToggle() {
     </button>`;
 }
 
-function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, onAnalyze, onNote, onSay, enabled, onTutorial, saver, onSaver, moves, onMoves, lamp, onLamp, buzz, onBuzz }) {
+function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, chat, onCmd, onAnalyze, onNote, onSay, enabled, onTutorial, saver, onSaver, moves, onMoves, lamp, onLamp, demo, onDemo, buzz, onBuzz }) {
   if (!open) return null;
   const tabs = [["logs", t("zone.logs")], ["findings", t("zone.analysis")], ["serial", t("zone.serial")], ["motor", t("colo.motor")], ["tapes", "Tapes"]];
   return html`
@@ -2831,6 +2834,11 @@ function Drawer({ open, tab, onTab, onClose, logs, serialLines, onClearSerial, c
         <button type="button" class=${"serial-btn drawer-lamp" + (lamp ? " is-on" : "")}
           aria-pressed=${!!lamp} onClick=${onLamp} title=${t("drawer.lampTitle")}>
           ${t("drawer.lamp")}: ${t(lamp ? "drawer.on" : "drawer.off")}
+        </button>
+        ${""}
+        <button type="button" class=${"serial-btn drawer-demo" + (demo ? " is-on" : "")}
+          aria-pressed=${!!demo} onClick=${onDemo} title=${t("drawer.demoTitle")}>
+          ${t("drawer.demo")}: ${t(demo ? "drawer.on" : "drawer.off")}
         </button>
         ${""}
         <${PipToggle} />
@@ -2980,7 +2988,7 @@ function TunnelRow() {
       ${st.url && html`
         <div class="tunnel-qr" dangerouslySetInnerHTML=${{ __html: qr }} />
         <button type="button" class="lan-btn tunnel-url" title=${t("devices.tunnelCopy")}
-          onClick=${() => navigator.clipboard?.writeText(st.url)}>${st.url.replace("https://", "")}</button>`}
+          onClick=${() => navigator.clipboard?.writeText(st.url)}>${st.url.replace(/^https?:\/\//, "")}</button>`}
     </div>`;
 }
 
@@ -3429,6 +3437,12 @@ function App() {
   const lampRef = useRef(lamp);
   lampRef.current = lamp;
   const toggleLamp = useCallback(() => setLamp(l => { localStorage.setItem("sageLamp", String(!l)); return !l; }), []);
+  // CONSOLE -> DEMO: interview mode -- names what it's shown, answers hardware
+  // questions, no cave drama. Rides on /api/chat and request-analysis.
+  const [demo, setDemo] = useState(() => localStorage.getItem("sageDemo") === "true");
+  const demoRef = useRef(demo);
+  demoRef.current = demo;
+  const toggleDemo = useCallback(() => setDemo(d => { localStorage.setItem("sageDemo", String(!d)); return !d; }), []);
   useEffect(() => { localStorage.setItem("chats", JSON.stringify(chats)); }, [chats]);
   useEffect(() => { localStorage.setItem("activeChat", activeId); }, [activeId]);
   useEffect(() => { localStorage.setItem("ttsProvider", ttsProv); ttsProviderRef = ttsProv; }, [ttsProv]);
@@ -3666,7 +3680,7 @@ function App() {
     if (analyzingRef.current) return;
     analyzingRef.current = true;
     setAi(p => ({ ...p, analyzing: true, badge: "badge.analyzing", phase: "thinking", since: Date.now(), llm: null, tts: null }));
-    socketRef.current?.emit("request-analysis", { mode: mode || null, prompt: focus || null, cam: cam ?? anaCam() });
+    socketRef.current?.emit("request-analysis", { mode: mode || null, prompt: focus || null, cam: cam ?? anaCam(), demo: demoRef.current });
   }, []);
 
   // One handler for both transports: over BLE the browser owns the link, over usb
@@ -3940,7 +3954,7 @@ function App() {
     try {
       const r = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, lang: getLang(), moves: movesRef.current, lamp: lampRef.current, confirm: confirmRef.current }),
+        body: JSON.stringify({ messages: next, lang: getLang(), moves: movesRef.current, lamp: lampRef.current, demo: demoRef.current, confirm: confirmRef.current }),
       });
       const data = await r.json();
       const sage = data.reply, ok = !!(sage && sage.text);
@@ -4328,7 +4342,7 @@ function App() {
           chat=${activeChat} onCmd=${sendCmd} onAnalyze=${analyze} onNote=${(n) => addLog(n, "system")} onSay=${sayFeed}
           enabled=${canDrive} onTutorial=${restartTour}
           saver=${saver} onSaver=${pickSaver} moves=${moves} onMoves=${toggleMoves}
-            lamp=${lamp} onLamp=${toggleLamp}
+            lamp=${lamp} onLamp=${toggleLamp} demo=${demo} onDemo=${toggleDemo}
             buzz=${buzz} onBuzz=${toggleBuzz} />`}
       </div>
 
