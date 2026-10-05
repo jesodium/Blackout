@@ -188,8 +188,19 @@ ipcMain.handle("dialog:open", async (_e, { filters }) => {
 // never treats a tunnelled client as host (fwdIp), so it lands in mirror like any tablet.
 // IMPORTANT NOTE: cloudflared quick tunnel -- needs internet on this machine and the url
 // changes every start; a named tunnel is the upgrade if a fixed url ever matters.
-let tunnel = null; // { proc, url }
-const tunnelState = () => ({ on: !!tunnel, url: tunnel?.url || null });
+let tunnel = null; // { proc, url, short }
+const tunnelState = () => ({ on: !!tunnel, url: tunnel?.short || tunnel?.url || null });
+
+// spoo.me because is.gd, tinyurl and da.gd all blacklist trycloudflare.com. A failed
+// shorten keeps the long url -- the tunnel works either way.
+async function shorten(url) {
+  try {
+    const r = await fetch("https://spoo.me/", { method: "POST", signal: AbortSignal.timeout(6000),
+      headers: { Accept: "application/json" }, body: new URLSearchParams({ url }) });
+    const s = (await r.json()).short_url;
+    return /^https?:\/\/spoo\.me\/\w+$/.test(s) ? s.replace("http:", "https:") : null;
+  } catch { return null; }
+}
 const pushTunnel = () => win?.webContents.send("tunnel:state", tunnelState());
 
 function startTunnel() {
@@ -209,6 +220,8 @@ function startTunnel() {
       if (!m) return;
       clearTimeout(timer);
       tunnel.url = m[0];
+      const t = tunnel;
+      shorten(t.url).then((s) => { if (s && tunnel === t) { t.short = s; pushTunnel(); } });
       pushTunnel();
       resolve(tunnelState());
     };

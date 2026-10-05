@@ -188,6 +188,7 @@ app.post("/api/chat", async (req, res) => {
   // stays off for the whole run. The black-frame ramp is not this and is
   // unaffected.
   if (typeof req.body?.lamp === "boolean") lampAllowed = req.body.lamp;
+  if (typeof req.body?.demo === "boolean") demoMode = req.body.demo;
   const lastSaid = String(msgs[msgs.length - 1]?.content || "");
   const lamp = lampAllowed || LAMP_ASKED.test(lastSaid);
   try {
@@ -197,6 +198,7 @@ app.post("/api/chat", async (req, res) => {
 
     const { reply, steps } = await agentLoop([
       { role: "system", content: CHAT_SYSTEM },
+      ...demoLine(),
       ...langMsg(lang),
       { role: "system", content: ctx },
       ...(moves ? armLine() : []),
@@ -224,6 +226,7 @@ app.post("/api/scan", async (req, res) => {
       : "Your eye is dark right now. Don't mention this or say anything about not being able to see — just report normally from the readings you do have, as if vision were never part of it.";
     const sage = await askSage([
       { role: "system", content: CHAT_SYSTEM },
+      ...demoLine(),
       ...langMsg(currentLanguage),
       { role: "system", content: ctx },
       { role: "user", content: frames.length ? [{ type: "text", text: lead }, ...frames] : lead },
@@ -550,6 +553,7 @@ async function sageDecide(question, { images = [], extra = "" } = {}) {
   const resp = await chat({
     messages: [
       { role: "system", content: CHAT_SYSTEM },
+      ...demoLine(),
       ...langMsg(currentLanguage),
       { role: "system", content: "In this turn you are making a yes/no call for a running workflow. Reply with the JSON object and nothing else." },
       { role: "user", content: images.length ? [{ type: "text", text }, ...images] : text },
@@ -625,6 +629,7 @@ app.post("/api/tape-line", async (req, res) => {
     const d = freshData();
     const resp = await chat({ messages: [
       { role: "system", content: CHAT_SYSTEM },
+      ...demoLine(),
       ...langMsg(lang),
       { role: "system", content: d ? buildChatContext(d) : "No live readings right now — running dark." },
       { role: "system", content: TAPE_LINE_JOB },
@@ -789,10 +794,16 @@ async function pregenOnboarding() {
 
 const loadPrompt = (name) => fs.readFileSync(path.join(__dirname, "prompts", name), "utf8").trim();
 const AI_SYSTEM = loadPrompt("analysis.md");
-const CHAT_SYSTEM = loadPrompt("chat.md");
+// robot.md is the fact sheet: what she answers "what sensors do you have" from.
+const CHAT_SYSTEM = loadPrompt("chat.md") + "\n\n" + loadPrompt("robot.md");
 const BLK_SYSTEM = loadPrompt("blk.md");
 
 const PRESENT_SYSTEM = loadPrompt("present.md");
+// CONSOLE -> DEMO: interview/stand mode, stacked on every CHAT_SYSTEM and on
+// the analysis. Last value any client sent wins, same as lampAllowed.
+const DEMO_SYSTEM = loadPrompt("demo.md");
+let demoMode = false;
+const demoLine = () => demoMode ? [{ role: "system", content: DEMO_SYSTEM }] : [];
 
 const FINDINGS_DIR = path.join(__dirname, "public", "findings");
 fs.mkdirSync(FINDINGS_DIR, { recursive: true });
@@ -1117,6 +1128,7 @@ async function ackMission(text) {
   try {
     const sage = await askSage([
       { role: "system", content: CHAT_SYSTEM },
+      ...demoLine(),
       ...langMsg(currentLanguage),
       { role: "user", content: `The operator is briefing you on the mission before you head in: "${text}". Acknowledge it back in character in one or two sentences — confirm you've got it and you're ready. Don't ask questions, just lock it in.` },
     ], { maxTokens: 150 });
@@ -1199,6 +1211,7 @@ async function runAiAnalysis(mode, focus, cam = 0) {
 
     const { reply: sage } = await agentLoop([
       { role: "system", content: present ? PRESENT_SYSTEM : AI_SYSTEM },
+      ...(present ? [] : demoLine()),
       ...langMsg(currentLanguage),
       { role: "user", content: eyes.length ? [{ type: "text", text: promptText }, ...eyes] : promptText },
     ], { maxTokens: 400, lamp: lampAllowed });
@@ -1358,6 +1371,30 @@ setFrameSource((cam) => new Promise((resolve) => {
   if (!s) return resolve(null);
   s.timeout(800).emit("cam-frame", cam, (err, frame) => resolve(err ? null : frame));
 }));
+// The tunnel can't reach the cam (it's on the LAN, and it's http under an https
+// page), so a tunnelled viewer gets the HOST's own feed re-served here, borrowed
+// frame by frame exactly like Sage's stills -- never a second /stream on the cam.
+// IMPORTANT NOTE: only live while the host has that CamView mounted (camFrames is
+// filled by the feed); host on another tab = the relay just waits.
+app.get("/relay/:cam/stream", (req, res) => {
+  const cam = Number(req.params.cam) || 0;
+  let alive = true, last = null;
+  req.on("close", () => { alive = false; });
+  res.set({ "Content-Type": `multipart/x-mixed-replace;boundary=${CAM_USB_BOUNDARY}`, "Cache-Control": "no-store" });
+  (async () => {
+    while (alive) {
+      const s = [...io.sockets.sockets.values()].find(isHost);
+      const f = s && await new Promise(r => s.timeout(800).emit("cam-frame", cam, (e, b) => r(e ? null : b)));
+      if (alive && f?.length && !(last && Buffer.from(f).equals(last))) {
+        last = Buffer.from(f);
+        res.write(`\r\n--${CAM_USB_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${last.length}\r\n\r\n`);
+        res.write(last);
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+    res.end();
+  })();
+});
 const kindOf = (ua = "") => /iPad|Tablet/.test(ua) ? "iPad" : /iPhone/.test(ua) ? "iPhone"
   : /Android/.test(ua) ? "Android" : /Macintosh/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "device";
 const pushClients = () => io.emit("clients", [...clients].map(([id, c]) => ({ id, ...c })));
@@ -1390,6 +1427,7 @@ io.on("connection", (socket) => {
   if (latestData) socket.emit("sensor-data", latestData);
   socket.on("request-analysis", (opts) => {
     const mode = opts?.mode;
+    if (typeof opts?.demo === "boolean") demoMode = opts.demo;
     const focus = String(opts?.prompt || "").trim().slice(0, 300) || null;
     // the operator's eye for this analysis; out of range falls back to the front cam
     const cam = Number(opts?.cam) > 0 && Number(opts.cam) < camCount ? Number(opts.cam) : 0;

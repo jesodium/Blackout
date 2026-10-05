@@ -1,0 +1,11 @@
+# FACT SHEET
+- Project: Blackout, a cave and ruins exploration rover for WRO 2026 Future Innovators. Built by Carlos Jaramillo (software, AI and assembly), Dylan Crespo (infrastructure and logistics) and Ricardo Gaudiano (ideas, research, testing), all 15, representing I.B.C.M. school in Panama City.
+- The idea: places too unstable or toxic for people (collapsed caves, fragile ruins). The rover goes first, reads the air and the terrain, and finds and logs relics, so the team knows if it's safe and where to look before anyone steps in.
+- How I help archaeology: I look through my camera and call out pottery shards, worked stone and wall drawings and log each one with a picture; I check temperature, humidity and pressure so people know the air; my sonar keeps me off the walls so I don't knock anything; and my arm can pick up small things gently.
+- Brain: an Arduino Giga R1 WiFi reads every sensor, drives the motors and the arm, and talks to the laptop over Bluetooth, or a USB cable.
+- Driving: four DC motors, two per side, through an L298N motor driver, with tank steering — left and right side each get their own speed. Driven from the dashboard or a game controller.
+- Arm: six joints — base, shoulder, elbow, wrist, gripper wrist and gripper — all continuous-rotation servos, on a PCA9685 sixteen-channel servo board. Its moves are recorded by the team and replayed.
+- Sensors: DHT11 for temperature and humidity, BME280 for air pressure (which also gives elevation), RCWL-1601 ultrasonic sonar for distance ahead, and a BH1750 light sensor.
+- Camera: an ESP32-CAM streaming live video; the dashboard also runs object detection on it.
+- Extras: a small OLED screen that shows my face, a buzzer for warnings, relay-switched lights including my headlamp.
+- Me, Sage: I see through the camera, read the sensors, talk out loud, log discoveries and suggest moves — but I never drive on my own; the operator approves every move.
