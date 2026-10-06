@@ -5,7 +5,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import assert from "node:assert";
 
-const app = readFileSync(new URL("public/js/app.js", import.meta.url), "utf8");
+const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
 
 // recording is a tap in sendCmd — the one place every command leaves the browser
 assert.ok(/tapeWatch\(word\);/.test(app), "sendCmd stopped feeding the tape recorder");
@@ -21,7 +21,7 @@ assert.ok(/function tapePlay\([^]*?const tok = \+\+armLedger\.tapeTok;[^]*?if \(
 assert.ok(/useState\(tapeRec\.on\)/.test(app), "Tapes' rec state no longer survives the drawer closing");
 assert.ok(/useState\(tapeRec\.on \? tapeRec\.name : ""\)/.test(app), "the tape name no longer survives the drawer closing");
 
-const src = app.slice(app.indexOf("// ---- tapes ----"), app.indexOf("function Tapes("));
+const src = app.slice(app.indexOf("// ---- tapes ----"), app.indexOf("const armJogOf"));
 const sent = [];
 const io = {
   onCmd: (c) => sent.push(c),

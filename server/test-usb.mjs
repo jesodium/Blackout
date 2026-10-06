@@ -5,7 +5,7 @@ import assert from "assert";
 import { readFileSync } from "fs";
 
 const srv = readFileSync(new URL("./server.js", import.meta.url), "utf8");
-const app = readFileSync(new URL("./public/js/app.js", import.meta.url), "utf8");
+const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`./public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
 const ino = readFileSync(new URL("../giga-r1/main/main.ino", import.meta.url), "utf8");
 
 // 1. the board blocks in readStringUntil('\n') -- a write with no terminator is a

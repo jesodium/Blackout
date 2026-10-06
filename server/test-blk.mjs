@@ -319,22 +319,6 @@ assert.ok(guarded("if dist < 50\n  back 300\nelse\n  forward 500\nend").text.inc
 for (const src of ["forward 800", "repeat 3\n  forward 400\nend", "forward until lux > 100 timeout 3000"])
   assert.doesNotThrow(() => compile(guard(parse(src).program).program), src);
 
-// every move shape prompts/autopilot.md teaches must compile to the board: a
-// fallback to the browser is ~400ms a burst, which is the overshoot autopilot can't afford
-for (const src of ["speed 110\nforward until dist < 15 timeout 1200", "right 400", "back 500\nleft 300", "wait 300", "stop"])
-  assert.doesNotThrow(() => compile(guard(parse(src).program).program), src);
-
-// autopilot pivots at the R2 cap and hands her own speed back (turnsAt in server.js)
-{
-  const src = fs.readFileSync(new URL("./server.js", import.meta.url), "utf8");
-  const turnsAt = new Function(src.slice(src.indexOf("function turnsAt"), src.indexOf("async function autopilot")) + "return turnsAt;")();
-  const out = serialize(turnsAt(parse("speed 110\nright 250\nforward until dist < 20 timeout 1000").program, 200, 140));
-  assert.equal(out, "speed 110\nspeed 200\nright 250\nspeed 110\nforward until dist < 20 timeout 1000");
-  assert.equal(serialize(turnsAt(parse("left 300").program, 255, 140)), "speed 255\nleft 300\nspeed 140");
-  assert.doesNotThrow(() => compile(parse(out).program));
-  assert.equal(serialize(turnsAt(parse("right 150\nleft 500").program, 200, 140, 350)), "speed 200\nright 350\nspeed 140\nspeed 200\nleft 500\nspeed 140");
-}
-
 assert.ok(lint(parse("forward 500").program).some(w => w.includes("blind")));
 assert.deepEqual(lint(parse(`forward until dist < ${GUARD_CM} timeout 500`).program), []);
 

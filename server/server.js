@@ -698,7 +698,6 @@ app.post("/api/cmd", (req, res) => {
   if (!localReq(req)) return res.status(403).json({ error: "loopback only" });
   const w = String(req.body?.cmd || "").trim();
   if (!w || /[\r\n]/.test(w)) return res.status(400).json({ error: "one command line required" });
-  if (w === "stop") autoStop("stop sent");
   usbWrite(w);          // the cable, if one is open
   io.emit("cmd", w);    // and the host browser, which relays over BLE
   res.json({ ok: true, sent: w, link: bleActive || !!serialPort?.isOpen });
@@ -743,122 +742,6 @@ app.post("/api/blk-run", async (req, res) => {
   const { code, body } = await runBlk(req.body?.text);
   res.status(code).json(body);
 });
-
-// ---- autopilot ----
-// Sage drives herself: look (fresh still) -> one small BLK move -> run it through
-// the same runBlk()/playBlk() path her cards and robot_blk use -> look again. So
-// guard() still caps every forward at the sonar, every instruction is still
-// time-limited on the board, and the panic key still kills the program mid-move.
-// What is new is only that nobody presses YES -- which is why the run is bounded
-// (AUTO_MAX_STEPS) and any `stop` ends it.
-// IMPORTANT NOTE: open-loop between looks (no odometry, no map) -- "how far did
-// that pivot turn me" is read off the next picture. A map/odometry is the upgrade
-// if goals ever need more than "go find X in this room".
-const AUTO_MAX_STEPS = parseInt(process.env.AUTO_MAX_STEPS || "40", 10);
-const AUTO_MAX_BAD = 3;      // malformed moves in a row before the run gives up
-// the pause between one move ending and the next look: settles the chassis
-// (a still taken while it rocks is blurred) and keeps her decisions watchable
-const AUTO_PAUSE_MS = parseInt(process.env.AUTO_PAUSE_MS || "2000", 10);
-let auto = null;              // { goal, step } while running; identity is the run token
-
-const autoState = () => ({ on: !!auto, goal: auto?.goal || "", step: auto?.step || 0, max: AUTO_MAX_STEPS });
-function autoStop(why) {
-  if (!auto) return;
-  console.log("Autopilot off:", why);
-  auto = null;
-  io.emit("auto", { ...autoState(), why });
-}
-
-// Every pivot runs at the operator's R2 turbo cap and her own speed is put back
-// after it, so a turn can never crawl at a forward-creep pwm and stall in place.
-// IMPORTANT NOTE: top level only -- the prompt forbids loops/ifs, so a turn
-// nested in one keeps her speed. Recurse into bodies if that ever changes.
-// A timed pivot shorter than minMs is floored to it: a twitch that barely moves
-// the picture wastes a whole look. Bench knob: AUTO_TURN_MIN_MS.
-const AUTO_TURN_MIN_MS = parseInt(process.env.AUTO_TURN_MIN_MS || "350", 10);
-function turnsAt(program, pwm, DEFAULT_PWM, minMs = 0) {
-  let cur = DEFAULT_PWM;
-  return program.flatMap((n) => {
-    if (n.op === "speed" && typeof n.arg === "number") cur = n.arg;
-    if (n.op !== "left" && n.op !== "right") return [n];
-    const t = typeof n.arg === "number" ? { ...n, arg: Math.max(n.arg, minMs) } : n;
-    return [{ op: "speed", arg: pwm }, t, { op: "speed", arg: cur }];
-  });
-}
-
-async function autopilot(goal, turnPwm) {
-  const run = auto = { goal, step: 0 };
-  io.emit("auto", autoState());
-  const log = [];
-  let bad = 0;
-  let why = "step budget used up";
-  try {
-    while (auto === run && run.step < AUTO_MAX_STEPS) {
-      if (run.step) await new Promise((r) => setTimeout(r, AUTO_PAUSE_MS));
-      if (auto !== run) return;
-      run.step++;
-      io.emit("auto", autoState());
-      const data = freshData();
-      const eyes = await grabFrames(1, 0, 0);
-      if (auto !== run) return;
-      const prompt = `GOAL: ${goal}
-Turn ${run.step} of ${AUTO_MAX_STEPS}.
-
-Readings right now:
-${data ? readingLines(data) : "(no telemetry)"}
-Headlamp: ${getLed()} of 255.
-Turns (left/right) always run at turbo pwm ${turnPwm}, whatever speed you set.
-
-What you have done so far:
-${log.slice(-12).join("\n") || "(nothing yet -- this is your first look)"}
-${eyes.length ? "\n(Attached: your forward camera, right now.)" : "\n(Your camera is dark this turn -- do not move forward blind; turn or raise the headlamp.)"}`;
-      const sage = await askSage([
-        { role: "system", content: AUTO_SYSTEM },
-        ...langMsg(currentLanguage),
-        { role: "user", content: eyes.length ? [{ type: "text", text: prompt }, ...eyes] : prompt },
-      ], { maxTokens: 300, lamp: lampAllowed });
-      if (auto !== run) return;
-      io.emit("auto-say", { text: sage.text, status: sage.status, timestamp: Date.now() });
-      if (sage.done) { why = "goal done: " + sage.text; break; }
-      if (!sage.move) { log.push(`#${run.step}: looked, did not move`); continue; }
-      const { parse, serialize, DEFAULT_PWM } = await import("./public/js/blk.mjs");
-      const { program, errors } = parse(sage.move);
-      const { code, body } = await runBlk(errors.length ? sage.move : serialize(turnsAt(program, turnPwm, DEFAULT_PWM, AUTO_TURN_MIN_MS)));
-      const oneLine = sage.move.replace(/\s*\n\s*/g, "; ");
-      emitStep({ kind: "tool", name: "autopilot", arg: oneLine, img: saveShot(eyes),
-        detail: body.error || `ran on ${body.where || "?"}` });
-      // a malformed move is her mistake, not the run's: hand the parser's error
-      // back as this turn's result so she rewrites it. Only a streak ends the run.
-      if (code === 400) {
-        log.push(`#${run.step}: "${oneLine}" was REJECTED (${body.error}) -- nothing moved; rewrite it using only the listed line shapes`);
-        if (++bad >= AUTO_MAX_BAD) { why = `${bad} unreadable moves in a row: ${body.error}`; break; }
-        continue;
-      }
-      bad = 0;
-      if (code !== 200) { why = body.error; break; }
-      if (body.cancelled) { why = "cancelled from the dashboard"; break; }
-      const after = freshData();
-      log.push(`#${run.step}: ${oneLine}${after ? ` -> dist now ${after.dist} cm` : ""}`);
-    }
-  } catch (err) {
-    why = "error: " + err.message;
-    console.error("autopilot:", err.message);
-  }
-  if (auto === run) { usbWrite("stop"); io.emit("cmd", "stop"); autoStop(why); }
-}
-
-app.post("/api/auto", (req, res) => {
-  if (!localReq(req)) return res.status(403).json({ error: "loopback only" });
-  const goal = String(req.body?.goal || "").trim().slice(0, 300);
-  if (!goal) { autoStop("stopped by operator"); return res.json(autoState()); }
-  if (!hasAI) return res.status(503).json({ error: "AI key not set" });
-  autoStop("replaced by a new goal");
-  // the R2 cap lives in the browser (localStorage.boostPwm), so it rides on the start
-  const turn = Math.round(Number(req.body?.turn));
-  autopilot(goal, turn >= 60 && turn <= 255 ? turn : 200);
-  res.json(autoState());
-});
-app.get("/api/auto", (_req, res) => res.json(autoState()));
 
 app.post("/api/mission", (req, res) => {
   if (!localReq(req)) return res.status(403).json({ error: "loopback only" });
@@ -994,7 +877,6 @@ const CHAT_SYSTEM = loadPrompt("chat.md") + "\n\n" + loadPrompt("robot.md");
 const BLK_SYSTEM = loadPrompt("blk.md");
 
 const PRESENT_SYSTEM = loadPrompt("present.md");
-const AUTO_SYSTEM = loadPrompt("autopilot.md");
 // CONSOLE -> DEMO: interview/stand mode, stacked on every CHAT_SYSTEM and on
 // the analysis. Last value any client sent wins, same as lampAllowed.
 const DEMO_SYSTEM = loadPrompt("demo.md");
@@ -1641,11 +1523,8 @@ io.on("connection", (socket) => {
 
   socket.emit("mission-set", { mission: currentMission });
   socket.on("set-mission", setMission);
-  socket.emit("auto", autoState());
-  socket.on("auto-stop", () => autoStop("stop pressed"));   // never gated, same as `stop`
 
   socket.on("cmd", (w) => {
-    if (w === "stop") autoStop("stop pressed");
     if (w !== "stop" && !clients.get(socket.id)?.granted) return;
     usbWrite(w);                      // the cable, if one is open
     socket.broadcast.emit("cmd", w);  // and the host browser, which relays over BLE

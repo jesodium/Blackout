@@ -187,7 +187,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       (the eight takes on disk were migrated 2026-09-03); the **gaps** all
       survive, because the gaps are the take. The selftest asserts both halves.
       **A take that only ever drives one joint one way is rendered as a HELD
-      button, not a tape** — `armJogOf()` in `app.js` reads that off the steps, so
+      button, not a tape** — `armJogOf()` in `control.js` reads that off the steps, so
       "Open Gripper" behaves exactly like the gripper arrow and a short recording
       no longer replays as a twitch. Anything mixed stays a tap-to-replay tape.
       **Each joint row has a speed slider and the speed is part of the take**
@@ -195,7 +195,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       lining the gripper up — and some want everything the joint has. It goes out
       as the ordinary `arm,<j>,<speed>` the firmware already took, so nothing
       downstream learned a new field: the recorder saves the wire command,
-      `armJogOf()` in `app.js` already replays a HELD take at its recorded speed,
+      `armJogOf()` in `control.js` already replays a HELD take at its recorded speed,
       and Sage's tapes are unchanged. Kept per rig in `localStorage.armSpd`.
       **Slow is also weak** — pulse width is speed and torque at once — so a slow
       setting may not lift a gravity-loaded joint at all; that is the servo, not
@@ -278,7 +278,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       that also rolls the rover off the bench is how a joint gets wound into the
       frame. Chrome hides a gamepad from the page until it sends input, so a
       silent controller reads as no controller.
-    - **The gripper row is a LATCH, not a jog** (`clawGo()` in `app.js`, ported
+    - **The gripper row is a LATCH, not a jog** (`clawGo()` in `control.js`, ported
       2026-09-07 off the Uno R4 bench rig — `claw_cmd.ino` + `claw_web.py`).
       **OPEN is a one-shot burst that parks itself after `CLAW_OPEN_MS`, and that
       burst IS the open limit**: a 360 has no end stop to find, so nothing but a
@@ -467,6 +467,11 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     is up the lamp is written to 0 and belongs to `control?var=led`. So a blinking
     lamp on a booted cam is never the indicator: it's the auto headlamp walking, or
     the board in the wifi-fail reboot loop.
+- `server/public/js/control.js` — everything that moves the robot and is not a
+  React component: the BLK runner (`playBlk`), the arm ledger + claw latch,
+  `panicStop`, and the tape recorder/player. `speech.js` is Sage's voice and the
+  spoken-line queue tapes use. `app.js` holds the components that drive them.
+  Tests that read the dashboard's source read all three as one string.
 - `server/public/js/blk.mjs` — the BLK language (parser, serializer, evaluator,
   linter, interpreter). Text is the file format; `blkedit.js` + `blk.html` are
   the editor, `blksim.js` the offline rover simulator. See "BLK" below.
@@ -782,7 +787,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     are never guarded, because the sensor faces forward and the check would fire on the
     wall being driven away from. **An operator's own workflow is never rewritten**:
     theirs comes back from `lint()` as a warning the run panel already shows.
-    The runner is shared with `BlkCtl`, not a second copy — `playBlk()` in `app.js`
+    The runner is shared with `BlkCtl`, not a second copy — `playBlk()` in `control.js`
     (upload → `blk,go` → service the `evt` steps → browser fallback), so a move and a
     saved workflow can never diverge, and one `blkToken` means one program at a time.
     **CONSOLE → SAGE MOVES turns it off** (`sageMoves` in localStorage): the flag
@@ -829,7 +834,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     plays anything and ASK still asks for everything that did not opt out.
     Sage's `move` (BLK) cards are untouched — they always ask.
   - **The arm travel ledger lives outside `<Arm/>`** (`armLedger` / `armSend()` /
-    `armPlay()` in `app.js`): the pad unmounts on every tab switch, and a
+    `armPlay()` in `control.js`): the pad unmounts on every tab switch, and a
     component that unmounts forgets the count — it showed a fresh meter on an arm
     already at its stop. Sage's arm cards fire from the agent feed with no pad on
     screen at all. `armSend()` is the choke point the test still asserts on, and
@@ -976,37 +981,6 @@ is the same door `arm-configurator.sh` knocks on.
 - `npm run test:usb` checks the terminator, the two bauds, the port filter and
   the no-post-back guard off the three files' own source.
 
-## Autopilot
-
-Drive → **AUTO** tab: type a goal, GO, and Sage drives herself — `autopilot()` in
-`server.js`, prompt `prompts/autopilot.md`. One turn = a **fresh** front-cam still
-+ readings + a log of her last moves → one small BLK `move` → run → pause →
-look again. Nobody presses YES, so:
-
-- **The move goes through `runBlk()`, the same path as `/api/blk-run` and her
-  cards** — `guard()` caps every forward at the sonar, `playBlk()` compiles it to
-  the board, and the board's time limits apply. No second runner.
-- **Bounded**: `AUTO_MAX_STEPS` (env, 40) turns, then it parks itself (`stop`).
-  She ends it early with `"done": true` (parsed only as a literal boolean).
-- **A move the parser rejects is fed back, not fatal** — it lands in her log as
-  REJECTED with the parser's error and she rewrites it next turn; only
-  `AUTO_MAX_BAD` (3) in a row ends the run. She drops `timeout` or adds units
-  (`15cm`) often enough that ending on the first one made autopilot unusable.
-- **Every stop ends it**: the panic key (a `panic` window event → `auto-stop`,
-  because over BLE the `stop` never passes the server), the socket `cmd` stop,
-  `/api/cmd` stop, a cancelled blk run, no dashboard holding the link (409).
-- **Turns always run at the R2 turbo cap** (`localStorage.boostPwm`, sent with the
-  GO): `turnsAt()` wraps every top-level `left`/`right` in `speed <R2>` … `speed
-  <hers>`, server-side, so she can't forget it, and floors a timed pivot at
-  `AUTO_TURN_MIN_MS` (env, 350) — a twitch that barely moves the picture wastes a
-  look. The prompt's pivot times (350-600ms) assume that pwm.
-- **`AUTO_PAUSE_MS` (env, 2000) between turns** — settles the chassis before the
-  next still and keeps her decisions watchable. One knob, no other delays.
-- **Open-loop between looks** — no odometry, no map; how far a pivot turned is
-  read off the next picture. Host-only (`/api/auto` is loopback, like `/api/cmd`).
-- The move shapes `autopilot.md` teaches are compiled in `test-blk.mjs`; a prompt
-  that drifts into browser-fallback BLK costs ~400ms a burst.
-
 ## MCP
 
 `server/mcp.mjs` is an MCP stdio server, so Claude Desktop / Claude Code can see
@@ -1058,7 +1032,7 @@ as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
 
 - **A tape is the arm take's `{ms, cmd}`, deliberately** — same shape, same
   player, so drive, arm, lights and routines live in ONE list and there is no
-  second format to keep in step. `tapePlay()` in `app.js` runs on
+  second format to keep in step. `tapePlay()` in `control.js` runs on
   `armLedger.tape`, so the panic key kills a tape mid-run exactly as it kills an
   arm take. It parks the robot at the end (`stop` then `arm,`) — the last step of
   a recording is whatever the operator's finger was doing, which is not
@@ -1193,7 +1167,7 @@ as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
   comes** — same reason the `@sage` cue prefetch exists. The tape now waits for
   every sentence, so a line whose synth round trip only begins once the line
   before it ended puts the whole round trip on screen as silence.
-  `ttsPrewarm()` (`app.js`, next to `speak()`) warms every `@say` in the run into
+  `ttsPrewarm()` (`speech.js`, next to `speak()`) warms every `@say` in the run into
   `ttsWarm`, and a `@sage` cue warms itself the moment the model answers;
   `speak()` takes the parked `Audio` instead of building its own. That is what
   the `@present` at the head of a run buys: the model turn pays for the lines
