@@ -1,4 +1,4 @@
-// PCA9685 (HW-170) servo arm, ported off the OUTDATED/pca_test bench rig.
+// PCA9685 (HW-170) servo arm, ported off the archive/pca_test bench rig.
 //
 // Driven from the BLE `arm,<joint>,<speed>` command (handleCmd in main.ino),
 // which the dashboard's ARM pad repeats every 300ms while a button is held.

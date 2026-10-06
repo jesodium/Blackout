@@ -423,7 +423,7 @@ function armLine() {
 // by hand afterwards. Same {ms, cmd} shape as an arm take, so the arm player
 // replays it and drive + arm live in one list. One file per tape, filename = the
 // name — no index to fall out of step with it, editable in any text editor.
-// NOT giga-r1/main/routines.h: those are Step tables compiled into flash and
+// NOT firmware/giga/main/routines.h: those are Step tables compiled into flash and
 // they have no arm op. A tape runs from the PC, which is also the only place
 // analyze/say exist at all.
 const TAPE_DIR = path.join(__dirname, "tapes");
@@ -1361,9 +1361,9 @@ let flashing = false;
 const V2_REF = "829924d";
 
 const BOARD_PROFILES = [
-  { key: "giga",     fqbnPrefix: "arduino:mbed_giga:",   ports: ["usbmodem"], dir: "giga-r1/main" },
+  { key: "giga",     fqbnPrefix: "arduino:mbed_giga:",   ports: ["usbmodem"], dir: "firmware/giga/main" },
   { key: "unor4",    fqbnPrefix: "arduino:renesas_uno:", ports: [],           dir: "arduino-uno-r4/main", ref: V2_REF },
-  { key: "esp32cam", fqbnPrefix: "esp32:esp32:esp32cam", ports: ["usbserial", "wchusbserial"], dir: "esp32-cam/main" },
+  { key: "esp32cam", fqbnPrefix: "esp32:esp32:esp32cam", ports: ["usbserial", "wchusbserial"], dir: "firmware/esp32-cam/main" },
 ];
 
 const lastFlash = () => {
@@ -1419,7 +1419,7 @@ app.post("/api/flash/start", (req, res) => {
   disconnectSerial();
   camusb.close();   // the cam's own cable is the one flash.sh writes down
   flashing = true;
-  const proc = spawn(path.join(ROOT_DIR, "cmds/flash.sh"), { cwd: ROOT_DIR });
+  const proc = spawn(path.join(ROOT_DIR, "scripts/flash.sh"), { cwd: ROOT_DIR });
   const strip = (buf) => buf.toString().replace(/\x1b\[[0-9;]*m/g, "");
   proc.stdout.on("data", (d) => io.emit("flash-log", { chunk: strip(d) }));
   proc.stderr.on("data", (d) => io.emit("flash-log", { chunk: strip(d) }));
@@ -1436,7 +1436,7 @@ else console.log("USB serial auto-connect off — select a port in the dashboard
 const clients = new Map();
 
 const grants = new Map();
-// IMPORTANT NOTE: a tunnel (cmds/tunnel.sh) delivers every remote client FROM loopback,
+// IMPORTANT NOTE: a tunnel (scripts/tunnel.sh) delivers every remote client FROM loopback,
 // so a request carrying a proxy header is never the host -- its ip is the header's.
 const fwdIp = (s) => {
   const h = s.handshake.headers;

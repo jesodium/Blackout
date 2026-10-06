@@ -26,7 +26,7 @@ for (const m of [...intents, ...flash, ...literal]) {
   if (!moods.includes(m)) fail.push(`app.js passes mood "${m}" — not in MOODS`);
 }
 
-const ino = read("../giga-r1/main/main.ino");
+const ino = read("../firmware/giga/main/main.ino");
 const order = ino.match(/enum \{ (FACE_\w+(?:, FACE_\w+)*), FACE_N \}/)[1]
   .split(",").map(s => s.trim().slice(5).toLowerCase());
 const rows = [...ino.match(/FACE_G\[FACE_N\]\[3\] = \{([\s\S]+?)\n\};/)[1].matchAll(/\{([^}]+)\}/g)]

@@ -6,7 +6,7 @@ import { readFileSync } from "fs";
 
 const srv = readFileSync(new URL("./server.js", import.meta.url), "utf8");
 const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`./public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
-const ino = readFileSync(new URL("../giga-r1/main/main.ino", import.meta.url), "utf8");
+const ino = readFileSync(new URL("../firmware/giga/main/main.ino", import.meta.url), "utf8");
 
 // 1. the board blocks in readStringUntil('\n') -- a write with no terminator is a
 //    command that is never read, the same trap armrec.py's wire() documents.

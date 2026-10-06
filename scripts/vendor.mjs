@@ -2,7 +2,7 @@
 // server/public/vendor/. Run it only to bump a version — the output is
 // committed, and comp day must work with the wifi unplugged.
 //
-//   node cmds/vendor.mjs
+//   node scripts/vendor.mjs
 //
 // esm.sh note: the plain https://esm.sh/react@18 URL is a re-export shim that
 // still points at esm.sh. The real self-contained file is the `.bundle.mjs`

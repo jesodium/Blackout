@@ -724,7 +724,7 @@ def selftest():
     # the speed slider is only a knob if its floor still turns the servo: below
     # roughly 100us off neutral the pulse is inside the deadband and the joint
     # buzzes. spans live in arm.h, so check against the narrowest one there.
-    with io.open(os.path.join(HERE, os.pardir, "giga-r1", "main", "arm.h"),
+    with io.open(os.path.join(HERE, os.pardir, "firmware", "giga", "main", "arm.h"),
                  encoding="utf-8") as f:
         h = f.read()
     dflt = int(re.search(r"#define ARM_SPAN_US\s+(\d+)", h).group(1))

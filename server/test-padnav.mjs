@@ -59,7 +59,7 @@ for (const [ax, ay] of [[0.2, -0.2], [0.9, -0.16], [0, -0.155]]) {
 assert.ok(Math.abs(mix(0, 0, 1)[0]) < MANUAL_PWM, "right stick spin isn't slower than full");
 assert.deepEqual(mix(0, 0, 1).map(Math.sign), [-1, 1], "right stick spins right");
 
-const ino = readFileSync(new URL("../giga-r1/main/main.ino", import.meta.url), "utf8");
+const ino = readFileSync(new URL("../firmware/giga/main/main.ino", import.meta.url), "utf8");
 assert.ok(/verb == "tank"/.test(ino), 'main.ino has no "tank" verb — drv,tank would halt the motors');
 assert.ok(/void tank\(int l, int r\)/.test(ino), "main.ino lost tank()");
 

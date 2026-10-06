@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 
-const h = readFileSync(new URL("../giga-r1/main/arm.h", import.meta.url), "utf8");
+const h = readFileSync(new URL("../firmware/giga/main/arm.h", import.meta.url), "utf8");
 const def = (name) => {
   const m = h.match(new RegExp(`^#define ${name} (.+?)\\s*(?://.*)?$`, "m"));
   assert.ok(m, `${name} missing from arm.h`);
@@ -83,7 +83,7 @@ assert.equal(expired(9e9), false, "an idle joint must not be re-stopped");
 
 // the arm moves only while an operator holds a button: one call site, inside the
 // ble arm, command, and nowhere near a routine or the blk vm.
-const ino = readFileSync(new URL("../giga-r1/main/main.ino", import.meta.url), "utf8");
+const ino = readFileSync(new URL("../firmware/giga/main/main.ino", import.meta.url), "utf8");
 assert.ok(/^\s*armBegin\(\);/m.test(ino), "armBegin() not called from setup()");
 assert.ok(/^\s*armTick\(\);/m.test(ino), "armTick() not called from loop() — deadman is dead");
 assert.equal((ino.match(/armJog\(/g) || []).length, 1, "armJog() has more than one call site");

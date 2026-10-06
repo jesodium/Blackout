@@ -3,20 +3,20 @@ name: Arduino Compile
 on:
   push:
     paths:
-      - "giga-r1/**"
+      - "firmware/giga/**"
   pull_request:
     paths:
-      - "giga-r1/**"
+      - "firmware/giga/**"
 
 jobs:
-  compile-giga-r1:
+  compile-giga:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/compile-sketches@v1
         with:
           fqbn: arduino:mbed_giga:giga
-          sketch-paths: giga-r1/main
+          sketch-paths: firmware/giga/main
           libraries: |
             - name: ArduinoBLE
             - name: DHT11

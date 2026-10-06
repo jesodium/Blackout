@@ -1,5 +1,5 @@
 // The esp32-cam over its own USB cable, for when there is no wifi to put it on.
-// The board answers "f" with one jpeg (see serialTick() in esp32-cam/main/main.ino)
+// The board answers "f" with one jpeg (see serialTick() in firmware/esp32-cam/main/main.ino)
 // and server.js re-serves those as the same /stream, /capture and /control the
 // wifi cam answers on -- so the browser and vision.js learn one more HOST and
 // nothing anywhere learns a second shape.
@@ -122,7 +122,7 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.ok(!CAM_PORT_RE.test("cu.usbmodem1101"), "the giga's port must not be probed");
 
   // the sketch and this file are two halves of one wire format
-  const ino = fs.readFileSync(__dirname + "/../esp32-cam/main/main.ino", "utf8");
+  const ino = fs.readFileSync(__dirname + "/../firmware/esp32-cam/main/main.ino", "utf8");
   assert.equal(+ino.match(/#define CAM_BAUD (\d+)/)[1], CAM_BAUD, "the two CAM_BAUDs must match");
   // The preprocessor cannot see an enum: as enum values, `#if CAM_NETWORK !=
   // NET_NONE` reads 0 != 0 and quietly compiles the radio out of every build.
