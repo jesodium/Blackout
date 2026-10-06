@@ -138,7 +138,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
       group.rotation.y = Math.PI / 2;
       model.scale.setScalar(scale);
       model.position.sub(center.clone().multiplyScalar(scale));
-      model.position.y += 0.28;
+      model.position.y = -box.min.y * scale; // wheels on the ground plane, whatever the export's origin
       const mat = new THREE.MeshStandardMaterial({ color: 0xb8b0a0, roughness: 0.5, metalness: 0.4 });
       model.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; c.material = mat; } });
       group.add(model);
