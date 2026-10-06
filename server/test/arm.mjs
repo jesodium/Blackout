@@ -4,7 +4,7 @@
 
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
-import { appSrc, serverSrc } from "./source.js";
+import { appSrc, firmwareSrc, serverSrc } from "./source.js";
 
 const h = readFileSync(new URL("../../firmware/giga/main/arm.h", import.meta.url), "utf8");
 const def = (name) => {
@@ -84,10 +84,11 @@ assert.equal(expired(9e9), false, "an idle joint must not be re-stopped");
 
 // the arm moves only while an operator holds a button: one call site, inside the
 // ble arm, command, and nowhere near a routine or the blk vm.
-const ino = readFileSync(new URL("../../firmware/giga/main/main.ino", import.meta.url), "utf8");
+const ino = firmwareSrc();
 assert.ok(/^\s*armBegin\(\);/m.test(ino), "armBegin() not called from setup()");
 assert.ok(/^\s*armTick\(\);/m.test(ino), "armTick() not called from loop() — deadman is dead");
-assert.equal((ino.match(/armJog\(/g) || []).length, 1, "armJog() has more than one call site");
+// arm.h holds the definition itself; count the callers in the rest of the sketch
+assert.equal((ino.replace(h, "").match(/armJog\(/g) || []).length, 1, "armJog() has more than one call site");
 assert.ok(/startsWith\("arm,"\)[^]{0,300}?armJog\(/.test(ino),
   "armJog() is not called from the arm, command — an unheld 360 winds into the frame");
 assert.ok(/void stopRoutine\(\)[^\n]*armStopAll\(\)/.test(ino), "panic stop does not stop the arm");

@@ -3,8 +3,9 @@
 
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
+import { firmwareSrc } from "./source.js";
 
-const ino = readFileSync(new URL("../../firmware/giga/main/main.ino", import.meta.url), "utf8");
+const ino = firmwareSrc();
 const def = (name) => {
   const m = ino.match(new RegExp(`^#define ${name} (.+?)\\s*(?://.*)?$`, "m"));
   assert.ok(m, `${name} missing from main.ino`);

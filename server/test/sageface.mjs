@@ -2,7 +2,7 @@
 // any mood whose travel drops to a single pixel
 
 import { readFileSync } from "node:fs";
-import { appSrc } from "./source.js";
+import { appSrc, firmwareSrc } from "./source.js";
 
 // paths are relative to server/, this file sits in server/test/
 const read = (p) => readFileSync(new URL("../" + p.replace(/^\.\//, ""), import.meta.url), "utf8");
@@ -28,7 +28,7 @@ for (const m of [...intents, ...flash, ...literal]) {
   if (!moods.includes(m)) fail.push(`app.js passes mood "${m}" — not in MOODS`);
 }
 
-const ino = read("../firmware/giga/main/main.ino");
+const ino = firmwareSrc();
 const order = ino.match(/enum \{ (FACE_\w+(?:, FACE_\w+)*), FACE_N \}/)[1]
   .split(",").map(s => s.trim().slice(5).toLowerCase());
 const rows = [...ino.match(/FACE_G\[FACE_N\]\[3\] = \{([\s\S]+?)\n\};/)[1].matchAll(/\{([^}]+)\}/g)]

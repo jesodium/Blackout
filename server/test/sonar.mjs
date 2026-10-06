@@ -2,8 +2,9 @@
 // so a 0-initialised slot reads as a wall at 0cm and stops a blk program on the spot.
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
+import { firmwareSrc } from "./source.js";
 
-const ino = readFileSync(new URL('../../firmware/giga/main/main.ino', import.meta.url), 'utf8');
+const ino = firmwareSrc();
 const def = (n) => Number(ino.match(new RegExp(`#define ${n}\\s+(\\d+)`))[1]);
 const ITER = def('SONAR_ITER');
 

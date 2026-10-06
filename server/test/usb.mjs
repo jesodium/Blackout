@@ -3,11 +3,11 @@
 // PC half, and all of it is one fact spread over three files.
 import assert from "assert";
 import { readFileSync } from "fs";
-import { appSrc, serverSrc } from "./source.js";
+import { appSrc, firmwareSrc, serverSrc } from "./source.js";
 
 const srv = serverSrc();
 const app = appSrc();
-const ino = readFileSync(new URL("../../firmware/giga/main/main.ino", import.meta.url), "utf8");
+const ino = firmwareSrc();
 
 // 1. the board blocks in readStringUntil('\n') -- a write with no terminator is a
 //    command that is never read, the same trap armrec.py's wire() documents.
