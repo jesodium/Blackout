@@ -6,7 +6,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
 
 ## Layout
 
-- `giga-r1/` — Giga R1 WiFi (`main/`): sensor hub + motor driver + BLE
+- `firmware/giga/` — Giga R1 WiFi (`main/`): sensor hub + motor driver + BLE
   command endpoint, one board. Reads sensors, broadcasts CSV over BLE notify;
   DHT11 (temp/humidity, **A5**, A6 -> D74 -> D24 -> D71 -> A5, last move 2026-09-02 — the lib
   bit-bangs a one-wire protocol and never calls `analogRead`, so any digital-capable pin
@@ -45,7 +45,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
   something tries to pull a line down. The one test that finds it: `pinMode(pin,
   OUTPUT); digitalWrite(pin, LOW);` then read the pin back. A working line reads
   0; a line that reads 1 is tied to a rail, because nothing legal on an I2C bus
-  beats a 25mA push-pull driver. `giga-r1/i2c_scan/` is that check. It sweeps
+  beats a 25mA push-pull driver. `firmware/giga/i2c_scan/` is that check. It sweeps
   **all three buses** (D20/D21, D9/D8, D102/D101) bit-banged *and* over hardware
   `Wire1`, and dumps chip-ID registers for anything it finds. The positive control
   is the **bh1750 at 0x23 on D9/D8** — D20/D21 is empty now, so a silent bus there
@@ -99,8 +99,8 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     link only carries which one, and a BLE drop turns it off.
   - **Servos hang off a PCA9685** (silkscreened **HW-170**) — I2C, address 0x40,
     16 channels, so more servos cost no pins. **It is on the Giga now**
-    (`giga-r1/main/arm.h`, ported off the bench rig 2026-09-01): `armBegin()` from
-    `setup()`, `armTick()` from `loop()`. The bench rig (`OUTDATED/pca_test/`, Uno
+    (`firmware/giga/main/arm.h`, ported off the bench rig 2026-09-01): `armBegin()` from
+    `setup()`, `armTick()` from `loop()`. The bench rig (`archive/pca_test/`, Uno
     R4) still exists and is still where a channel gets identified; the two share a
     joint table that must agree.
     - **It is on `Wire` (D20/D21) alone, deliberately.** A stalled servo browns the
@@ -356,7 +356,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       channel; it is typed `cont` because cont gets the deadman and positional does
       not.
       The map now lives in **four** places that must agree or it half-works:
-      `armSv[]` in `giga-r1/main/arm.h` (the robot), `sv[]` in `pca_test.ino`, `J`
+      `armSv[]` in `firmware/giga/main/arm.h` (the robot), `sv[]` in `pca_test.ino`, `J`
       in `servo.py`, and the constants at the top of `hand.py` (the bench rig).
       **`pca_test.ino`'s header comment is the authority nowhere** — `sv[]` is.
       **A channel reading back a healthy pulse proves nothing about the servo** —
@@ -367,7 +367,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       **A joint typed positional that is really a 360 never stops** — an angle
       maps to 500-2500us, which a 360 reads as full speed, and only continuous
       channels get the deadman. The wrist was mislabelled SG90 and ran away on the
-      bench 2026-08-25 (it was ch8 then, ch3 now); `t<ch>` first, and if it keeps turning it's a 360. The bench rig is `OUTDATED/pca_test/` (Uno R4) plus its
+      bench 2026-08-25 (it was ch8 then, ch3 now); `t<ch>` first, and if it keeps turning it's a 360. The bench rig is `archive/pca_test/` (Uno R4) plus its
       `servo.py`, a flask page that is nothing but a serial pipe to
       it. Joint-to-channel mapping is unconfirmed for the 360s — `t<ch>` nudges
       one joint so you can watch which moves, and `T` sweeps all 16 — including
@@ -401,7 +401,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       it down fine (2026-08-25). Fine control on a loaded joint is a *shorter
       burst at full power*, never a gentler one; the bench page's two arrow
       sizes differ in duration only.
-      **Hand control** (`OUTDATED/pca_test/hand.py`, opencv + mediapipe) drives
+      **Hand control** (`archive/pca_test/hand.py`, opencv + mediapipe) drives
       the arm off a webcam: `python3 hand.py` next to a running `servo.py`,
       which it talks to over http so the two never fight over the serial port.
       Three held poses calibrate it (rest, open, pinch) into `hand_cal.json`.
@@ -419,7 +419,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       still a command and an untrimmed 360 creeps on it forever. And the
       PCA9685 keeps driving its last registers while the Arduino reboots, so
       every reset must write full-off to all 16 channels before anything else.
-- `esp32-cam/` — ESP32-CAM (AI-Thinker) (`main/`): standalone MJPEG streamer
+- `firmware/esp32-cam/` — ESP32-CAM (AI-Thinker) (`main/`): standalone MJPEG streamer
   on its own WiFi + power. Never touches the Giga/BLE path; the dashboard
   `<img>` pulls `http://blackout-cam.local/stream` directly.
   - **It also works on the USB cable alone, with no wifi at all** (2026-09-10):
@@ -941,9 +941,9 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     with 2 decimals (0.01 hPa ≈ 8cm) and the bme's own noise is around a metre.
     `npm run test:elev` is the check (needs a *freshly started* server — a server
     that already has a reference pressure fails the "first reading is zero" assert).
-- `OUTDATED/` — retired Mega 2560 + Uno R3 two-board setup, kept only for
+- `archive/` — retired Mega 2560 + Uno R3 two-board setup, kept only for
   porting reference. Not part of the current build.
-- `cad/`, `step/` — mechanical
+- `hardware/cad/`, `hardware/step/` — mechanical (local only, gitignored)
 
 ## USB as a second link
 
@@ -1178,7 +1178,7 @@ as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
   thing — trimming a botched approach, retiming a gap, or dropping a `@say` in
   is a text edit, not a timeline GUI. The server re-checks the shape on save
   (`{ms >= 0, cmd}`), because hand-edited JSON is a trust boundary.
-- **Not `giga-r1/main/routines.h`** — those are `Step` tables compiled into
+- **Not `firmware/giga/main/routines.h`** — those are `Step` tables compiled into
   flash, they have **no arm op**, and `analyze`/`say` do not exist on the board.
   A tape runs from the PC. The cost is the PC: a BLE drop mid-tape strands it the
   way a routine or an uploaded BLK program would not.
@@ -1390,7 +1390,7 @@ in `app.js` (**the index is the wire value** — same order as the enum), and a
   40ms, not 10 — at 10 the draw re-fires the instant it returns and starves `loop()`.
   **1MHz is the usual ssd1306 overclock and this panel came up dark on it** (2026-09-02) —
   400k is the specced clock and what works here, so raise it only with the panel in front
-  of you. **A dark panel is almost never the pins**: `giga-r1/i2c_scan/` sweeps all three
+  of you. **A dark panel is almost never the pins**: `firmware/giga/i2c_scan/` sweeps all three
   buses, and 0x3C acking there means address, lines and bus are all fine and the fault is
   the clock or the charge-pump `delay(100)` before `begin()`. That scan is what settled it
   on 2026-09-02, after a bus mismatch (panel on Wire1, sketch driving Wire2) and then the
@@ -1437,7 +1437,7 @@ in `app.js` (**the index is the wire value** — same order as the enum), and a
 ## Dictated routines
 
 When the user narrates a new motion routine step by step ("go forward once,
-back up, rotate, turn 360°, ...") for `giga-r1/main/routines.h`,
+back up, rotate, turn 360°, ...") for `firmware/giga/main/routines.h`,
 they're recording a `Step` sequence, not asking for a fresh design — transcribe
 each spoken step into `{op, ms, pwm}` in order using the file's own
 conventions:

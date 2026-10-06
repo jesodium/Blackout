@@ -6,7 +6,7 @@
 // no reset pin on a 4-pin module -- the controller uses its own power-on reset,
 // so U8X8_PIN_NONE. address is 0x3C unless the back is strapped for 0x3D.
 //
-// drawStatus/drawFace/drawHud below are COPIED VERBATIM from giga-r1/main/main.ino.
+// drawStatus/drawFace/drawHud below are COPIED VERBATIM from firmware/giga/main/main.ino.
 // that is the point of the mockup -- if they drift, this stops being a preview of
 // the robot. only the constructor and the fake data at the bottom are local.
 // IMPORTANT NOTE: copy, not a shared header. the giga's panel hangs off a custom

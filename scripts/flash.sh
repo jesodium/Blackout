@@ -18,10 +18,10 @@ r = subprocess.run(['arduino-cli', 'board', 'list', '--format', 'json'],
 data = json.loads(r.stdout)
 
 profiles = [
-    ('giga-r1/main',        'arduino:mbed_giga:giga',        'usbmodem',    'Giga R1 WiFi'),
+    ('firmware/giga/main',        'arduino:mbed_giga:giga',        'usbmodem',    'Giga R1 WiFi'),
     ('$V2_SRC',             'arduino:renesas_uno:unor4wifi', None,          'Blackout V2'),
-    ('esp32-cam/main',      'esp32:esp32:esp32cam',          'usbserial',   'ESP32-CAM'),
-    ('esp32-cam/main',      'esp32:esp32:esp32cam',          'wchusbserial','ESP32-CAM'),
+    ('firmware/esp32-cam/main',      'esp32:esp32:esp32cam',          'usbserial',   'ESP32-CAM'),
+    ('firmware/esp32-cam/main',      'esp32:esp32:esp32cam',          'wchusbserial','ESP32-CAM'),
 ]
 
 # one line per PORT, not per sketch dir: two esp32-cams are two boards running

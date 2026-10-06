@@ -126,8 +126,8 @@ const TOP = [
   ["server/public/js/blkedit.js", "1 450", "editor táctil de BLK"],
   ["server/server.js", "1 367", "servidor: Sage, socket, historial"],
   ["CLAUDE.md", "1 355", "memoria de ingeniería del repositorio"],
-  ["giga-r1/main/main.ino", "1 208", "firmware del vehículo"],
-  ["OUTDATED/pca_test/servo.py", "1 114", "banco de brazo retirado"],
+  ["firmware/giga/main/main.ino", "1 208", "firmware del vehículo"],
+  ["archive/pca_test/servo.py", "1 114", "banco de brazo retirado"],
   ["server/public/js/i18n.js", "887", "cadenas es / en"],
   ["server/armrec.py", "835", "grabadora de tomas del brazo"],
 ];
@@ -154,7 +154,7 @@ const doc = new Document({
       // ---- 1 ----
       h1(1, "Estructura del repositorio"),
       p("El proyecto es un solo repositorio con tres firmwares y una estación de tierra. El vehículo sostiene por sí solo todo lo que debe seguir funcionando sin el ordenador —sensores, tracción, brazo, panel y la máquina virtual del lenguaje de misión—; el ordenador aporta lo que exige red, modelo o audio. Las cámaras tienen wifi y alimentación propios y no comparten enlace con el vehículo."),
-      p("Cada carpeta de primer nivel corresponde a una de esas piezas, salvo OUTDATED/, que conserva el banco de pruebas retirado (Mega 2560 y Uno R3) porque los hallazgos de hardware siguen valiendo al portar código."),
+      p("Cada carpeta de primer nivel corresponde a una de esas piezas, salvo archive/, que conserva el banco de pruebas retirado (Mega 2560 y Uno R3) porque los hallazgos de hardware siguen valiendo al portar código."),
       img("fig3.png", 624),
       caption(1, "Carpetas de primer nivel. Las líneas son código propio; el material vendorizado y los pesos del modelo de detección quedan fuera del recuento."),
 
@@ -177,17 +177,17 @@ const doc = new Document({
 
       h2("3.1  El enlace Bluetooth se pierde por falta de sondeo, no por distancia"),
       p("ArduinoBLE sobre mbed atiende el transporte HCI en un segundo hilo que deja los paquetes recibidos en un buffer fijo; el hilo del sketch lo vacía llamando a BLE.poll(), y cuando se llena los paquetes se descartan, no se encolan. Una sola llamada por vuelta de loop() no basta: un fotograma del panel son ~23 ms de I2C, más que el intervalo de conexión. La solución es sondear desde dentro del bloqueo —aquí, al final de cada transferencia I2C del panel—, con lo que la ventana ciega baja de 23 ms a ~1,5 ms."),
-      ...code(slice("giga-r1/main/main.ino", 116, 138), "cpp"),
+      ...code(slice("firmware/giga/main/main.ino", 116, 138), "cpp"),
       p("Regla que deja el hallazgo: cualquier cosa nueva que bloquee loop() más que un intervalo de conexión tiene que sondear. Y una llamada de biblioteca que bloquea es un punto ciego aunque el código de alrededor sondee, porque el sondeo está del lado de acá de la llamada.", { italics: true, color: DIM }),
 
       h2("3.2  Una mediana en anillo en lugar de tres pings seguidos"),
       p("El sonar se leía tres veces por envío con una espera entre lecturas para que el eco se apagara: ~200 ms muertos por vuelta, que eran a la vez la cadencia de telemetría y la latencia de las órdenes. Como los envíos ya están separados entre sí, la espera es gratis: se lanza un ping por envío y se toma la mediana de los últimos que hay en un anillo."),
-      ...code(slice("giga-r1/main/main.ino", 1104, 1124), "cpp"),
+      ...code(slice("firmware/giga/main/main.ino", 1104, 1124), "cpp"),
       p("El anillo se siembra a -1 en setup(): una casilla inicializada a cero se lee como una pared a 0 cm y termina en el acto cualquier maniobra condicionada a la distancia.", { italics: true, color: DIM }),
 
       h2("3.3  Un servo de rotación continua no se queda quieto solo"),
       p("Las seis articulaciones del brazo son servos de 360°: no tienen realimentación de posición ni tope, y al soltar el pulso una articulación cargada cae por gravedad. Lo único que la sostiene es un pulso pequeño empujando hacia arriba, y la banda que la sostiene se mueve con la postura del brazo, porque el par de la gravedad también. Por eso el sesgo no es una constante sino una recta: un valor plano más una pendiente por cada segundo de recorrido desde el origen."),
-      ...code(slice("giga-r1/main/arm.h", 156, 174), "cpp"),
+      ...code(slice("firmware/giga/main/arm.h", 156, 174), "cpp"),
       p("armTravel[] es la única estimación de postura que tiene este brazo (velocidad x tiempo desde el último origen), así que deriva; RE-HOME la pone a cero tras un atasco o un empujón.", { italics: true, color: DIM }),
 
       h2("3.4  Ninguna maniobra propuesta por la IA avanza a ciegas"),

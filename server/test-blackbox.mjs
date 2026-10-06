@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const ino = readFileSync(new URL("../giga-r1/main/main.ino", import.meta.url), "utf8");
+const ino = readFileSync(new URL("../firmware/giga/main/main.ino", import.meta.url), "utf8");
 const LOG_N = +ino.match(/#define LOG_N (\d+)/)[1];
 assert.ok(LOG_N > 0, "LOG_N gone from main.ino");
 

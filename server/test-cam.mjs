@@ -10,8 +10,8 @@ import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 
 const app = ["app", "control", "speech"].map((n) => readFileSync(`public/js/${n}.js`, "utf8")).join("\n");
-const ino = readFileSync("../esp32-cam/main/main.ino", "utf8");
-const sh = readFileSync("../cmds/flash.sh", "utf8");
+const ino = readFileSync("../firmware/esp32-cam/main/main.ino", "utf8");
+const sh = readFileSync("../scripts/flash.sh", "utf8");
 
 // ---- the table ----
 const table = ino.match(/CAM_CHIPS\[\] = \{([^}]*)\}/)[1];
@@ -22,14 +22,17 @@ assert.equal(new Set(claimed).size, claimed.length,
   "two slots in CAM_CHIPS carry the same chip id — both boards would be the same camera");
 
 // ---- slot -> host, sketch vs dashboard ----
-const base = Number(ino.match(/#define CAM_OCTET_BASE (\d+)/)[1]);
-const front = app.match(/const CAM_HOSTS = \["([\d.]+)"/)[1];
-// CAM_DEFAULTS[0] is CAM_HOST_DEFAULT (= CAM_HOSTS[0]); the rest are literals
-const rest = [...app.match(/const CAM_DEFAULTS = \[([^\]]*)\]/)[1].matchAll(/"([\d.]+)"/g)].map(m => m[1]);
-const hosts = [front, ...rest];
-for (let slot = 1; slot <= 2; slot++)
-  assert.equal(hosts[slot - 1], `172.20.10.${base + slot}`,
-    `slot ${slot} boots on 172.20.10.${base + slot}, the dashboard looks for ${hosts[slot - 1]}`);
+// every static row in NETS[] puts slot n on <base>+n; that address has to be in
+// cam n's group of CAM_HOSTS or the feed never looks there
+const hosts = [...app.match(/const CAM_HOSTS = \[([^]*?)\n\];/)[1].matchAll(/\[([^\]]*)\]/g)].map(m => m[1]);
+const nets = [...ino.match(/NETS\[\] = \{([^]*?)\n\};/)[1].matchAll(/\{(\d+),(\d+),(\d+),(\d+)\}, +\{/g)]
+  .map(m => m.slice(1).map(Number)).filter(ip => ip[3]);
+assert.ok(nets.length, "no static rows found in NETS[]");
+for (const ip of nets)
+  for (let slot = 1; slot <= 2; slot++) {
+    const want = [ip[0], ip[1], ip[2], ip[3] + slot].join(".");
+    assert.ok(hosts[slot - 1]?.includes(`"${want}"`), `slot ${slot} boots on ${want}, CAM_HOSTS[${slot - 1}] never tries it`);
+  }
 
 // ---- sage's own CAM_URL: one group per camera ----
 // ";" separates cameras, "," separates one camera's networks. A comma where the
@@ -40,8 +43,8 @@ if (existsSync(".env")) {
   if (line) {
     const groups = line.split(";");
     assert.equal(groups.length, 2, "CAM_URL should hold one group per camera, ';' between them");
-    assert.ok(groups[1].includes(`172.20.10.${base + 2}`),
-      `cam 2's group in CAM_URL doesn't dial 172.20.10.${base + 2}`);
+    assert.ok(groups[1].includes(`172.20.10.${nets.find(ip => ip[0] === 172)[3] + 2}`),
+      `cam 2's group in CAM_URL doesn't dial the hotspot address`);
   }
 }
 
