@@ -32,7 +32,7 @@ assert.match(readFileSync("src/vision.js", "utf8"), /setCamRot/, "vision.js has 
 
 // two cams, and Sage can ask for either -- so both angles go to the server, each
 // tagged with its cam. An untagged post is how her stills quietly go sideways again.
-assert.match(app, /fetch\("\/api\/cam-rot", \{[\s\S]*?JSON\.stringify\(\{ value: v, cam \}\)/,
+assert.match(app, /fetch\("\/api\/cam-rot", \{[\s\S]*?JSON\.stringify\(\{ value: \w+, cam \}\)/,
   "ROTATE posts no cam index, so one cam's angle would be applied to the other");
 assert.match(readFileSync("src/vision.js", "utf8"), /setCamRot = \(deg, cam = 0\)/,
   "vision.js keeps one rotation for both cams");

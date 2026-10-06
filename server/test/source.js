@@ -11,7 +11,8 @@ const walk = (dir) => fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true
 
 // server.js plus every module under src/
 const serverSrc = () => [read("server.js"), ...walk("src").sort().map(read)].join("\n");
-// the dashboard's own modules
-const appSrc = () => ["app", "control", "speech"].map((n) => read(`public/js/${n}.js`)).join("\n");
+// the dashboard: app.js, its ui/ components, and the control + speech modules
+const appSrc = () => ["public/js/app.js", ...walk("public/js/ui").sort(), "public/js/control.js", "public/js/speech.js"]
+  .map(read).join("\n");
 
 module.exports = { serverSrc, appSrc };
