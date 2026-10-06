@@ -92,10 +92,5 @@ assert.deepStrictEqual(langLast([{ role: "user", content: "hi" }]), [{ role: "us
 const two = langLast([esSys, { role: "user", content: "a" }, { role: "assistant", content: "b" }, { role: "user", content: "c" }]);
 assert.ok(two[1].content === "a" && two[3].content.startsWith("c"), "only the last user turn carries it");
 
-// autopilot ends its run only on an explicit boolean true
-assert.strictEqual(parseSage('{"text":"there it is","done":true}').done, true);
-assert.strictEqual(parseSage('{"text":"turning","done":"yes"}').done, false);
-assert.ok(!parseSage("not json").done);
-
 console.log("test-auto: ok");
 process.exit(0);

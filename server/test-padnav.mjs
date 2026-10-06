@@ -63,7 +63,7 @@ const ino = readFileSync(new URL("../giga-r1/main/main.ino", import.meta.url), "
 assert.ok(/verb == "tank"/.test(ino), 'main.ino has no "tank" verb — drv,tank would halt the motors');
 assert.ok(/void tank\(int l, int r\)/.test(ino), "main.ino lost tank()");
 
-const app = readFileSync(new URL("./public/js/app.js", import.meta.url), "utf8");
+const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`./public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
 assert.ok(/drv,tank,\$\{l\},\$\{r\}/.test(app), "app.js stopped sending tank commands");
 
 assert.ok(/tourOpen \|\| cursorOn\(\)/.test(app), "drive loop no longer parks for cursor mode");

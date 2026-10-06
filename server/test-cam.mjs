@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 
-const app = readFileSync("public/js/app.js", "utf8");
+const app = ["app", "control", "speech"].map((n) => readFileSync(`public/js/${n}.js`, "utf8")).join("\n");
 const ino = readFileSync("../esp32-cam/main/main.ino", "utf8");
 const sh = readFileSync("../cmds/flash.sh", "utf8");
 

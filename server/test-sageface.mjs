@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
 const face = read("./public/js/sageface.js");
 const css = read("./public/css/style.css");
-const app = read("./public/js/app.js");
+const app = ["app", "control", "speech"].map((n) => read(`./public/js/${n}.js`)).join("\n");
 
 const moods = face.match(/export const MOODS = \[([^\]]+)\]/)[1].match(/"(\w+)"/g).map(s => s.slice(1, -1));
 const fail = [];

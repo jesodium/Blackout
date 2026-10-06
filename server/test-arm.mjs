@@ -117,7 +117,7 @@ assert.ok(ino.indexOf('startsWith("armh,")') < ino.indexOf('startsWith("arm,")')
   "armh, must be tested before arm,");
 
 // the browser has to re-send faster than the deadman expires, or a held button stutters
-const app = readFileSync(new URL("public/js/app.js", import.meta.url), "utf8");
+const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
 const rep = +(app.match(/ARM_REPEAT_MS\s*=\s*(\d+)/) || [])[1];
 assert.ok(rep > 0 && rep < JOG, `arm repeat ${rep}ms must be under the ${JOG}ms deadman`);
 // A tap shorter than this is a burst nobody can see, so release holds the stop
@@ -183,11 +183,11 @@ assert.equal((arm.match(/onCmd\(`arm,/g) || []).length, 0,
 assert.ok(/^const armLedger = \{/m.test(app), "the arm travel ledger is back inside a component");
 assert.ok(!/function Arm\([^]*?useState\(\(\) => ARM_JOINTS\.map\(\(\) => 0\)\)/.test(arm),
   "<Arm/> keeps its own travel state — it resets every time the pad unmounts");
-// one panic path, used by the space key AND by AUTO's STOP bar — a bare `stop`
+// one panic path, used by the space key — a bare `stop`
 // leaves the queued tape/arm steps to restart the robot a moment later
 assert.ok(/const panicStop = \(send\) => \{[^}]*armStopTape\(\)[^}]*clawClear\(\)[^}]*send\("stop"\)/.test(app),
   "panicStop no longer kills the queued steps and the claw hold");
-assert.equal((app.match(/panicStop\(/g) || []).length, 2,
+assert.equal((app.match(/panicStop\(/g) || []).length, 1,
   "a stop path stopped going through panicStop() — a queued step will restart the robot");
 
 // ---- the claw ----

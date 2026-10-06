@@ -17,7 +17,7 @@ for (const path of man.flatMap(g => g.paths)) {
 for (const v of ["tf.min.js", "coco-ssd.min.js"])
   assert.ok(existsSync(`${P}/vendor/${v}`), "missing vendor/" + v);
 
-const app = readFileSync(`${P}/js/app.js`, "utf8");
+const app = ["app", "control", "speech"].map((n) => readFileSync(`${P}/js/${n}.js`, "utf8")).join("\n");
 const camKey = (base, cam) => base + (cam || "");
 assert.match(app, /const camKey = \(base, cam\) => base \+ \(cam \|\| ""\);/, "camKey drifted from its mirror here");
 assert.match(app, /cam-feed cam-boxes/, "overlay canvas lost its classes");
