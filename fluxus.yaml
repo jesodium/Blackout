@@ -5,5 +5,5 @@ boards:
   sketch: giga-r1/main
 - name: AI Thinker ESP32-CAM
   fqbn: esp32:esp32:esp32cam
-  port: /dev/cu.wchusbserial1110
+  port: /dev/cu.wchusbserial140
   sketch: esp32-cam/main
