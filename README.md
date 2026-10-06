@@ -30,13 +30,26 @@ toggle to pair.
 ## Project layout
 
 ```
-├── firmware/giga/          Giga R1 WiFi — sensors + BLE
-├── firmware/esp32-cam/        ESP32-CAM — standalone MJPEG streamer (LED debug: boot=slow blink, error=rapid, ok=steady)
-├── server/           Node.js dashboard + AI
-├── archive/         Retired Mega 2560 + Uno R3 two-board setup (porting reference only)
-├── cad/              3D models (source)
-├── step/             STEP exports
-└── stls/             STL files for printing
+├── firmware/
+│   ├── giga/main/       Giga R1 WiFi — sensors, motors, arm, BLE (main.ino + one .h per section)
+│   ├── giga/i2c_scan/   I2C bus diagnostic
+│   ├── giga/motor_test/ bench motor check
+│   ├── esp32-cam/main/  ESP32-CAM — MJPEG streamer / USB frame server
+│   └── uno-r4/          bench sketches
+├── server/
+│   ├── server.js        entry: loads src/ and listens (Electron forks this)
+│   ├── mcp.mjs          MCP stdio server for Claude Desktop / Code
+│   ├── src/             server modules (link, telemetry, cam, tts, …) + sage/ (the AI agent)
+│   ├── public/          dashboard: index.html, js/app.js + js/ui/ components, lib modules
+│   ├── prompts/         Sage's system prompts
+│   ├── data/            recorded arm takes, tapes, BLK workflows
+│   ├── test/            npm run test:<name>
+│   └── tools/           bench tools (armrec.py, …)
+├── electron/            desktop shell (custom BLE picker)
+├── scripts/             flash.sh, arm-configurator.sh, docs.sh
+├── docs/
+├── archive/             retired Mega 2560 + Uno R3 setup (porting reference only)
+└── hardware/            cad/ + step/ (local, not in git)
 ```
 
 ## Docs
