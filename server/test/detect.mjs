@@ -3,7 +3,7 @@
 
 import { readFileSync, existsSync, statSync } from "node:fs";
 import assert from "node:assert/strict";
-import { drawBoxes, rotBox, ROTS, norm, MODEL_URL } from "./public/js/detect.mjs";
+import { drawBoxes, rotBox, ROTS, norm, MODEL_URL } from "../public/js/detect.mjs";
 
 const P = "public";
 const model = MODEL_URL.replace(/^\//, P + "/");
@@ -27,13 +27,13 @@ assert.match(readFileSync(`${P}/css/style.css`, "utf8"), /rotate\(var\(--cam-rot
 assert.match(app, /detectUpright\(model, img, 20, DET_MIN_SCORE, rot\)/, "detector not given the mount angle");
 assert.match(app, /drawBoxes\(cv\.getContext\("2d"\), boxes, cv\.width, cv\.height, rot\)/, "drawBoxes not given the mount angle");
 assert.match(app, /"\/api\/cam-rot"/, "rotation never reaches the server, so Sage keeps the old angle");
-assert.match(readFileSync("vision.js", "utf8"), /setCamRot/, "vision.js has no runtime rotation setter");
+assert.match(readFileSync("src/vision.js", "utf8"), /setCamRot/, "vision.js has no runtime rotation setter");
 
 // two cams, and Sage can ask for either -- so both angles go to the server, each
 // tagged with its cam. An untagged post is how her stills quietly go sideways again.
 assert.match(app, /fetch\("\/api\/cam-rot", \{[\s\S]*?JSON\.stringify\(\{ value: v, cam \}\)/,
   "ROTATE posts no cam index, so one cam's angle would be applied to the other");
-assert.match(readFileSync("vision.js", "utf8"), /setCamRot = \(deg, cam = 0\)/,
+assert.match(readFileSync("src/vision.js", "utf8"), /setCamRot = \(deg, cam = 0\)/,
   "vision.js keeps one rotation for both cams");
 // cam 0 keeps the unsuffixed keys, or every rig loses its saved host and angle
 assert.equal(camKey("camHost", 0), "camHost", "cam 0 must keep the old localStorage key");

@@ -52,7 +52,7 @@
 // only continuous channels get the deadman below. Neutral is MEASURED per
 // servo, never assumed: each one creeps at its own nominal 1500.
 // span is per joint: neutral +/- span must stay inside 500-2500us, so a joint
-// on a 1500 neutral tops out at 1000. test-arm.mjs asserts that for every row.
+// on a 1500 neutral tops out at 1000. test/arm.mjs asserts that for every row.
 //
 // hold is in the same -100..100 the pad sends, and it is what the joint is left
 // driving at once the button is released. A 360 outputs zero drive at neutral

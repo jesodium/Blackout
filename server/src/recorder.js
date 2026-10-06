@@ -5,7 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const { grabFrame } = require("./vision");
 
-const DIR = path.join(__dirname, "recordings");
+const DIR = path.join(__dirname, "..", "recordings");
 
 const FPS = parseFloat(process.env.REC_FPS || "2");
 const MAX_MIN = parseInt(process.env.REC_MAX_MIN || "15", 10);

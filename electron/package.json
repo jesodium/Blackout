@@ -25,8 +25,8 @@
         "to": "server",
         "filter": [
           "**/*",
-          "!test-*.mjs",
-          "!test-*.js",
+          "!test/**",
+          "!tools/**",
           "!.env"
         ]
       },

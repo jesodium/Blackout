@@ -2,7 +2,7 @@
 
 import assert from "node:assert";
 import { createRequire } from "node:module";
-const { frame } = createRequire(import.meta.url)("./ledstrip.js");
+const { frame } = createRequire(import.meta.url)("../src/ledstrip.js");
 
 const HUE = { clear: 34, caution: 0, danger: 0, link: 210, think: 285 };
 const peak = (s) => { let m = 0; for (let t = 0; t < 3000; t += 20) m = Math.max(m, frame(s, t).v); return m; };
@@ -59,7 +59,7 @@ for (const s of [st({}), st({ link: false }), st({ level: "bad" }), st({ speakin
 // party effects: whole-strip only, but they must actually move and stay legal.
 // 12s, not 3: storm is deliberately sparse — a quiet gap is the effect, so a
 // 3s window can legitimately catch nothing.
-const { fxNames } = createRequire(import.meta.url)("./ledstrip.js");
+const { fxNames } = createRequire(import.meta.url)("../src/ledstrip.js");
 const fxSpan = (s) => {
   const vs = [];
   for (let t = 0; t < 12000; t += 20) vs.push(frame(s, t).v);

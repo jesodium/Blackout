@@ -125,7 +125,7 @@ const ARM_JOINTS = ["base", "shoulder", "elbow", "wrist", "gripwrist", "gripper"
 // The hold/sag trim is NOT on this pad (removed 2026-09-03, operator's call).
 // Everything it drove is still on the board — the armh command,
 // armSetHold() and the hold+sag columns in armSv[] — and the bench recorder
-// (server/armrec.py) can still send it. The dashboard just has no knob, so the
+// (server/tools/armrec.py) can still send it. The dashboard just has no knob, so the
 // browser can no longer put the board out of step with the arm.h table, and
 // that table is 0/0 on every row: a released joint free-wheels.
 
@@ -207,7 +207,7 @@ const CLAW_HOLD = 35;        // then hold at this. Pulse width is force here, so
 // trimming us to make a small move does nothing until suddenly it does.)
 // Sitting on top of that: the browser's setTimeout and the ~15ms BLE connection
 // interval, so a single frame is about as fine as this link can honestly resolve.
-// test-arm.mjs cross-checks CLAW_FRAME_MS against ARM_HZ in arm.h.
+// test/arm.mjs cross-checks CLAW_FRAME_MS against ARM_HZ in arm.h.
 const CLAW_FRAME_MS = 20;
 const CLAW_NUDGE_MAX = 200;
 const CLAW_NUDGE_KEY = "clawNudgeMs";

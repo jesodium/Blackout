@@ -4,7 +4,7 @@
 import assert from "node:assert";
 import fs from "node:fs";
 import { parse, serialize, evalCond, evalExpr, parseExpr, parseCond, condStr, exprStr, interp, lint, estimate, run,
-         compile, insLine, BOPS, BLK_MAX, SENSORS, CMPS, VERBS, clampArg, Unsupported, guard, GUARD_CM } from "./public/js/blk.mjs";
+         compile, insLine, BOPS, BLK_MAX, SENSORS, CMPS, VERBS, clampArg, Unsupported, guard, GUARD_CM } from "../public/js/blk.mjs";
 
 const src = `# demo
 speed 200
@@ -270,7 +270,7 @@ assert.equal(simVm("forward until dist < 1 timeout 500", { sensors: { dist: 99 }
 assert.deepEqual(simVm("forward until dist < 30", { sensors: { dist: 5 } }), []);
 
 for (const src of ["forever\n  forward 100\n  if dist < 5\n    break\n  end\nend",
-                   fs.readFileSync(new URL("./workflows/BLK Full Test.blk", import.meta.url), "utf8")]) {
+                   fs.readFileSync(new URL("../data/workflows/BLK Full Test.blk", import.meta.url), "utf8")]) {
   const { code } = compile(parse(src).program);
   assert.ok(code.length <= BLK_MAX);
   assert.equal(code.at(-1).op, BOPS.end);

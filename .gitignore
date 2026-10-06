@@ -67,7 +67,7 @@ hardware/step/
 /advanced-project-context
 *.log
 scratchpad/
-server/workflows/
+server/data/workflows/
 /.zed
 # Instagram post frames + exports — local marketing work, not the build
 docs/marketing/

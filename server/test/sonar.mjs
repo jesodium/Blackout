@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
-const ino = readFileSync(new URL('../firmware/giga/main/main.ino', import.meta.url), 'utf8');
+const ino = readFileSync(new URL('../../firmware/giga/main/main.ino', import.meta.url), 'utf8');
 const def = (n) => Number(ino.match(new RegExp(`#define ${n}\\s+(\\d+)`))[1]);
 const ITER = def('SONAR_ITER');
 

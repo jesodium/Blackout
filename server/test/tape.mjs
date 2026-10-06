@@ -5,7 +5,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import assert from "node:assert";
 
-const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
+const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`../public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
 
 // recording is a tap in sendCmd — the one place every command leaves the browser
 assert.ok(/tapeWatch\(word\);/.test(app), "sendCmd stopped feeding the tape recorder");
@@ -157,7 +157,7 @@ assert.ok(/speakQueued\(/.test(src) && !/[^a-zA-Z]speak\(/.test(src),
   "a tape line calls speak() directly again — that cancels the sentence before it");
 
 // ---- sage names a run, she never writes one ----
-const { parseTape, parseSage } = await import("./sage.js");
+const { parseTape, parseSage } = await import("../src/sage.js");
 const tapes = { "Presentation Walk": [{ ms: 0, cmd: "drv,tank,120,120,300" }] };
 assert.equal(parseTape("Presentation Walk", tapes).text, "Presentation Walk");
 assert.equal(parseTape("presentation walk", tapes).text, "Presentation Walk", "the name is matched case-insensitively");
@@ -184,7 +184,7 @@ for (const [phrase, want] of [["present yourself", "PRESENT YOURSELF"], ["say he
                               ["sage tell me more about your arm", "PRESENT ARM"]]) {
   const hit = tapeTrigs.find(([re]) => re.test(phrase));
   assert.equal(hit?.[1], want, `"${phrase}" no longer plays the ${want} tape`);
-  assert.ok(existsSync(new URL(`tapes/${want}.json`, import.meta.url)), `tapes/${want}.json is missing`);
+  assert.ok(existsSync(new URL(`../data/tapes/${want}.json`, import.meta.url)), `data/tapes/${want}.json is missing`);
 }
 assert.ok(/if \(trigger\?\.tape\) return void runTape\(trigger\.tape\);/.test(app),
   "the tape trigger is not wired into ask()");

@@ -1,7 +1,7 @@
 // feeds the splitter a frame containing its own boundary, one byte at a time
 
 import assert from "assert";
-import { mjpegSplit, findBytes } from "./public/js/mjpeg.mjs";
+import { mjpegSplit, findBytes } from "../public/js/mjpeg.mjs";
 
 const BOUND = "\r\n--123456789000000000000987654321\r\n";
 const enc = new TextEncoder();

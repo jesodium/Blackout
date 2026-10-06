@@ -126,7 +126,7 @@ const DIRS = [
 // trip, so it fires instantly and works with the venue offline. "present
 // yourself" is a tape and NOT the on-board PRESENTATION routine any more: the run
 // talks, looks at the room and works the claw, and none of those exist in
-// routines.h. The name has to match the file in server/tapes/.
+// routines.h. The name has to match the file in server/data/tapes/.
 const CMD_TRIGGERS = [
   { re: /present yourself|present urself|presentate/, tape: "PRESENT YOURSELF" },
   { re: /say hello|di hola/,                          tape: "SAY HELLO" },

@@ -122,7 +122,7 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.ok(!CAM_PORT_RE.test("cu.usbmodem1101"), "the giga's port must not be probed");
 
   // the sketch and this file are two halves of one wire format
-  const ino = fs.readFileSync(__dirname + "/../firmware/esp32-cam/main/main.ino", "utf8");
+  const ino = fs.readFileSync(__dirname + "/../../firmware/esp32-cam/main/main.ino", "utf8");
   assert.equal(+ino.match(/#define CAM_BAUD (\d+)/)[1], CAM_BAUD, "the two CAM_BAUDs must match");
   // The preprocessor cannot see an enum: as enum values, `#if CAM_NETWORK !=
   // NET_NONE` reads 0 != 0 and quietly compiles the radio out of every build.
