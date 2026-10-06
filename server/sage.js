@@ -166,6 +166,7 @@ function parseSage(raw, armMoves, tapes) {
         finding: parseFinding(o.finding),
         snapshot: parseSnapshot(o.snapshot),
         move: parseMove(o.move),
+        done: o.done === true,   // autopilot only: the goal is reached or given up on
         arm: parseArm(o.arm, armMovesFor(armMoves, "sage_can_use"), armMoves),
         tape: parseTape(o.tape, armMovesFor(tapes, "sage_can_use"), tapes),
       };

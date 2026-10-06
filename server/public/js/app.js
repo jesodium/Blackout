@@ -851,7 +851,7 @@ function clawStop(onCmd) {
 // Everything a panic stop has to kill. A bare `stop` is not one: a queued tape
 // or arm step, and the claw's hold repeat, each restart the robot the instant it
 // lands. The panic key and AUTO's STOP bar both go through here.
-const panicStop = (send) => { blkCancel(); armStopTape(); clawClear(); speakFlush(); send("stop"); };
+const panicStop = (send) => { blkCancel(); armStopTape(); clawClear(); speakFlush(); window.dispatchEvent(new Event("panic")); send("stop"); };
 
 // One deliberate twitch, for letting go of something without flinging the jaws
 // open into their stop. Full power for `ms` and then park — see CLAW_FRAME_MS
@@ -1373,6 +1373,39 @@ function Arm({ onCmd, enabled }) {
     </div>`;
 }
 
+// Autopilot: the goal goes to the server, which runs look -> BLK move -> look
+// (autopilot() in server.js). State comes back on the "auto" socket event,
+// bridged to here as a window event like cam-led, so nothing threads a socket.
+function AutoCtl({ enabled }) {
+  const [st, setSt] = useState({ on: false, goal: "", step: 0, max: 0 });
+  const [goal, setGoal] = useState(() => localStorage.getItem("autoGoal") || "");
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    const on = (e) => setSt(e.detail);
+    window.addEventListener("auto", on);
+    fetch("/api/auto").then(r => r.json()).then(setSt).catch(() => {});
+    return () => window.removeEventListener("auto", on);
+  }, []);
+  const go = async (g) => {
+    setErr("");
+    try { localStorage.setItem("autoGoal", goal); } catch {}
+    const r = await fetch("/api/auto", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: g, turn: +localStorage.getItem(BOOST_KEY) || BOOSTS[1][1] }) }).catch(() => null);
+    if (!r?.ok) setErr((await r?.json().catch(() => null))?.error || t("auto.fail"));
+  };
+  return html`
+    <div class="auto-ctl">
+      <small class="drive-hint">${t("drive.auto")}</small>
+      <div class="tapes-bar">
+        <input class="tapes-name" placeholder=${t("auto.ph")} value=${st.on ? st.goal : goal} disabled=${st.on}
+          onInput=${(e) => setGoal(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter" && goal.trim() && enabled) go(goal.trim()); }} />
+        ${st.on
+          ? html`<button type="button" class="btn is-rec" onClick=${() => go("")}>■ ${t("drive.stop")}</button>`
+          : html`<button type="button" class="btn" disabled=${!enabled || !goal.trim()} onClick=${() => go(goal.trim())}>▶ ${t("auto.go")}</button>`}
+      </div>
+      <small class="drive-hint">${st.on ? t("auto.step", { n: st.step, max: st.max }) : (err || st.why || "")}</small>
+    </div>`;
+}
+
 function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
   const [mode, setMode] = useState("remote");
   const [sub, setSub] = useState("motors");   // remote splits in two screens: drive pad / arm
@@ -1555,8 +1588,7 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
           </div>`
         : mode === "blk" ? html`
           <${BlkCtl} onCmd=${onCmd} onAnalyze=${onAnalyze} enabled=${enabled} busyRef=${busyRef} packetRef=${packetRef} />`
-        : html`
-          <small class="drive-hint">${t("drive.auto")}</small>`}
+        : html`<${AutoCtl} enabled=${enabled} />`}
         ${mode !== "remote" && html`
         <div class="routines">
           <span class="label">${t("drive.routines")}</span>
@@ -2719,7 +2751,7 @@ function SerialMonitor({ lines, onClear }) {
 }
 
 // ---- topbar + drawer ----
-function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lanUrl, lanIp, lang, onLang, onConsole, consoleOpen, clients, onDevices, granted, cloud, onSettings }) {
+function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lanUrl, lanIp, lang, onLang, onConsole, consoleOpen, clients, onDevices, granted, cloud, onSettings, mcp }) {
   return html`
     <header class="topbar">
       <div class="brand">
@@ -2750,6 +2782,8 @@ function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lan
       ${cloud && html`<span class="top-cloud">
         <span class=${"pill " + (cloud.sage ? "is-go" : "is-abort")} title=${t("cloud.title")}>${t("cloud.sage")}</span>
         <span class=${"pill " + (cloud.tts ? "is-go" : "is-abort")} title=${t("cloud.title")}>${t("cloud.tts")}</span>
+        ${mcp && html`<button type="button" key=${mcp.at} class="pill is-go mcp-pill" onClick=${window.blackout ? onSettings : undefined}
+          title=${t("settings.mcpLast", { what: mcpWhat(mcp), ago: Math.round((Date.now() - mcp.at) / 1000) })}>MCP</button>`}
       </span>`}
       <div class="top-stats">
         <dl class="stat"><dt>${t("mast.ping")}</dt><dd>${ping}</dd></dl>
@@ -3054,6 +3088,43 @@ function DevicesModal({ open, clients, selfId, onMode, onClose }) {
     </div>`;
 }
 
+// "robot_command: drv,fwd,120" -- what an MCP client just did, in the tool's own name
+const MCP_TOOL = { "/api/now": "robot_status", "/api/look": "robot_camera", "/api/cmd": "robot_command", "/api/mission": "robot_mission", "/api/chat": "sage_chat", "/api/blk-run": "robot_blk" };
+const mcpWhat = (d) => `${MCP_TOOL[d.path] || d.path}${d.arg != null && d.arg !== "" ? `: ${String(d.arg).slice(0, 60)}` : ""}`;
+
+// electron only: hooks server/mcp.mjs into Claude Desktop / Claude Code and shows
+// the last call one made. The entry runs the app's own binary as node, so a judge's
+// laptop with no node installed still works.
+function McpRow() {
+  const [info, setInfo] = useState(null);
+  const [last, setLast] = useState(null);
+  const [err, setErr] = useState(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    window.blackout.mcp.get().then(setInfo);
+    fetch("/api/mcp").then(r => r.json()).then(setLast).catch(() => {});
+    // off the app's one socket (a second one would show up in CONNECTED DEVICES)
+    const on = (e) => setLast(e.detail);
+    window.addEventListener("mcp", on);
+    return () => window.removeEventListener("mcp", on);
+  }, []);
+  const add = async () => { setErr(null); try { setInfo(await window.blackout.mcp.install()); } catch (e) { setErr(e.message); } };
+  const copy = () => { navigator.clipboard?.writeText(info.cli); setCopied(true); setTimeout(() => setCopied(false), 1500); };
+  if (!info) return null;
+  return html`
+    <div class="settings-field">
+      <span>${t("settings.mcp")}</span>
+      <div class="mcp-row">
+        <span class="settings-hint">${info.installed ? t("settings.mcpOn") : t("settings.mcpOff")}</span>
+        <button type="button" class=${"serial-btn" + (info.installed ? " is-on" : "")} onClick=${add}>
+          ${info.installed ? t("settings.mcpReadd") : t("settings.mcpAdd")}</button>
+      </div>
+      <button type="button" class="mcp-cli" title=${t("settings.mcpCopy")} onClick=${copy}>${copied ? t("settings.mcpCopied") : info.cli}</button>
+      <span class="settings-hint">${last ? t("settings.mcpLast", { what: mcpWhat(last), ago: Math.round((Date.now() - last.at) / 1000) }) : t("settings.mcpNone")}</span>
+      ${err && html`<p class="tunnel-err">${err}</p>`}
+    </div>`;
+}
+
 function SettingsModal({ open, onClose }) {
   const [values, setValues] = useState({ CEREBRAS_API_KEY: "", DEEPGRAM_API_KEY: "", CEREBRAS_MODEL: "", TTS_VOICE: "" });
   const [saved, setSaved] = useState(false);
@@ -3078,6 +3149,7 @@ function SettingsModal({ open, onClose }) {
           ${field("CEREBRAS_MODEL", t("settings.cerebrasModel"), "qwen-3.8-27b")}
           ${field("DEEPGRAM_API_KEY", t("settings.deepgramKey"), t("settings.optional"), "password")}
           ${field("TTS_VOICE", t("settings.ttsVoice"), "en-US-AndrewNeural")}
+          ${window.blackout.mcp && html`<${McpRow} />`}
         </div>
         <div class="settings-actions">
           <span class="settings-hint">${saved ? t("settings.saved") : t("settings.hint")}</span>
@@ -3339,6 +3411,7 @@ function App() {
   const [ai, setAi] = useState({ text: t("ai.awaiting"), badge: "badge.standby", analyzing: false, history: [], phase: null, since: 0, llm: null, tts: null, status: null });
 
   const analyzingRef = useRef(false);
+  const analyzeAppRef = useRef(null);   // analyze() is declared below the socket effect that needs it
   analyzingRef.current = ai.analyzing;
   const presentingRef = useRef(false);
   const [tts, setTts] = useState(() => localStorage.getItem("tts") !== "false");
@@ -3383,6 +3456,8 @@ function App() {
 
   const [judge, setJudge] = useState(false);
   const [cloud, setCloud] = useState(null);
+  const [mcp, setMcp] = useState(null);   // last MCP call (server/mcp.mjs) -- lights the topbar pill
+  useEffect(() => { fetch("/api/mcp").then(r => r.json()).then(setMcp).catch(() => {}); }, []);
   const grantedRef = useRef(!VIEWER);
   grantedRef.current = granted;
   const canDrive = granted && !!bridge.running;
@@ -3635,14 +3710,33 @@ function App() {
       const f = camFrames[cam || 0];
       ack(f && Date.now() - f.at < FRAME_LEND_MS ? f.bytes : null);
     });
+    // autopilot: state to AutoCtl, her narration into the feed + voice, and the
+    // panic key ends the run server-side even when `stop` went out over BLE
+    socket.on("auto", d => window.dispatchEvent(new CustomEvent("auto", { detail: d })));
+    socket.on("auto-say", d => { if (d?.text) sayAgent(d.text, d.timestamp, t("log.aiReceived"), "ai", d.status); });
+    const onPanic = () => socket.emit("auto-stop");
+    window.addEventListener("panic", onPanic);
     socket.on("mission-ack", d => { if (d?.text) sayAgent(d.text, d.timestamp, t("log.missionAck"), "ai", d.status); });
 
     socket.on("feed", d => setMirrorFeed(f => !d ? f : d.patch
       ? f.map(x => x.id === d.id ? { ...x, ...d.patch } : x)
       : [...f, d].slice(-40)));
     socket.on("cmd", w => { if (bleRef.current.device?.gatt?.connected) sendCmdRef.current?.(w); });
+    // robot_blk from mcp.mjs: the same runner as Sage's move cards, so the two
+    // can never diverge. Only the dashboard that can actually drive takes it.
+    socket.on("blk-run", async ({ text, usb }, ack) => {
+      if (!usb && !bleRef.current.device?.gatt?.connected) return ack({ skip: true });
+      const { program } = blkParse(text);
+      addLog(t("log.mcp", { what: `robot_blk: ${text.replace(/\s+/g, " ").slice(0, 80)}` }), "ai");
+      const { where, cancelled } = await playBlk(program, {
+        onCmd: (w) => sendCmdRef.current?.(w), onAnalyze: (...a) => analyzeAppRef.current?.(...a), busyRef: analyzingRef, packetRef,
+        onNote: (n) => addLog(n, "ai"),
+      });
+      ack({ where, cancelled });
+    });
+    socket.on("mcp", d => { addLog(t("log.mcp", { what: mcpWhat(d) }), "ai"); window.dispatchEvent(new CustomEvent("mcp", { detail: d })); setMcp(d); });
     addLog(t("log.booted"), "system");
-    return () => socket.close();
+    return () => { window.removeEventListener("panic", onPanic); socket.close(); };
   }, [addLog, speakTimed, pushFeed]);
 
   useEffect(() => {
@@ -3757,6 +3851,7 @@ function App() {
   }, [addLog, toast, bleWrite]);
 
   const sendCmdRef = useRef(sendCmd);
+  analyzeAppRef.current = analyze;
   sendCmdRef.current = sendCmd;
 
   useEffect(() => {
@@ -4305,7 +4400,7 @@ function App() {
           ping=${fresh ? ping : "—"} packets=${packets} uptime=${uptime} lanUrl=${lanUrl} lanIp=${lanIp}
           lang=${lang} onLang=${changeLang} onConsole=${toggleDrawer} consoleOpen=${drawer === "open"}
           clients=${clients} onDevices=${() => setDevicesOpen("open")} granted=${granted}
-          cloud=${cloud} onSettings=${() => setSettingsOpen("open")} />
+          cloud=${cloud} onSettings=${() => setSettingsOpen("open")} mcp=${mcp} />
 
         ${!VIEWER && flashBoards.status !== "none" && html`<${UpdateBar} boards=${flashBoards} onUpdate=${openUpdate} />`}
 

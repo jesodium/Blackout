@@ -21,4 +21,5 @@ contextBridge.exposeInMainWorld("blackout", {
   tunnel: (on) => ipcRenderer.invoke(on ? "tunnel:start" : "tunnel:stop"),
   getTunnel: () => ipcRenderer.invoke("tunnel:get"),
   onTunnel: sub("tunnel:state"),
+  mcp: { get: () => ipcRenderer.invoke("mcp:get"), install: () => ipcRenderer.invoke("mcp:install") },
 });

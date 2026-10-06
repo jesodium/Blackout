@@ -36,7 +36,9 @@
     "test:sonar": "node test-sonar.mjs",
     "test:led": "node test-led.mjs",
     "test:split": "node test-split.mjs",
-    "test:camusb": "node camserial.js --selftest"
+    "test:camusb": "node camserial.js --selftest",
+    "test:mcp": "node mcp.mjs --selftest",
+    "mcp": "node mcp.mjs"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

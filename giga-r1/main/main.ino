@@ -928,6 +928,7 @@ void handleBlk(const String& c) {
     blkWant = blkFld(c, 2).toInt();
     blkLoading = true;
     sensorChar.writeValue("E:blkrdy");
+    Serial.println("E:blkrdy");     // the usb link waits on this too, or every program falls back to the browser
   } else if (k == "i") {
     int idx = blkFld(c, 2).toInt();
     if (idx < 0 || idx >= BLK_MAX) return;

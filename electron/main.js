@@ -243,6 +243,29 @@ ipcMain.handle("tunnel:start", () => startTunnel());
 ipcMain.handle("tunnel:stop", () => stopTunnel());
 ipcMain.handle("tunnel:get", () => tunnelState());
 
+// ---- mcp ----
+// server/mcp.mjs, run by this app's own binary as plain node (ELECTRON_RUN_AS_NODE),
+// so a laptop with no node installed can still host it.
+const MCP_SCRIPT = path.join(SERVER_DIR, "mcp.mjs");
+const DESKTOP_CFG = () => path.join(app.getPath("appData"), "Claude", "claude_desktop_config.json");
+function mcpInfo() {
+  let installed = false;
+  try { installed = !!JSON.parse(fs.readFileSync(DESKTOP_CFG(), "utf8")).mcpServers?.blackout; } catch { }
+  return { installed, cli: `claude mcp add blackout -e ELECTRON_RUN_AS_NODE=1 -- "${process.execPath}" "${MCP_SCRIPT}"` };
+}
+function mcpInstall() {
+  let cfg = {};
+  // a config that isn't valid json is the operator's, never overwritten -- only a missing one is created
+  try { cfg = JSON.parse(fs.readFileSync(DESKTOP_CFG(), "utf8")); }
+  catch (e) { if (e.code !== "ENOENT") throw new Error(`${DESKTOP_CFG()}: ${e.message}`); }
+  cfg.mcpServers = { ...cfg.mcpServers, blackout: { command: process.execPath, args: [MCP_SCRIPT], env: { ELECTRON_RUN_AS_NODE: "1" } } };
+  fs.mkdirSync(path.dirname(DESKTOP_CFG()), { recursive: true });
+  fs.writeFileSync(DESKTOP_CFG(), JSON.stringify(cfg, null, 2) + "\n");
+  return mcpInfo();
+}
+ipcMain.handle("mcp:get", () => mcpInfo());
+ipcMain.handle("mcp:install", () => mcpInstall());
+
 ipcMain.handle("settings:get", () => readSettings());
 ipcMain.handle("settings:save", (_e, values) => { writeSettings(values); return true; });
 ipcMain.handle("app:relaunch", () => { app.relaunch(); app.exit(0); });
