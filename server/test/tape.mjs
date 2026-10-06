@@ -4,8 +4,9 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import assert from "node:assert";
+import { appSrc } from "./source.js";
 
-const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`../public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
+const app = appSrc();
 
 // recording is a tap in sendCmd — the one place every command leaves the browser
 assert.ok(/tapeWatch\(word\);/.test(app), "sendCmd stopped feeding the tape recorder");
@@ -157,7 +158,7 @@ assert.ok(/speakQueued\(/.test(src) && !/[^a-zA-Z]speak\(/.test(src),
   "a tape line calls speak() directly again — that cancels the sentence before it");
 
 // ---- sage names a run, she never writes one ----
-const { parseTape, parseSage } = await import("../src/sage.js");
+const { parseTape, parseSage } = await import("../src/sage/parse.js");
 const tapes = { "Presentation Walk": [{ ms: 0, cmd: "drv,tank,120,120,300" }] };
 assert.equal(parseTape("Presentation Walk", tapes).text, "Presentation Walk");
 assert.equal(parseTape("presentation walk", tapes).text, "Presentation Walk", "the name is matched case-insensitively");

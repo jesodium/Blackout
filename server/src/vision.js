@@ -98,7 +98,7 @@ async function upright(jpeg, cam = 0) {
 // Sage's stills come off a dashboard's own /stream when one is open. The cam
 // serves exactly ONE stream (its handler never returns) and a concurrent /capture
 // starves the shared frame buffers, which is what used to blink the feed out every
-// time she looked -- the old fix was to tear the feed down first (cam-yield) and
+// time she looked -- the old fix was to tear the feed down first (the old yield handshake) and
 // pay ~12s of "loading" to reopen it. No browser = no stream = no contention, so
 // with nothing to borrow from we just fall through to /capture.
 let frameSource = null;

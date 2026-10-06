@@ -8,8 +8,9 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync, mkdirSync, existsSync
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
+import { appSrc, serverSrc } from "./source.js";
 
-const app = ["app", "control", "speech"].map((n) => readFileSync(`public/js/${n}.js`, "utf8")).join("\n");
+const app = appSrc();
 const ino = readFileSync("../firmware/esp32-cam/main/main.ino", "utf8");
 const sh = readFileSync("../scripts/flash.sh", "utf8");
 
@@ -89,7 +90,7 @@ CAM_CLAIM=0 claim_cam || echo "off"
 // ---- the plumbing that makes two boards two boards ----
 assert.doesNotMatch(sh, /if d in seen:/, "flash.sh de-dupes by sketch dir again — only one cam gets flashed");
 assert.match(sh, /record "\$dir\$\{chip:\+@\$chip\}"/, "flash.sh must key .last-flash by chip, or one cam marks both current");
-const server = readFileSync("server.js", "utf8");
+const server = serverSrc();
 assert.match(server, /k\.startsWith\(p\.dir \+ "@"\)/, "flash status ignores the per-chip keys flash.sh writes");
 assert.match(server, /found\[hit\.key\]\+\+/, "flash status counts boards as flags again, so a second cam is invisible");
 

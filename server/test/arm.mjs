@@ -4,6 +4,7 @@
 
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
+import { appSrc, serverSrc } from "./source.js";
 
 const h = readFileSync(new URL("../../firmware/giga/main/arm.h", import.meta.url), "utf8");
 const def = (name) => {
@@ -117,7 +118,7 @@ assert.ok(ino.indexOf('startsWith("armh,")') < ino.indexOf('startsWith("arm,")')
   "armh, must be tested before arm,");
 
 // the browser has to re-send faster than the deadman expires, or a held button stutters
-const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`../public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
+const app = appSrc();
 const rep = +(app.match(/ARM_REPEAT_MS\s*=\s*(\d+)/) || [])[1];
 assert.ok(rep > 0 && rep < JOG, `arm repeat ${rep}ms must be under the ${JOG}ms deadman`);
 // A tap shorter than this is a burst nobody can see, so release holds the stop
@@ -264,7 +265,7 @@ assert.equal(latch.on, "");
 // She does not drive the arm — she names a take the crew recorded on the bench
 // and the operator presses YES. Every arm move she can ask for is one somebody
 // already ran and kept, which is the whole reason the recorder exists.
-const { parseArm, armMovesFor, ARM_REPEAT_MS } = await import("../src/sage.js");
+const { parseArm, armMovesFor, ARM_REPEAT_MS } = await import("../src/sage/parse.js");
 assert.ok(ARM_REPEAT_MS > 0 && ARM_REPEAT_MS < JOG,
   `the gap between chained takes (${ARM_REPEAT_MS}ms) must be under the ${JOG}ms deadman`);
 
@@ -289,7 +290,7 @@ for (const bad of ["", "base left 600", "arm,0,-100", "Wave", "Close\nWave"])
 // one YES press, and every take in it is one somebody recorded on the bench
 assert.equal(parseArm("Close\n".repeat(8), take).tape.length, 8 * take.Close.length,
   "chained takes are still capped");
-assert.ok(!/left|right/i.test(readFileSync(new URL("../src/sage.js", import.meta.url), "utf8")
+assert.ok(!/left|right/i.test(readFileSync(new URL("../src/sage/parse.js", import.meta.url), "utf8")
   .match(/function parseArm[^]*?\n\}/)[0]), "parseArm still knows how to jog a joint");
 
 // ---- per-take flags ----
@@ -327,7 +328,7 @@ assert.deepEqual(armMovesFor(shaped, "sage_can_use").legacy, shaped.legacy,
 assert.equal(parseArm("appOnly", armMovesFor(shaped, "sage_can_use")), null,
   "sage can name a take she is not allowed to use");
 const rec = readFileSync(new URL("../tools/armrec.py", import.meta.url), "utf8");
-const srv0 = readFileSync(new URL("../server.js", import.meta.url), "utf8");
+const srv0 = serverSrc();
 assert.ok(/FLAGS = \("sage_can_use", "show_in_app"\)/.test(rec),
   "armrec.py's flag names are out of step with the server's");
 assert.ok(/save_move\(name, wrap\(clean\(REC\["steps"\]\), flags_of\(load_moves\(\)\.get\(name, \{\}\)\)\)\)/.test(rec),

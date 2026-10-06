@@ -4,6 +4,7 @@
 // re-run here against the constants in main.ino.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { appSrc } from "./source.js";
 
 const ino = readFileSync(new URL("../../firmware/giga/main/main.ino", import.meta.url), "utf8");
 const LOG_N = +ino.match(/#define LOG_N (\d+)/)[1];
@@ -44,7 +45,7 @@ assert.ok(/logEvt\(LOG_BOOT, resetBits\)/.test(ino), "boot event lost its reset 
 for (const c of ["LOG_BOOT", "LOG_BLE_UP", "LOG_BLE_DOWN", "LOG_STALL", "LOG_NOTIFY_FAIL"])
   assert.ok(new RegExp(`case ${c}:`).test(ino), `${c} has no name in logName() — it would dump as "?"`);
 
-const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`../public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
+const app = appSrc();
 assert.ok(/startsWith\("E:log"\)/.test(app), "dashboard stopped rendering the black box");
 assert.ok(/writeValue\(new TextEncoder\(\)\.encode\("log,"\)\)/.test(app), "dashboard no longer asks for a dump on connect");
 

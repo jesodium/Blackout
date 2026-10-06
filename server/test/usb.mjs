@@ -3,9 +3,10 @@
 // PC half, and all of it is one fact spread over three files.
 import assert from "assert";
 import { readFileSync } from "fs";
+import { appSrc, serverSrc } from "./source.js";
 
-const srv = readFileSync(new URL("../server.js", import.meta.url), "utf8");
-const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`../public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
+const srv = serverSrc();
+const app = appSrc();
 const ino = readFileSync(new URL("../../firmware/giga/main/main.ino", import.meta.url), "utf8");
 
 // 1. the board blocks in readStringUntil('\n') -- a write with no terminator is a

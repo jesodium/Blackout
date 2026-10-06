@@ -2,12 +2,13 @@
 // any mood whose travel drops to a single pixel
 
 import { readFileSync } from "node:fs";
+import { appSrc } from "./source.js";
 
 // paths are relative to server/, this file sits in server/test/
 const read = (p) => readFileSync(new URL("../" + p.replace(/^\.\//, ""), import.meta.url), "utf8");
 const face = read("./public/js/sageface.js");
 const css = read("./public/css/style.css");
-const app = ["app", "control", "speech"].map((n) => read(`./public/js/${n}.js`)).join("\n");
+const app = appSrc();
 
 const moods = face.match(/export const MOODS = \[([^\]]+)\]/)[1].match(/"(\w+)"/g).map(s => s.slice(1, -1));
 const fail = [];

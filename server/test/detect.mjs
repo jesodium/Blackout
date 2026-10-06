@@ -4,6 +4,7 @@
 import { readFileSync, existsSync, statSync } from "node:fs";
 import assert from "node:assert/strict";
 import { drawBoxes, rotBox, ROTS, norm, MODEL_URL } from "../public/js/detect.mjs";
+import { appSrc } from "./source.js";
 
 const P = "public";
 const model = MODEL_URL.replace(/^\//, P + "/");
@@ -17,7 +18,7 @@ for (const path of man.flatMap(g => g.paths)) {
 for (const v of ["tf.min.js", "coco-ssd.min.js"])
   assert.ok(existsSync(`${P}/vendor/${v}`), "missing vendor/" + v);
 
-const app = ["app", "control", "speech"].map((n) => readFileSync(`${P}/js/${n}.js`, "utf8")).join("\n");
+const app = appSrc();
 const camKey = (base, cam) => base + (cam || "");
 assert.match(app, /const camKey = \(base, cam\) => base \+ \(cam \|\| ""\);/, "camKey drifted from its mirror here");
 assert.match(app, /cam-feed cam-boxes/, "overlay canvas lost its classes");
