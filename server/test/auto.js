@@ -3,7 +3,7 @@
 //  Sage looking at the picture -- see lampLine() in server.js)
 
 const assert = require("assert");
-const { parseSage, snapSummary, wantsTool } = require("./sage");
+const { parseSage, snapSummary, wantsTool } = require("../src/sage");
 
 assert.strictEqual(parseSage('{"text":"hm","snapshot":"readings jumping"}').snapshot, "readings jumping");
 assert.strictEqual(parseSage('{"text":"all good"}').snapshot, null);
@@ -51,7 +51,7 @@ assert.ok(!wantsTool(sage, 0, 1), "a one-pass budget is answer-only");
 
 // ASK FIRST covers every tool she reaches for, not just the loop's two: the
 // lamp, a finding and a snapshot fire as side effects inside askSage.
-const src = require("fs").readFileSync(require("path").join(__dirname, "server.js"), "utf8");
+const src = require("fs").readFileSync(require("path").join(__dirname, "..", "server.js"), "utf8");
 const askBody = src.slice(src.indexOf("async function askSage"), src.indexOf("const MAX_TOOL_STEPS"));
 for (const [name, field] of [["finding", "sage.finding"], ["snapshot", "sage.snapshot"]]) {
   const line = askBody.split("\n").find((l) => l.trim().startsWith("if (") && l.includes(field));

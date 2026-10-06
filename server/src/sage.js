@@ -65,7 +65,7 @@ const parseMove = (v) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 
 const ARM_REPEAT_MS = 300;   // gap left between chained takes; must stay under
                              // ARM_JOG_MS in arm.h so nothing stutters
 
-// A take in arm_moves/<name>.json is either a bare list of steps — everything
+// A take in data/arm_moves/<name>.json is either a bare list of steps — everything
 // before the flags existed, and those count as usable everywhere — or
 // {steps, sage_can_use, show_in_app}. The bench fills up with debug takes, and a
 // debug take is exactly what should not be one tap away on comp day or in Sage's
@@ -115,7 +115,7 @@ function parseArm(v, moves = {}, raw = null) {
 }
 
 // ---- tapes ----
-// A whole run the crew drove by hand and kept (server/tapes/). She names ONE,
+// A whole run the crew drove by hand and kept (server/data/tapes/). She names ONE,
 // exactly as written, and the operator presses YES — same gate as an arm take,
 // and for the same reason: the driving was vetted once, when it was recorded.
 // One at a time on purpose — a tape is a whole run, so chaining two is a routine

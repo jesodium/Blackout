@@ -4,7 +4,7 @@ process.env.REC_FPS = "0";
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
-const rec = require("./recorder");
+const rec = require("../src/recorder");
 
 const started = rec.start("unit test");
 assert.ok(started.id.startsWith("unit-test-"), "id is slug + stamp, got " + started.id);

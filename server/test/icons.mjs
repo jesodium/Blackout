@@ -2,7 +2,7 @@
 
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { ICON_NAMES } from "./public/js/icons.mjs";
+import { ICON_NAMES } from "../public/js/icons.mjs";
 
 const ROOT = "public";
 const SKIP = new Set(["vendor", "audio", "models", "onboard", "findings", "icons"]);

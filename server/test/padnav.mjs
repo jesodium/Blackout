@@ -2,7 +2,7 @@
 
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { pickNext, stepCursor } from "./public/js/padnav.mjs";
+import { pickNext, stepCursor } from "../public/js/padnav.mjs";
 
 const box = (x, y, w = 40, h = 20) => ({ x, y, width: w, height: h });
 
@@ -59,11 +59,11 @@ for (const [ax, ay] of [[0.2, -0.2], [0.9, -0.16], [0, -0.155]]) {
 assert.ok(Math.abs(mix(0, 0, 1)[0]) < MANUAL_PWM, "right stick spin isn't slower than full");
 assert.deepEqual(mix(0, 0, 1).map(Math.sign), [-1, 1], "right stick spins right");
 
-const ino = readFileSync(new URL("../firmware/giga/main/main.ino", import.meta.url), "utf8");
+const ino = readFileSync(new URL("../../firmware/giga/main/main.ino", import.meta.url), "utf8");
 assert.ok(/verb == "tank"/.test(ino), 'main.ino has no "tank" verb — drv,tank would halt the motors');
 assert.ok(/void tank\(int l, int r\)/.test(ino), "main.ino lost tank()");
 
-const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`./public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
+const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`../public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
 assert.ok(/drv,tank,\$\{l\},\$\{r\}/.test(app), "app.js stopped sending tank commands");
 
 assert.ok(/tourOpen \|\| cursorOn\(\)/.test(app), "drive loop no longer parks for cursor mode");

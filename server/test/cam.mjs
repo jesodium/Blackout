@@ -98,7 +98,7 @@ assert.match(server, /found\[hit\.key\]\+\+/, "flash status counts boards as fla
 // Two ways that goes silently wrong: the browser lends a frozen frame from a dead
 // feed (she then reports on a picture of the past), or the server stops preferring
 // the borrow and goes back to /capture, which kills the feed it competes with.
-const vision = readFileSync("vision.js", "utf8");
+const vision = readFileSync("src/vision.js", "utf8");
 assert.match(vision, /if \(frameSource\) \{[\s\S]*?return upright\(b, cam\);/,
   "grabFrame no longer tries the borrowed frame first — every look reopens /capture");
 assert.match(vision, /return overCam\(cam, \(url\) => grabFrameFrom/,

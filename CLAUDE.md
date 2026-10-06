@@ -129,7 +129,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       dead reckoning with no encoder behind it, so it drifted, and a joint that
       parked itself at a phantom stop read as an arm that refuses to move. What
       stands between a 360 and the frame is now the operator on the button and the
-      `ARM_JOG_MS` deadman behind them. `test-arm.mjs` asserts all four names stay
+      `ARM_JOG_MS` deadman behind them. `test/arm.mjs` asserts all four names stay
       out, so it cannot creep back one file at a time.
       **`armTravel[]` and RE-HOME stayed**: the sag trim reads the travel count as
       its only estimate of pose, and `armz,` re-zeroes it after a stall or a shove.
@@ -172,7 +172,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       *inside* it — so the command written a moment ago sits unread. That was
       **60ms a command over the USB cable**, slower than BLE; the discard thread
       (`_drain()`) puts it at ~1ms. A laggy USB link here is this, never the cable.
-      A take is saved as **its own file**, `server/arm_moves/<name>.json`, holding
+      A take is saved as **its own file**, `server/data/arm_moves/<name>.json`, holding
       flat `{ms, cmd}` steps plus its two flags; the dashboard's arm pad turns each
       one into a button (`/api/arm-moves`). **The filename is the name and the
       folder is the collection** — no index file to fall out of step with it, and a
@@ -216,7 +216,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       against the board's 3s deadman; releasing sends `arm,<joint>,0`, and a bare
       `arm,` is all joints off. Don't wire it to a routine or anything unheld — a 360
       with nobody on the button winds itself into the frame, which is what happened
-      on the bench. `npm run test:arm` (`server/test-arm.mjs`) re-runs the pulse
+      on the bench. `npm run test:arm` (`server/test/arm.mjs`) re-runs the pulse
       maths, the clamp, the 500-2500us bounds and the deadman in js against the
       constants read out of `arm.h`, and **fails if a second call site appears**.
     - **Swing is per joint** (`span` in `armSv[]`), because pulse width is speed and
@@ -426,7 +426,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     `serialTick()` in its `main.ino` answers `f` with one jpeg (`#JPG <len>` then
     exactly len raw bytes — by LENGTH, never by scanning for a marker, since jpeg
     payload can spell any marker you pick) and `v <var> <val>` with the same
-    setter `/control` drives. `server/camserial.js` reads that port and the PC
+    setter `/control` drives. `server/src/camserial.js` reads that port and the PC
     server re-serves it at **its own `/stream`, `/capture` and `/control`** — the
     same three paths the wifi cam answers on — so a cam on a cable is one more
     HOST and nothing anywhere learns a second shape: `location.host` is the last
@@ -773,7 +773,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     board, a reason = browser) *before* it is pressed, so an operator can see a
     suggestion that would run slow. That is also why `prompts/chat.md` teaches her a
     cut-down BLK — one comparison per line, constant arguments, no `and`/`or` — and
-    why `node test-blk.mjs` compiles every shape that prompt teaches: a prompt that
+    why `node test/blk.mjs` compiles every shape that prompt teaches: a prompt that
     drifts wider makes every card fall back to the browser silently.
     **No move she proposes drives forward blind** — `guard()` in `blk.mjs` rewrites a
     bare `forward 800` into `forward until dist < 10 timeout 800` before the card is
@@ -797,7 +797,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     only from the takes the crew recorded** — `"arm"` in her json is a take's
     NAME, one per line, any number of them (`ARM_MAX_TAKES` came off 2026-09-05
     — a long chain is still one YES press); `parseArm()` in `sage.js` resolves them
-    against `arm_moves/` **server-side** into the flat `{ms, cmd}` tape the
+    against `data/arm_moves/` **server-side** into the flat `{ms, cmd}` tape the
     pad already replays, so the browser needs no second copy of anything. **There
     is deliberately no joint jog**: a freeform burst on a 360 with no encoder is
     exactly what the recorder exists to keep out of her hands, so every arm move
@@ -811,7 +811,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     commands, so the deadman applies unchanged.
   - **Each take carries its own three flags** — the bench fills up with debug takes,
     and a debug take is exactly what should not be one tap away on comp day or in
-    Sage's hands. A take in `arm_moves/<name>.json` is either a bare list of steps
+    Sage's hands. A take in `data/arm_moves/<name>.json` is either a bare list of steps
     (everything recorded before the flags existed — those count as usable
     everywhere) or `{steps, sage_can_use, show_in_app}`, and `armMovesFor()` in
     `sage.js` is the one filter: `/api/arm-moves` reads `show_in_app`, Sage's
@@ -1027,8 +1027,8 @@ autonomous analysis loop) and `sage_chat`.
 ## Tapes
 
 A whole manual run written down and replayed as one tap — CONSOLE → **TAPES**.
-`server/tapes/<name>.json`, one file per tape, filename = the name, same rules
-as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
+`server/data/tapes/<name>.json`, one file per tape, filename = the name, same rules
+as `data/arm_moves/` (no index file to fall out of step with it, editable in Finder).
 
 - **A tape is the arm take's `{ms, cmd}`, deliberately** — same shape, same
   player, so drive, arm, lights and routines live in ONE list and there is no
@@ -1215,7 +1215,7 @@ as `arm_moves/` (no index file to fall out of step with it, editable in Finder).
 
 ## BLK
 
-Operator-authored workflows, saved as plain `.blk` text in `server/workflows/`
+Operator-authored workflows, saved as plain `.blk` text in `server/data/workflows/`
 and driven by `BlkCtl` in `app.js`. Not to be confused with the on-board `Step`
 routines below — those are compiled-in tables, BLK is authored on the dashboard.
 
@@ -1261,7 +1261,7 @@ routines below — those are compiled-in tables, BLK is authored on the dashboar
   half-works: `parse` + `serialize` (roundtrip), `NODE_META` (editor blocks),
   the interpreter's `runList`, `compile` (or it quietly falls back to the
   browser), and `prompts/blk.md` (what Sage is allowed to write).
-  `node server/test-blk.mjs` is the self-check — it runs a JS mirror of the
+  `node server/test/blk.mjs` is the self-check — it runs a JS mirror of the
   firmware VM against the browser interpreter and asserts the same trace, so
   extend it too, and keep `BOPS` in step with `blkvm.h`.
 
@@ -1455,7 +1455,7 @@ conventions:
   `startRoutine()` and matched by lowercase name (`"test2"`, `"mission"`, …).
 - Always close with `{END, 0, 0}`. **There is no arm op** — `Op` is
   `FWD BACK LEFT RIGHT WAIT ANALYZE END` and the runner has no arm case, and the
-  recorded takes live in `server/arm_moves/` on the PC, not in flash. A
+  recorded takes live in `server/data/arm_moves/` on the PC, not in flash. A
   routine that works the arm means a new op plus getting the take onto the board;
   today the arm only ever moves from an `arm,` command over BLE/USB.
   **A run that needs the arm, or `analyze`/`say`, is a tape, not a routine** —

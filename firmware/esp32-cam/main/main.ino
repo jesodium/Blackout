@@ -8,7 +8,7 @@
 #include "arduino_secrets.h"
 
 // The cam over its own USB cable: no wifi, no router, no hotspot. The board hands
-// a jpeg down the serial port when the PC asks for one and server/camserial.js
+// a jpeg down the serial port when the PC asks for one and server/src/camserial.js
 // re-serves it as the same /stream, /capture and /control the wifi cam answers on.
 // 921600 because a 23KB svga frame is TWO SECONDS at 115200 -- if an adapter
 // garbles it, drop this and CAM_BAUD in camserial.js together, they must match.

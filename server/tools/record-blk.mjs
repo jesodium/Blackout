@@ -1,6 +1,6 @@
 // drives the blk editor over cdp and records it
 
-import { open, sleep } from "./cdp.mjs";
+import { open, sleep } from "../test/cdp.mjs";
 import fs from "fs";
 
 const DIR = "/tmp/blkcast";

@@ -1,4 +1,4 @@
-"""Arm bench recorder. python3 server/armrec.py -> :5006
+"""Arm bench recorder. python3 server/tools/armrec.py -> :5006
 
 A serial pipe to the Giga, not to the Uno bench rig: main.ino reads the same
 command strings off USB that it reads off BLE (`Serial.readStringUntil` in
@@ -8,7 +8,7 @@ over the link — `arm,<joint>,<speed>`, `armz,`, `arml,`, `stop`.
 Why this exists at all: the dashboard's arrows and hold sliders are a live
 control surface, and a live control surface is how a joint gets overdriven. The
 point is to overdrive things HERE, once, on the bench, then save the take to
-server/arm_moves/<name>.json — one file per take, which the dashboard turns
+server/data/arm_moves/<name>.json — one file per take, which the dashboard turns
 into one tap per move.
 
 It talks to the board over USB **or** over BLE, operator's pick. USB is the
@@ -29,7 +29,7 @@ import serial, serial.tools.list_ports
 from flask import Flask, request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MOVES_D = os.path.join(HERE, "arm_moves")   # one file per take, name = filename
+MOVES_D = os.path.join(HERE, os.pardir, "data", "arm_moves")   # one file per take, name = filename
 JOINTS = ["base", "shoulder", "elbow", "wrist", "gripwrist", "gripper"]
 REPEAT_MS = 300      # under the board's 800ms ARM_JOG_MS deadman
 REC_MAX = 5000       # a recorder left on overnight must not eat the machine
@@ -532,7 +532,7 @@ function paint(j){
    paint(await(await fetch('/moves/'+encodeURIComponent(n),
     {method:'DELETE'})).json())}}
  for(const s of moves.querySelectorAll('.nm'))s.onclick=()=>rename(s)}
-// Rename in place. The name IS the filename in server/arm_moves/ and nothing
+// Rename in place. The name IS the filename in server/data/arm_moves/ and nothing
 // caches it — the dashboard and Sage both re-read the folder per call — so it is
 // safe to change mid-session.
 function rename(span){const old=span.dataset.r,i=document.createElement('input');
@@ -724,7 +724,7 @@ def selftest():
     # the speed slider is only a knob if its floor still turns the servo: below
     # roughly 100us off neutral the pulse is inside the deadband and the joint
     # buzzes. spans live in arm.h, so check against the narrowest one there.
-    with io.open(os.path.join(HERE, os.pardir, "firmware", "giga", "main", "arm.h"),
+    with io.open(os.path.join(HERE, os.pardir, os.pardir, "firmware", "giga", "main", "arm.h"),
                  encoding="utf-8") as f:
         h = f.read()
     dflt = int(re.search(r"#define ARM_SPAN_US\s+(\d+)", h).group(1))

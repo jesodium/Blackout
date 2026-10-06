@@ -1,8 +1,8 @@
 // jpeg carving out of a multipart body
 
 const assert = require("assert");
-const { carveJpeg, upright } = require("./vision");
-const { parseSage } = require("./sage");
+const { carveJpeg, upright } = require("../src/vision");
+const { parseSage } = require("../src/sage");
 const sharp = require("sharp");
 
 const J = (n) => Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(n, 0x41), Buffer.from([0xff, 0xd9])]);

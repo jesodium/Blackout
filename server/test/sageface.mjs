@@ -3,7 +3,8 @@
 
 import { readFileSync } from "node:fs";
 
-const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+// paths are relative to server/, this file sits in server/test/
+const read = (p) => readFileSync(new URL("../" + p.replace(/^\.\//, ""), import.meta.url), "utf8");
 const face = read("./public/js/sageface.js");
 const css = read("./public/css/style.css");
 const app = ["app", "control", "speech"].map((n) => read(`./public/js/${n}.js`)).join("\n");

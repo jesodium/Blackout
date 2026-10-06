@@ -11,13 +11,13 @@ const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const OpenAI = require("openai");
-const { eyeParts, grabFrame, grabFrames, setFrameSource, setLed: visionSetLed, getLed, pingCam, setCamRot, camCount } = require("./vision");
+const { eyeParts, grabFrame, grabFrames, setFrameSource, setLed: visionSetLed, getLed, pingCam, setCamRot, camCount } = require("./src/vision");
 // One wrapper so every lamp change -- the slider, Sage, the dark ramp -- lands on
 // every dashboard's slider. The browser posts /api/led and hears its own echo back.
 const setLed = async (v) => { const r = await visionSetLed(v); io.emit("led", getLed()); return r; };
-const ledStrip = require("./ledstrip");
-const { parseSage, snapSummary, wantsTool, armMovesFor } = require("./sage");
-const recorder = require("./recorder");
+const ledStrip = require("./src/ledstrip");
+const { parseSage, snapSummary, wantsTool, armMovesFor } = require("./src/sage");
+const recorder = require("./src/recorder");
 
 // ---- brains ----
 // Cerebras only, PAID (PayGo credit since 2026-09-29 — its free tier ended
@@ -379,14 +379,14 @@ app.post("/api/bridge/stop", (req, res) => {
 });
 
 // ---- arm moves ----
-// Recorded on the bench by armrec.py (python3 server/armrec.py) and replayed by
+// Recorded on the bench by armrec.py (python3 server/tools/armrec.py) and replayed by
 // the dashboard as one tap per move — the arrows and hold sliders are the thing
 // that overdrives a joint, so the overdriving happens once, here, off-line.
 // Read-only: recording needs the usb cable, which the dashboard does not have.
-// One file per take in arm_moves/, filename = the move's name: a take can be
+// One file per take in data/arm_moves/, filename = the move's name: a take can be
 // opened, diffed, copied to another rig or deleted in Finder without the
 // recorder running, and there is no index file to fall out of step with it.
-const ARM_DIR = path.join(__dirname, "arm_moves");
+const ARM_DIR = path.join(__dirname, "data", "arm_moves");
 
 // arm takes and tapes are the same file in two folders — a name, a list of
 // {ms, cmd} steps and the two flags — so one reader and one filter (armMovesFor)
@@ -426,7 +426,7 @@ function armLine() {
 // NOT firmware/giga/main/routines.h: those are Step tables compiled into flash and
 // they have no arm op. A tape runs from the PC, which is also the only place
 // analyze/say exist at all.
-const TAPE_DIR = path.join(__dirname, "tapes");
+const TAPE_DIR = path.join(__dirname, "data", "tapes");
 fs.mkdirSync(TAPE_DIR, { recursive: true });
 
 const tapePath = (name) => {
@@ -491,7 +491,7 @@ function camLine() {
 }
 
 // ---- workflows ----
-const BLK_DIR = path.join(__dirname, "workflows");
+const BLK_DIR = path.join(__dirname, "data", "workflows");
 fs.mkdirSync(BLK_DIR, { recursive: true });
 
 function blkPath(name) {
@@ -755,7 +755,7 @@ app.post("/api/mission", (req, res) => {
 // 127.0.0.1 in vision.js) and nothing else learns a second shape. The serial port
 // is opened on the first request and only when something asks, so a rig with no
 // cable plugged in pays nothing.
-const camusb = require("./camserial");
+const camusb = require("./src/camserial");
 const CAM_USB_BOUNDARY = "blackoutusb";
 
 app.get("/capture", async (_req, res) => {
