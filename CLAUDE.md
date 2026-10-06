@@ -475,9 +475,22 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
 - `server/public/js/blk.mjs` — the BLK language (parser, serializer, evaluator,
   linter, interpreter). Text is the file format; `blkedit.js` + `blk.html` are
   the editor, `blksim.js` the offline rover simulator. See "BLK" below.
+- **`server/` layout.** `server.js` only loads `src/` and listens — it stays at
+  that path because Electron forks it and `npm start` runs it; `mcp.mjs` stays at
+  the root because Claude configs point at it. Every module in `src/` registers its
+  own routes and socket handlers when it is required: `http` (app, io,
+  `localReq`/`isHost`), `state` (**anything written in one module and read in
+  another lives here** — an exported `let` is a stale copy in every importer),
+  `link` (usb serial + the BLE flag, `usbWrite`), `telemetry` (CSV -> packet),
+  `status` (bands, readings, hud), `data` (`data/`: arm takes, tapes, workflows),
+  `cam`, `lights`, `tts`, `net`, `flash`, `runs`, `clients` (sockets, grants),
+  `mcp`, and `sage/` — `parse`, `prompts`, `context`, `agent` (`askSage`,
+  `agentLoop`), `analysis`, `routes`. `test/` holds the tests (`test/source.js` is
+  how a test reads code text, so a function can move file without breaking one),
+  `tools/` the bench scripts, `data/` what the crew records.
 - `server/` — Node.js dashboard + "Sage" AI agent. **Cerebras `qwen-3.8-27b` is the only
   brain, and it is PAID** (PayGo credit since 2026-09-29; the free tier ended 2026-08-17)
-  — `BRAINS`/`chat()` in `server.js`. ~$1/M input, so a heavy day is ~$1.50; an empty
+  — `BRAINS`/`chat()` in `src/brain.js`. ~$1/M input, so a heavy day is ~$1.50; an empty
   balance takes Sage out, it does not fall back. Measured 2026-09-29: 0.3-0.4s warm with
   a still, 0.4-0.7s through `/api/chat`. Nothing free came close, so don't redo the
   bake-off: groq's free qwen caps at 8k tokens/min (a camera turn is ~11k), gemini
@@ -641,7 +654,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     is the only stream*. The old fix was to tear the feed down first (`cam-yield` →
     grab → `cam-resume`, all deleted now), which cost a black screen on every client
     and both cams for the ~12s a reopened stream takes to come back. Now
-    `setFrameSource()` (`vision.js`) lets `server.js` ask a browser for its newest
+    `setFrameSource()` (`vision.js`) lets the server (`src/cam.js`) ask a browser for its newest
     frame over the socket — a socket.io **ack with `.timeout(800)`**, so there is no
     correlation id or pending map to keep, and the bytes ride as binary with no
     base64 anywhere. `camFrames[]` lives **outside `<CamView/>`** for the same reason
@@ -730,7 +743,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     the auto ramp gone, OFF means *nobody* touches the lamp. Turn it off
     deliberately to pin a level by hand for a run. Off, the turn also carries a
     LAMP LOCK line so she holds it in words too — **asking her for it out loud
-    still works**, `LAMP_ASKED` in `server.js` reads that off the operator's own
+    still works**, `LAMP_ASKED` in `src/sage/agent.js` reads that off the operator's own
     message.
     `lux` parses to **null** when field 12 is absent instead of 0: a real
     pitch-black cave reads 0 lx, so 0 can't double as "not wired" or a rover with
@@ -742,7 +755,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     `◆` a tool she reached for, with the still she read under it. The transcript
     lives on the chat object (`chat.feed`, capped at 80) so it survives a reload,
     and it is display only: what the model sees is still `chat.messages`.
-  - **Sage calls her own tools** — `agentLoop()` in `server.js`. She answers with
+  - **Sage calls her own tools** — `agentLoop()` in `src/sage/agent.js`. She answers with
     a `tool` in her json, the server runs it, hands her the result and asks
     again, so one turn is several visible moves ("let me take a look" → camera →
     the answer). `camera` grabs a fresh still, `sensors` re-reads the numbers;
@@ -846,7 +859,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     `--abort` + `shield-off` for BYPASS, so a glance at the bar says whether she
     is on a leash. Both children are keyed on the flag, so a tap remounts them
     and the swap animation replays — there is no js animation to schedule: the flag rides on `/api/chat`, `askConfirm()` in
-    `server.js` parks the agent loop and emits `sage-confirm`, and the browser
+    `src/sage/agent.js` parks the agent loop and emits `sage-confirm`, and the browser
     answers over the socket. **ASK gates every tool, not just the loop's two** —
     `camera`/`sensors` are gated in `agentLoop()`, and a `finding` and a
     `snapshot` are side effects of the *reply* so they are gated inside
@@ -919,7 +932,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     every 30s. The venue has no internet and both Cerebras and Deepgram fail quietly
     without it. Probe the api *root* — an authenticated path just hangs for an
     unauthenticated request and reads as offline.
-  - **Elevation** is derived in `server.js` (`altitudeM`) from the pressure the
+  - **Elevation** is derived in `src/telemetry.js` (`altitudeM`) from the pressure the
     board already sends — same barometric formula as `bme.readAltitude()`, but the
     reference defaults to the **first valid reading**, so the tile reads metres
     climbed/descended *since the rover started* and self-zeroes at any venue. A
@@ -966,7 +979,7 @@ is the same door `arm-configurator.sh` knocks on.
   centrals writing at once is two operators on one stick.
 - **The terminator is the trap.** No `\n` and `readStringUntil` never returns, so the
   command is silently never read — the same fact `armrec.py`'s `wire()` carries. It is
-  in one place, `usbWrite()` in `server.js`, which is also what the server's own
+  in one place, `usbWrite()` in `src/link.js`, which is also what the server's own
   `hud,`/`cam,` emitters go through so the panel face and the buzzer work on a
   cable with no browser relaying.
 - **`cu.usbmodem*` is the giga and `usbserial`/`wchusbserial` is the esp32-cam**

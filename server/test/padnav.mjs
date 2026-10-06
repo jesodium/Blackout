@@ -3,6 +3,7 @@
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { pickNext, stepCursor } from "../public/js/padnav.mjs";
+import { appSrc } from "./source.js";
 
 const box = (x, y, w = 40, h = 20) => ({ x, y, width: w, height: h });
 
@@ -63,7 +64,7 @@ const ino = readFileSync(new URL("../../firmware/giga/main/main.ino", import.met
 assert.ok(/verb == "tank"/.test(ino), 'main.ino has no "tank" verb — drv,tank would halt the motors');
 assert.ok(/void tank\(int l, int r\)/.test(ino), "main.ino lost tank()");
 
-const app = ["app", "control", "speech"].map((n) => readFileSync(new URL(`../public/js/${n}.js`, import.meta.url), "utf8")).join("\n");
+const app = appSrc();
 assert.ok(/drv,tank,\$\{l\},\$\{r\}/.test(app), "app.js stopped sending tank commands");
 
 assert.ok(/tourOpen \|\| cursorOn\(\)/.test(app), "drive loop no longer parks for cursor mode");
