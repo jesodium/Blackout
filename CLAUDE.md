@@ -6,6 +6,13 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
 
 ## Layout
 
+- **The giga sketch is `main.ino` plus one header per section** (`blackbox.h`,
+  `panel.h`, `savers.h`, `buzzer.h`, `motors.h`, `vm.h`, `commands.h`, `sonar.h`,
+  beside `arm.h`/`blkvm.h`/`routines.h`), each `#include`d at the exact spot the
+  section used to sit — **order matters**, it is one translation unit. The split
+  compiled to a byte-identical binary (2026-10-06). "In `main.ino`" anywhere in this
+  file means the sketch: `main.ino` or one of those headers. Tests read it
+  expanded, through `firmwareSrc()` in `server/test/source.js`.
 - `firmware/giga/` — Giga R1 WiFi (`main/`): sensor hub + motor driver + BLE
   command endpoint, one board. Reads sensors, broadcasts CSV over BLE notify;
   DHT11 (temp/humidity, **A5**, A6 -> D74 -> D24 -> D71 -> A5, last move 2026-09-02 — the lib
