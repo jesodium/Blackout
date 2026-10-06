@@ -1160,6 +1160,18 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
 .settings-field input:focus { outline: none; border-color: var(--accent); }
 .settings-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px 0; }
 .settings-hint { font: 500 11px/1.4 var(--grotesk); color: var(--ink-3); }
+.settings-field .settings-hint { font: 500 11px/1.4 var(--grotesk); letter-spacing: 0; text-transform: none; }
+.mcp-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.mcp-row .serial-btn { min-height: 36px; }
+.mcp-row .serial-btn.is-on { color: var(--go); border-color: var(--go); }
+/* lit on every MCP call (keyed on its time, so it replays), cools to idle in 10s */
+.mcp-pill { cursor: pointer; animation: mcp-cool 10s steps(1, end) forwards; }
+@keyframes mcp-cool { to { color: var(--ink-3); background: var(--inset); } }
+.mcp-cli {
+  font: 500 11px/1.4 var(--mono); color: var(--ink-2); text-align: left; word-break: break-all;
+  background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--r-s); padding: 8px 10px; cursor: copy;
+}
+.mcp-cli:hover, .mcp-cli:focus-visible { border-color: var(--accent); color: var(--ink); }
 
 /* ---- onboarding + tour ---- */
 .onboard {

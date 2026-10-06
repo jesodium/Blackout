@@ -976,6 +976,80 @@ is the same door `arm-configurator.sh` knocks on.
 - `npm run test:usb` checks the terminator, the two bauds, the port filter and
   the no-post-back guard off the three files' own source.
 
+## Autopilot
+
+Drive → **AUTO** tab: type a goal, GO, and Sage drives herself — `autopilot()` in
+`server.js`, prompt `prompts/autopilot.md`. One turn = a **fresh** front-cam still
++ readings + a log of her last moves → one small BLK `move` → run → pause →
+look again. Nobody presses YES, so:
+
+- **The move goes through `runBlk()`, the same path as `/api/blk-run` and her
+  cards** — `guard()` caps every forward at the sonar, `playBlk()` compiles it to
+  the board, and the board's time limits apply. No second runner.
+- **Bounded**: `AUTO_MAX_STEPS` (env, 40) turns, then it parks itself (`stop`).
+  She ends it early with `"done": true` (parsed only as a literal boolean).
+- **A move the parser rejects is fed back, not fatal** — it lands in her log as
+  REJECTED with the parser's error and she rewrites it next turn; only
+  `AUTO_MAX_BAD` (3) in a row ends the run. She drops `timeout` or adds units
+  (`15cm`) often enough that ending on the first one made autopilot unusable.
+- **Every stop ends it**: the panic key (a `panic` window event → `auto-stop`,
+  because over BLE the `stop` never passes the server), the socket `cmd` stop,
+  `/api/cmd` stop, a cancelled blk run, no dashboard holding the link (409).
+- **Turns always run at the R2 turbo cap** (`localStorage.boostPwm`, sent with the
+  GO): `turnsAt()` wraps every top-level `left`/`right` in `speed <R2>` … `speed
+  <hers>`, server-side, so she can't forget it, and floors a timed pivot at
+  `AUTO_TURN_MIN_MS` (env, 350) — a twitch that barely moves the picture wastes a
+  look. The prompt's pivot times (350-600ms) assume that pwm.
+- **`AUTO_PAUSE_MS` (env, 2000) between turns** — settles the chassis before the
+  next still and keeps her decisions watchable. One knob, no other delays.
+- **Open-loop between looks** — no odometry, no map; how far a pivot turned is
+  read off the next picture. Host-only (`/api/auto` is loopback, like `/api/cmd`).
+- The move shapes `autopilot.md` teaches are compiled in `test-blk.mjs`; a prompt
+  that drifts into browser-fallback BLK costs ~400ms a burst.
+
+## MCP
+
+`server/mcp.mjs` is an MCP stdio server, so Claude Desktop / Claude Code can see
+and drive the rover next to everything else they do on the operator's machine
+(`claude mcp add blackout -- node "<repo>/server/mcp.mjs"`). Tools:
+`robot_status`, `robot_camera`, `robot_command` (one raw command line),
+`robot_blk` (a BLK program — "go forward until 20cm" is
+`forward until dist < 20 timeout 8000`), `robot_mission` (auto mode: the
+autonomous analysis loop) and `sage_chat`.
+
+- **A thin client of the running dashboard server**, never a second owner of
+  anything: it calls `/api/now`, `/api/look`, `/api/cmd`, `/api/blk-run`, `/api/mission`
+  and `/api/chat`, so the link, the cam and Sage stay where they are. `npm start` first.
+- **`robot_blk` runs in the host dashboard, through `playBlk()`** — the runner
+  Sage's move cards and `BlkCtl` already share — so board upload, the browser
+  fallback, `say`/`ask`/`analyze` and the panic key all come for free. The server
+  parses and `guard()`s it first (it is an AI's move, so a bare `forward` stops at
+  10cm like hers), then `emitWithAck("blk-run")` to each host socket in turn; one
+  holding neither BLE nor a USB link answers `{skip}`. It waits up to 2 min and
+  says where it ran. **No dashboard open = 409**: a headless runner would be a
+  second copy of `playBlk`.
+- **Over USB, BLK only reaches the board on firmware from 2026-10-05 on** —
+  `E:blkrdy` used to go out on BLE only, so `blkOnBoard()` waited 2s for a line
+  that never came on the cable and every program fell back to the browser.
+- **`/api/cmd` and `/api/mission` are loopback only** (`localReq()`), the same rule
+  as `isHost()` — a tunnel delivers remote clients FROM loopback, so a proxy header
+  is never local. A command goes out exactly like the server's own `hud,`: down the
+  cable plus `io.emit("cmd")` for the host browser to relay over BLE.
+- **Safety is the board's, not the client's**: every `drv,` is time-limited on the
+  board (≤10s) and every arm joint keeps its 3s deadman. Space still kills it all.
+- `sage_chat` sends `moves:false` — her cards need the dashboard's YES press, and
+  the MCP client drives through `robot_command` instead.
+- **Every call is visible in the dashboard**: `mcp.mjs` tags its requests
+  `x-blackout-mcp`, the server keeps the last one (`/api/mcp`) and emits `mcp`, and
+  the app lights an **MCP pill** beside SAGE/VOICE (green for 10s, then idle; title
+  = the call) and writes a log line. The pill only appears once a call has landed.
+- **Settings (Electron) → MCP SERVER** adds it to Claude Desktop in one click and
+  shows the Claude Code command to copy. The entry runs the app's **own binary as
+  node** (`ELECTRON_RUN_AS_NODE=1`), so a laptop with no node installed still hosts
+  it. A `claude_desktop_config.json` that isn't valid json is refused, never
+  overwritten.
+- Hand-rolled JSON-RPC, tools only, no sdk. `npm run test:mcp` is the check.
+
 ## Tapes
 
 A whole manual run written down and replayed as one tap — CONSOLE → **TAPES**.
