@@ -67,7 +67,7 @@ assert.ok(/void tank\(int l, int r\)/.test(ino), "main.ino lost tank()");
 const app = appSrc();
 assert.ok(/drv,tank,\$\{l\},\$\{r\}/.test(app), "app.js stopped sending tank commands");
 
-assert.ok(/tourOpen \|\| cursorOn\(\)/.test(app), "drive loop no longer parks for cursor mode");
+assert.ok(/tourGate\.open \|\| cursorOn\(\)/.test(app), "drive loop no longer parks for cursor mode");
 for (const [name, val] of [["DEADZONE", DEADZONE], ["MIN_PWM", MIN_PWM], ["MANUAL_PWM", MANUAL_PWM], ["SPIN_SCALE", SPIN_SCALE]]) {
   const m = app.match(new RegExp(`${name} = ([0-9.]+)`));
   assert.ok(m, `${name} gone from app.js`);

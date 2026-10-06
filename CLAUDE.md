@@ -212,7 +212,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
       in `Arm`, and the test asserts it. `npm run test:armrec` covers the
       recorder maths without a board.
     - **`armJog()` has exactly one call site: the BLE `arm,<joint>,<speed>` command.**
-      The dashboard's `Arm` pad (`app.js`) holds a button and re-sends every 300ms
+      The dashboard's `Arm` pad (`ui/arm.js`) holds a button and re-sends every 300ms
       against the board's 3s deadman; releasing sends `arm,<joint>,0`, and a bare
       `arm,` is all joints off. Don't wire it to a routine or anything unheld — a 360
       with nobody on the button winds itself into the frame, which is what happened
@@ -470,8 +470,12 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
 - `server/public/js/control.js` — everything that moves the robot and is not a
   React component: the BLK runner (`playBlk`), the arm ledger + claw latch,
   `panicStop`, and the tape recorder/player. `speech.js` is Sage's voice and the
-  spoken-line queue tapes use. `app.js` holds the components that drive them.
-  Tests that read the dashboard's source read all three as one string.
+  spoken-line queue tapes use. `ui/` holds the React components, one file per
+  screen area (`drive`, `arm`, `blkctl`, `tapes`, `camera`, `agent`, `topbar`,
+  `drawer`, `modals`, `onboard`, …; `core.js` is the shared constants + `html` +
+  `Icon`), and `app.js` is `<App/>` alone. The lib modules (`blk.mjs`,
+  `padnav.mjs`, `detect.mjs`, `i18n.js`, …) stay flat in `js/`. Tests read the
+  dashboard's code text through `test/source.js` (`appSrc()`), never by path.
 - `server/public/js/blk.mjs` — the BLK language (parser, serializer, evaluator,
   linter, interpreter). Text is the file format; `blkedit.js` + `blk.html` are
   the editor, `blksim.js` the offline rover simulator. See "BLK" below.
@@ -522,7 +526,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     be backed out of. FPV and the first-run tour take the pad back while they're up
     (they bind the same buttons). `npm run test:padnav` covers the mix and the
     roaming maths and cross-checks the constants against `main.ino`.
-  - **Panes are resizable, tiling-wm style** — `Split` in `app.js` plus `.split*`
+  - **Panes are resizable, tiling-wm style** — `Split` in `ui/split.js` plus `.split*`
     in `style.css`. Four dividers: 3d|cam, stage/strip, main|rail, agent/drive.
     **The pane AFTER a divider is the one that gets a fixed `flex-basis`; the pane
     before it keeps `flex:1` and absorbs the rest**, so panes always tile with no
@@ -542,7 +546,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     the font size of whatever they sit in, so the same file is amber in a
     warning and white in a button. Using one is just a class
     (`<i class="icn icn-warn">`); `icons.mjs` holds the name list plus `icon()`
-    / `prefixIcon()` for js callers and `Icon` in `app.js` for jsx. **No emoji,
+    / `prefixIcon()` for js callers and `Icon` in `ui/core.js` for jsx. **No emoji,
     no icon font, no cdn** — an emoji is a different picture on every machine
     and the venue has no internet. The terminal glyphs (`✕ ● ○ △ ▶ ■`) are
     *not* emoji and stay as text: on the gamepad they *are* the button faces.
@@ -619,7 +623,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     zero — `dist` (nothing in range), `alt` (level with the start) and `lux` (a
     genuinely dark room); everything else shows NOT READING. Add the flag when a
     sensor's zero becomes real, not when a tile looks empty.
-  - **Stale telemetry is treated as no telemetry** — `PKT_STALE_MS` (3s) in `app.js`.
+  - **Stale telemetry is treated as no telemetry** — `PKT_STALE_MS` (3s) in `ui/core.js`.
     The board streams at 10Hz (2Hz behind a screensaver), so the sensor stream *is* the
     heartbeat and no ping command was added. Nothing for 3s and `view` goes null: every
     tile blanks to "—", the link pill drops, ping stops claiming a number, and the bridge
@@ -750,7 +754,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     no bh1750 reads as a dark one in the tile and the verdict. The blurt only reaches the operator
     while a briefed session is open (same gate every `agent-blurt` has).
   - **The agent tab is a terminal, not a chat box** (`Agent`/`Feed`/`FeedLine` in
-    `app.js`, `.term-*`/`.fl-*` in `style.css`): a bar with the ascii face, a
+    `ui/agent.js`, `.term-*`/`.fl-*` in `style.css`): a bar with the ascii face, a
     transcript, a prompt line. One row per move — `›` the operator, `●` Sage,
     `◆` a tool she reached for, with the still she read under it. The transcript
     lives on the chat object (`chat.feed`, capped at 80) so it survives a reload,
@@ -1196,7 +1200,7 @@ as `data/arm_moves/` (no index file to fall out of step with it, editable in Fin
   A tape runs from the PC. The cost is the PC: a BLE drop mid-tape strands it the
   way a routine or an uploaded BLK program would not.
 - **The operator's own words play a run with no model in the way** — a
-  `CMD_TRIGGERS` entry in `app.js` with a `tape` field (`"present yourself"` →
+  `CMD_TRIGGERS` entry in `ui/commands.js` with a `tape` field (`"present yourself"` →
   PRESENT YOURSELF, `"say hello"` → SAY HELLO, `"...about your arm"` → PRESENT
   ARM) is matched in `ask()` before the
   turn is ever sent, so it fires instantly and works with the venue offline.
@@ -1229,7 +1233,7 @@ as `data/arm_moves/` (no index file to fall out of step with it, editable in Fin
 ## BLK
 
 Operator-authored workflows, saved as plain `.blk` text in `server/data/workflows/`
-and driven by `BlkCtl` in `app.js`. Not to be confused with the on-board `Step`
+and driven by `BlkCtl` in `ui/blkctl.js`. Not to be confused with the on-board `Step`
 routines below — those are compiled-in tables, BLK is authored on the dashboard.
 
 - Ops: `forward/back/left/right <expr>` (or `… until <cond> [timeout <ms>]`),
@@ -1367,7 +1371,7 @@ console drawer (topbar → CONSOLE, so it's in the Electron app too). BLE carrie
 tetris). The board animates them off the same 20ms draw tick, in
 `startSaver()` / `stepSaver()` /
 `drawSaver()`; adding one is a case in each of those three, an entry in `SAVERS`
-in `app.js` (**the index is the wire value** — same order as the enum), and a
+in `ui/topbar.js` (**the index is the wire value** — same order as the enum), and a
 `drawer.*` string in `i18n.js`.
 
 - **A screensaver drops the sensor cadence to 2Hz** while the rover is otherwise idle
