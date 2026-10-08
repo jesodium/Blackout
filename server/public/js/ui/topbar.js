@@ -4,6 +4,8 @@ import { Icon, VIEWER, html } from "./core.js";
 import { mcpWhat } from "./modals.js";
 
 // ---- topbar + drawer ----
+// IMPORTANT NOTE: the MCP pill is hidden from the display for now (`false &&`
+// below), not removed -- drop the `false &&` to bring it back.
 function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lanUrl, lanIp, lang, onLang, onConsole, consoleOpen, clients, onDevices, granted, cloud, onSettings, mcp }) {
   return html`
     <header class="topbar">
@@ -35,7 +37,7 @@ function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lan
       ${cloud && html`<span class="top-cloud">
         <span class=${"pill " + (cloud.sage ? "is-go" : "is-abort")} title=${t("cloud.title")}>${t("cloud.sage")}</span>
         <span class=${"pill " + (cloud.tts ? "is-go" : "is-abort")} title=${t("cloud.title")}>${t("cloud.tts")}</span>
-        ${mcp && html`<button type="button" key=${mcp.at} class="pill is-go mcp-pill" onClick=${window.blackout ? onSettings : undefined}
+        ${false && mcp && html`<button type="button" key=${mcp.at} class="pill is-go mcp-pill" onClick=${window.blackout ? onSettings : undefined}
           title=${t("settings.mcpLast", { what: mcpWhat(mcp), ago: Math.round((Date.now() - mcp.at) / 1000) })}>MCP</button>`}
       </span>`}
       <div class="top-stats">
@@ -51,8 +53,8 @@ function Topbar({ connected, stale, bridge, onBridge, ping, packets, uptime, lan
       <select class="port-select top-lang" value=${lang} onChange=${e => onLang(e.target.value)} aria-label=${t("mast.lang")}>
         ${LANGS.map(l => html`<option key=${l.code} value=${l.code}>${l.label}</option>`)}
       </select>
-      ${!VIEWER && window.blackout && html`
-        <button type="button" class="console-btn" onClick=${onSettings} title=${t("settings.title")} aria-label=${t("settings.title")}><${Icon} n="gear" /></button>`}
+      ${!VIEWER && html`
+        <button type="button" class="console-btn" onClick=${onSettings} title=${t("options.title")} aria-label=${t("options.title")}><${Icon} n="gear" /></button>`}
       ${!VIEWER && html`
         <button type="button" class="console-btn" onClick=${onDevices} title=${t("devices.title")}>
           ◈ ${t("devices.button")} ${clients.length}

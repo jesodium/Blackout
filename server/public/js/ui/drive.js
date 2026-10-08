@@ -5,7 +5,6 @@ import { cursorOn } from "../padnav.mjs";
 import { Arm } from "./arm.js";
 import { BlkCtl } from "./blkctl.js";
 import { html } from "./core.js";
-import { tourGate } from "./onboard.js";
 
 // ---- drive ----
 
@@ -87,7 +86,7 @@ function Drive({ onCmd, onAnalyze, enabled, leaving, busyRef, packetRef }) {
     const verbOf = (l, r) => (!l && !r ? null
       : Math.abs(l - r) > Math.abs(l + r) ? (l > r ? "left" : "right") : l + r > 0 ? "fwd" : "back");
     const id = setInterval(() => {
-      if (!armedRef.current || subRef.current === "arm" || tourGate.open || cursorOn()) { if (moving.current) { moving.current = false; setVerb(null); onCmd("stop"); } return; }
+      if (!armedRef.current || subRef.current === "arm" || cursorOn()) { if (moving.current) { moving.current = false; setVerb(null); onCmd("stop"); } return; }
       const pad = [...navigator.getGamepads()].find(Boolean);
 
       const turbo = !!pad && (pad.buttons[7]?.pressed || (pad.buttons[7]?.value ?? 0) > 0.35);

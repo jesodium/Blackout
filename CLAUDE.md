@@ -98,7 +98,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     does not silence an active module** — it detaches the ticker and drops the pin
     object wherever the last toggle left it, and half the time that is HIGH, which on
     a buzzer with its own oscillator is a beep that never ends; `buzzSet()` parks the
-    pin low by hand after it. CONSOLE → BUZZER is the mute (`buz,<0|1>`, off silences
+    pin low by hand after it. OPTIONS → BUZZER is the mute (`buz,<0|1>`, off silences
     at once); the flag lives on the board, so the dashboard re-pushes it on every
     connect — a reset brings it back on.
   - **Screensavers** (see "Screensavers" below): the console can put a
@@ -506,7 +506,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
   a still, 0.4-0.7s through `/api/chat`. Nothing free came close, so don't redo the
   bake-off: groq's free qwen caps at 8k tokens/min (a camera turn is ~11k), gemini
   flash-lite was 2.8-9s, mistral's free ministral-8b 1.5-2.2s and it invents readings.
-  The Electron app reads the key from its own settings panel (userData), not `.env`.
+  The Electron app reads the key from userData (`settings:get` in `electron/main.js`), not `.env` — the settings modal that wrote it is gone (2026-10-06), so edit that file by hand.
   `chat()` folds every system message into one (Cerebras 400s on a second, which is
   what `langMsg()` adds in Spanish), retries once, and drops a brain for the session on
   401/402/403/404 (`BRAIN_DEAD`, real reason in `b.deadErr`). **Sage needs a model that
@@ -530,7 +530,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     While it's up Drive's loop parks itself (`cursorOn()`), so aiming can never drive
     by accident. It re-reads the dom on
     every move, so nothing needs registering; a modal just needs a close button to
-    be backed out of. FPV and the first-run tour take the pad back while they're up
+    be backed out of. FPV takes the pad back while it's up
     (they bind the same buttons). `npm run test:padnav` covers the mix and the
     roaming maths and cross-checks the constants against `main.ino`.
   - **Panes are resizable, tiling-wm style** — `Split` in `ui/split.js` plus `.split*`
@@ -746,7 +746,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     already wired to nothing) plus their half of `test-auto`. Don't build a
     third one: if she is not raising the lamp when she should, that is a prompt
     line, not a threshold.
-    **Sage's own `led` field is gated on CONSOLE → SAGE LAMP, now default ON**
+    **Sage's own `led` field is gated on OPTIONS → SAGE LAMP, now default ON**
     (`sageLamp` in localStorage, riding on `/api/chat` like SAGE MOVES, held
     server-side as `lampAllowed` so the analysis loop obeys the same flag). It
     defaulted OFF while the server ramped the lamp by itself — she reached for it
@@ -814,7 +814,7 @@ Node.js PC server/dashboard. The board advertises as **BLACKOUT-V3**
     The runner is shared with `BlkCtl`, not a second copy — `playBlk()` in `control.js`
     (upload → `blk,go` → service the `evt` steps → browser fallback), so a move and a
     saved workflow can never diverge, and one `blkToken` means one program at a time.
-    **CONSOLE → SAGE MOVES turns it off** (`sageMoves` in localStorage): the flag
+    **OPTIONS → SAGE MOVES turns it off** (`sageMoves` in localStorage): the flag
     rides on `/api/chat`, so off tells her the drive is locked and she stops offering
     rather than writing cards the dashboard would hide.
   - **Sage can move the arm, but only when the operator asks for it in words, and
@@ -1041,7 +1041,7 @@ autonomous analysis loop) and `sage_chat`.
   `x-blackout-mcp`, the server keeps the last one (`/api/mcp`) and emits `mcp`, and
   the app lights an **MCP pill** beside SAGE/VOICE (green for 10s, then idle; title
   = the call) and writes a log line. The pill only appears once a call has landed.
-- **Settings (Electron) → MCP SERVER** adds it to Claude Desktop in one click and
+- **The MCP row and the topbar MCP pill are hidden from the display (2026-10-06)** — `McpRow` in `ui/modals.js` and the `false &&` pill in `ui/topbar.js` are still in the code. The row adds it to Claude Desktop in one click and
   shows the Claude Code command to copy. The entry runs the app's **own binary as
   node** (`ELECTRON_RUN_AS_NODE=1`), so a laptop with no node installed still hosts
   it. A `claude_desktop_config.json` that isn't valid json is refused, never
@@ -1224,7 +1224,7 @@ as `data/arm_moves/` (no index file to fall out of step with it, editable in Fin
   feed as a card with YES/NO exactly like an arm take. Chaining two is refused: a
   tape is a whole run, so a pair is a routine nobody rehearsed. The names come
   from the folder (`tapeLine()`), so recording a run is all it takes to give her
-  one — nothing to edit in `chat.md`. CONSOLE → SAGE MOVES locks it with the
+  one — nothing to edit in `chat.md`. OPTIONS → SAGE MOVES locks it with the
   drive and the arm.
 - **A tape carries the same three flags an arm take does** (`sage_can_use`,
   `show_in_app`, `sage_ask_permission_for_this`) and the same filter reads them (`armMovesFor()` — one reader,
@@ -1372,7 +1372,7 @@ drop is in the log panel before the next run starts. `log,clear` wipes it.
 Screensavers on the robot's own 128x64 panel (landscape, U8G2_R0 — layouts are
 written against `OLED_W`/`OLED_H`, so a remount is those two defines plus the
 rotation, not the drawing code), picked from the dropdown in the
-console drawer (topbar → CONSOLE, so it's in the Electron app too). BLE carries
+OPTIONS modal (topbar gear, so it's in the Electron app too). BLE carries
 `scr,<n>` and nothing else — `0` is off, and the rest are the `SCR_*` enum in
 `main.ino` (matrix rain, a bouncing BLACKOUT, a falling starfield, a self-playing
 tetris). The board animates them off the same 20ms draw tick, in
@@ -1487,6 +1487,14 @@ conventions:
 - Add/update the table, then wire it into `startRoutine()` in `main.ino` and
   (if it's a new named routine, not an edit to `RUN`) a dashboard button, per
   the file's own "Adding a routine" note.
+
+## Console vs Options
+
+**CONSOLE is read-only** (2026-10-06): logs, analysis, serial, plus the motor
+bench and tapes tabs. Every toggle it used to carry — SAGE MOVES, SAGE LAMP,
+SAGE FOCUSED, SECOND FEED, FEED ZOOM, BUZZER, SCREEN — lives in **OPTIONS**, the
+topbar gear (`Options` in `ui/drawer.js`; Electron's Cmd+, opens it too). The
+first-run onboarding + tutorial and the API-key settings modal are deleted.
 
 ## TODO
 

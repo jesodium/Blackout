@@ -16,7 +16,6 @@
     "test:layout": "node test/layout.mjs",
     "test:report": "node test/report.mjs",
     "test:mirror": "node test/mirror.mjs",
-    "test:tour": "node test/tour.mjs",
     "test:pairing": "node test/electron-pairing.mjs",
     "test:face": "node test/sageface.mjs",
     "test:matrix": "node test/matrix.mjs",

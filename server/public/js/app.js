@@ -11,13 +11,12 @@ import { useMic } from "./ui/briefing.js";
 import { FRAME_LEND_MS, camFrames } from "./ui/camera.js";
 import { driveMs, matchCmd, norm } from "./ui/commands.js";
 import { FINDINGS, Icon, NO_FEED, PKT_STALE_MS, VIEWER, anaCam, bandOf, html } from "./ui/core.js";
-import { Drawer } from "./ui/drawer.js";
+import { Drawer, Options } from "./ui/drawer.js";
 import { Drive } from "./ui/drive.js";
 import { FPV_ZOOMS, FpvOverlay, FpvSage } from "./ui/fpv.js";
 import { JudgeView, SensorStrip } from "./ui/judge.js";
 import { appendLog } from "./ui/logs.js";
-import { BlePickerModal, DevicesModal, SettingsModal, Toasts, mcpWhat } from "./ui/modals.js";
-import { Onboard, Tour, tourGate } from "./ui/onboard.js";
+import { BlePickerModal, DevicesModal, Toasts, mcpWhat } from "./ui/modals.js";
 import { CamBox, ThreeDeeBox } from "./ui/panels.js";
 import { Replay, ReplayList } from "./ui/replay.js";
 import { ReportModal, buildReport } from "./ui/report.js";
@@ -50,7 +49,6 @@ function App() {
   const [lanUrl, setLanUrl] = useState(null);
   const [lanIp, setLanIp] = useState(null);
   const [serialLines, setSerialLines] = useState([]);
-  const [tour, setTour] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const [drawerTab, setDrawerTab] = useState("logs");
   const [warn, setWarn] = useState(false);
@@ -71,12 +69,9 @@ function App() {
   const [reportClosing, setReportClosing] = useState(false);
   const [clients, setClients] = useState([]);
   const [devicesOpen, setDevicesOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const [detect, setDetect] = useState(() => localStorage.getItem("camDetect") === "1");
   const [detState, setDetState] = useState("off");
-  const [onboardStep, setOnboardStep] = useState(false);
-  const [onboardModel, setOnboardModel] = useState(null);
-  const [onboardClosing, setOnboardClosing] = useState(false);
 
   const [granted, setGranted] = useState(!VIEWER);
 
@@ -742,7 +737,7 @@ function App() {
     let was = [false, false, false, false, false];
     const id = setInterval(() => {
       const pad = [...navigator.getGamepads()].find(Boolean);
-      if (!pad || tourGate.open) return;
+      if (!pad) return;
 
       const now = [!!pad.buttons[3]?.pressed, !!pad.buttons[1]?.pressed, !!pad.buttons[9]?.pressed,
         !!pad.buttons[0]?.pressed, !!pad.buttons[8]?.pressed];
@@ -841,53 +836,19 @@ function App() {
   toggleDrawerRef.current = toggleDrawer;
   useEffect(() => {
     const id = initPadNav({
-      blocked: () => fpvRef.current || tourGate.open || !!pendingAskRef.current,
+      blocked: () => fpvRef.current || !!pendingAskRef.current,
       onMenu: () => toggleDrawerRef.current(),
     });
     return () => clearInterval(id);
   }, []);
 
-  useEffect(() => {
-    if (localStorage.getItem("tourDone")) return;
-    const id = setTimeout(() => setOnboardStep("hero"), 900);
-    return () => clearTimeout(id);
-  }, []);
-  const endTour = useCallback(() => {
-    localStorage.setItem("tourDone", "1");
-    setTour(s => s === "open" ? "closing" : s);
-    setTimeout(() => setTour(false), 240);
-  }, []);
-
-  const closeOnboard = useCallback((next) => {
-    if (window.blackout && blePicker) window.blackout.selectBleDevice("");
-    setOnboardClosing(true);
-    setTimeout(() => { setOnboardStep(false); setOnboardClosing(false); next?.(); }, 300);
-  }, [blePicker]);
-  const finishOnboard = useCallback(() => closeOnboard(() => setTour("open")), [closeOnboard]);
-  const skipOnboard = useCallback(() => { localStorage.setItem("tourDone", "1"); closeOnboard(); }, [closeOnboard]);
-
-  const onboardStart = useCallback(() => { if (VIEWER) finishOnboard(); else setOnboardStep("model"); }, [finishOnboard]);
-  const onboardPickModel = useCallback((m) => { setOnboardModel(m); setOnboardStep("pair"); }, []);
-  const restartTour = useCallback(() => {
-    localStorage.removeItem("tourDone");
-    setOnboardModel(null);
-    closeDrawer();
-    setTimeout(() => setOnboardStep("hero"), 260);
-  }, [closeDrawer]);
-
-  useEffect(() => {
-    if (onboardStep !== "pair" || !bridge.running) return;
-    const id = setTimeout(finishOnboard, 700);
-    return () => clearTimeout(id);
-  }, [onboardStep, bridge.running, finishOnboard]);
-
-  const closeSettings = useCallback(() => {
-    setSettingsOpen(o => o === "open" ? "closing" : o);
-    setTimeout(() => setSettingsOpen(false), 240);
+  const closeOptions = useCallback(() => {
+    setOptionsOpen(o => o === "open" ? "closing" : o);
+    setTimeout(() => setOptionsOpen(false), 240);
   }, []);
   useEffect(() => {
     if (!window.blackout) return;
-    return window.blackout.onSettingsOpen(() => setSettingsOpen("open"));
+    return window.blackout.onSettingsOpen(() => setOptionsOpen("open"));
   }, []);
 
   useEffect(() => {
@@ -1020,7 +981,7 @@ function App() {
           ping=${fresh ? ping : "—"} packets=${packets} uptime=${uptime} lanUrl=${lanUrl} lanIp=${lanIp}
           lang=${lang} onLang=${changeLang} onConsole=${toggleDrawer} consoleOpen=${drawer === "open"}
           clients=${clients} onDevices=${() => setDevicesOpen("open")} granted=${granted}
-          cloud=${cloud} onSettings=${() => setSettingsOpen("open")} mcp=${mcp} />
+          cloud=${cloud} onSettings=${() => setOptionsOpen("open")} mcp=${mcp} />
 
         ${!VIEWER && flashBoards.status !== "none" && html`<${UpdateBar} boards=${flashBoards} onUpdate=${openUpdate} />`}
 
@@ -1055,10 +1016,7 @@ function App() {
         ${!judge && html`<${Drawer} open=${drawer} tab=${drawerTab} onTab=${setDrawerTab} onClose=${closeDrawer}
           logs=${logs} serialLines=${serialLines} onClearSerial=${clearSerial}
           chat=${activeChat} onCmd=${sendCmd} onAnalyze=${analyze} onNote=${(n) => addLog(n, "system")} onSay=${sayFeed}
-          enabled=${canDrive} onTutorial=${restartTour}
-          saver=${saver} onSaver=${pickSaver} moves=${moves} onMoves=${toggleMoves}
-            lamp=${lamp} onLamp=${toggleLamp} demo=${demo} onDemo=${toggleDemo}
-            buzz=${buzz} onBuzz=${toggleBuzz} />`}
+          enabled=${canDrive} />`}
       </div>
 
       <${Toasts} items=${toasts} />
@@ -1073,8 +1031,11 @@ function App() {
           onMode=${(id, mode) => socketRef.current?.emit("grant", { id, mode })}
           onClose=${closeDevices} />`, document.body)}
 
-      ${settingsOpen && createPortal(html`
-        <${SettingsModal} open=${settingsOpen} onClose=${closeSettings} />`, document.body)}
+      ${optionsOpen && createPortal(html`
+        <${Options} open=${optionsOpen} onClose=${closeOptions} enabled=${canDrive}
+          saver=${saver} onSaver=${pickSaver} moves=${moves} onMoves=${toggleMoves}
+          lamp=${lamp} onLamp=${toggleLamp} demo=${demo} onDemo=${toggleDemo}
+          buzz=${buzz} onBuzz=${toggleBuzz} />`, document.body)}
 
       ${blePicker && createPortal(html`
         <${BlePickerModal} open=${blePicker} devices=${bleDevs}
@@ -1090,14 +1051,6 @@ function App() {
 
       ${report && createPortal(html`
         <${ReportModal} report=${report} closing=${reportClosing} onClose=${closeReport} />`, document.body)}
-
-      ${onboardStep && createPortal(html`
-        <${Onboard} step=${onboardStep} closing=${onboardClosing} model=${onboardModel} bridge=${bridge}
-          onStart=${onboardStart} onPickModel=${onboardPickModel}
-          onBack=${() => setOnboardStep(s => s === "pair" ? "model" : "hero")}
-          onConnect=${() => toggleBridge("toggle")} onSkipConnect=${finishOnboard} onDone=${skipOnboard} />`, document.body)}
-
-      ${tour && createPortal(html`<${Tour} closing=${tour === "closing"} onDone=${endTour} />`, document.body)}
 
       ${warn && createPortal(html`
         <div class=${"blk-modal" + (warn === "closing" ? " is-closing" : "")}
