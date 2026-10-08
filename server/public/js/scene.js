@@ -138,7 +138,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
       group.rotation.y = Math.PI / 2;
       model.scale.setScalar(scale);
       model.position.sub(center.clone().multiplyScalar(scale));
-      model.position.y += 0.28;
+      model.position.y = -box.min.y * scale; // wheels on the ground plane, whatever the export's origin
       // IMPORTANT NOTE: not 0x000000 — pure black returns no specular and the rover
       // reads as a hole in the floor. 0x141416 + metalness is black that still catches the lights.
       const mat = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.45, metalness: 0.6 });

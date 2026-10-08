@@ -300,7 +300,7 @@ function buildMenu() {
         submenu: [
           { role: "about" },
           { type: "separator" },
-          { label: "Settings / API Keys…", accelerator: "CmdOrCtrl+,", click: () => win?.webContents.send("settings:open") },
+          { label: "Options…", accelerator: "CmdOrCtrl+,", click: () => win?.webContents.send("settings:open") },
           { type: "separator" },
           { role: "hide" },
           { role: "quit" },

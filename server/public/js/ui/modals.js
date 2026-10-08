@@ -131,42 +131,6 @@ function McpRow() {
     </div>`;
 }
 
-function SettingsModal({ open, onClose }) {
-  const [values, setValues] = useState({ CEREBRAS_API_KEY: "", DEEPGRAM_API_KEY: "", CEREBRAS_MODEL: "", TTS_VOICE: "" });
-  const [saved, setSaved] = useState(false);
-  useEffect(() => { window.blackout.getSettings().then(setValues); }, []);
-  const set = (k) => (e) => { setSaved(false); setValues(v => ({ ...v, [k]: e.target.value })); };
-  const save = async () => { await window.blackout.saveSettings(values); setSaved(true); };
-  const field = (key, label, placeholder, type = "text") => html`
-    <label class="settings-field">
-      <span>${label}</span>
-      <input type=${type} value=${values[key]} placeholder=${placeholder} onInput=${set(key)} />
-    </label>`;
-  return html`
-    <div class=${"blk-modal" + (open === "closing" ? " is-closing" : "")}
-      onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div class="blk-modal-frame devices-frame settings-frame" role="dialog" aria-label=${t("settings.title")}>
-        <div class="blk-modal-head">
-          <span class="label">${t("settings.title")}</span>
-          <button type="button" class="blk-modal-x" onClick=${onClose} aria-label=${t("update.close")}>✕</button>
-        </div>
-        <div class="settings-body">
-          ${field("CEREBRAS_API_KEY", t("settings.cerebrasKey"), t("settings.unset"), "password")}
-          ${field("CEREBRAS_MODEL", t("settings.cerebrasModel"), "qwen-3.8-27b")}
-          ${field("DEEPGRAM_API_KEY", t("settings.deepgramKey"), t("settings.optional"), "password")}
-          ${field("TTS_VOICE", t("settings.ttsVoice"), "en-US-AndrewNeural")}
-          ${window.blackout.mcp && html`<${McpRow} />`}
-        </div>
-        <div class="settings-actions">
-          <span class="settings-hint">${saved ? t("settings.saved") : t("settings.hint")}</span>
-          ${saved
-            ? html`<button type="button" class="serial-btn warn-go" onClick=${() => window.blackout.relaunch()}>${t("settings.relaunch")}</button>`
-            : html`<button type="button" class="serial-btn warn-go" onClick=${save}>${t("settings.save")}</button>`}
-        </div>
-      </div>
-    </div>`;
-}
-
 function BlePickerModal({ open, devices, onPick, onCancel }) {
   const names = devices.map((d) => d.deviceName);
   const label = (d) => {
@@ -211,4 +175,4 @@ function BlePickerModal({ open, devices, onPick, onCancel }) {
     </div>`;
 }
 
-export { BlePickerModal, DevicesModal, SettingsModal, Toasts, mcpWhat };
+export { BlePickerModal, DevicesModal, Toasts, mcpWhat };
