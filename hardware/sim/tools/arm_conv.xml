@@ -1,0 +1,96 @@
+<mujoco model="mearm">
+  <compiler angle="radian" meshdir="/Users/jesus/Documents/WRO 2026/Blackout-Explorations/hardware/sim/meshes/"/>
+
+  <asset>
+    <mesh name="column_base" content_type="model/stl" file="column_base.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="column_left" content_type="model/stl" file="column_left.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="column_right" content_type="model/stl" file="column_right.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="column_board" content_type="model/stl" file="column_board.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="column_connector" content_type="model/stl" file="column_connector.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="arm_0_base" content_type="model/stl" file="arm_0_base.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="arm_0_left" content_type="model/stl" file="arm_0_left.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="arm_0_right" content_type="model/stl" file="arm_0_right.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="arm_1_right" content_type="model/stl" file="arm_1_right.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="arm_1_connector" content_type="model/stl" file="arm_1_connector.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="arm_1_left" content_type="model/stl" file="arm_1_left.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="servo_actuator" content_type="model/stl" file="servo_actuator.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="gripper_base" content_type="model/stl" file="gripper_base.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="gripper_support" content_type="model/stl" file="gripper_support.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="gripper_left" content_type="model/stl" file="gripper_left.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="gripper_right" content_type="model/stl" file="gripper_right.stl" scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <worldbody>
+    <body name="base_link">
+      <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08"/>
+      <body name="column" pos="0 0 0.024">
+        <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08"/>
+        <joint name="joint_0" range="-0.7853 0.7853" actuatorfrcrange="-1000 1000"/>
+        <geom pos="-0.231 -0.05 -0.002" quat="0.707141 0 0 -0.707073" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="column_base"/>
+        <geom pos="-0.8 0.022 -0.1655" quat="0.707141 0.707073 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="column_left"/>
+        <geom pos="0.71 -0.022 -0.164" quat="3.27596e-05 3.27564e-05 0.707073 0.707141" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="column_right"/>
+        <geom pos="0.028 -0.16 -0.18" quat="0.500048 0.5 -0.499952 -0.5" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="column_board"/>
+        <geom pos="-0.023 -0.16 -0.18" quat="0.500048 0.5 -0.499952 -0.5" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="column_board"/>
+        <geom pos="-0.08 0.005 -0.19" quat="0.707141 0.707073 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="column_connector"/>
+        <body name="arm_0" pos="0.014 0 0.029" quat="0.500048 0.5 -0.5 0.499952">
+          <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08"/>
+          <joint name="joint_1" range="-1.57 1" actuatorfrcrange="-1000 1000"/>
+          <geom pos="0.031 0 0.214" quat="0.707141 -0.707073 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="arm_0_base"/>
+          <geom pos="0.0515 0.179 0.013" quat="4.63268e-05 1 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="arm_0_left"/>
+          <geom pos="0.0418 0.154 -0.007" quat="4.63268e-05 1 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="arm_0_right"/>
+          <body name="connector" pos="0.08 0 0">
+            <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08"/>
+            <joint name="arm_0_connector_mimic" range="-1.57 1.57" actuatorfrcrange="-1000 1000"/>
+            <geom pos="-0.1935 0.45 0.013" quat="0.707141 0 0 -0.707073" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="arm_1_connector"/>
+            <body name="gripper_support" pos="0.012 0.018 0.014" quat="0.707388 0 0 0.706825">
+              <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08"/>
+              <joint name="gripper_support_mimic" range="-1.57 0.4" actuatorfrcrange="-1000 1000"/>
+              <geom pos="0.18 -0.162 0" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="arm_1_right"/>
+            </body>
+          </body>
+          <body name="arm_1b" pos="0.08 0 0">
+            <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08"/>
+            <joint name="arm1_mimic_0" range="-1.57 0.4" actuatorfrcrange="-1000 1000"/>
+            <geom pos="-0.231 -0.177 -0.013" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="arm_1_left"/>
+            <geom pos="0.182 -0.161 0.013" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="arm_1_right"/>
+            <body name="gripper" pos="0.081 0.001 0" quat="0.707388 0 0 0.706825">
+              <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08"/>
+              <joint name="gripper_holder" range="-1.57 0.4" actuatorfrcrange="-1000 1000"/>
+              <geom pos="0.18 -0.005 0.1538" quat="0.500398 -0.499602 0.5 0.5" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="gripper_base"/>
+              <geom pos="-0.045 0.168 0.016" quat="-0.000302168 -0.925211 -0.379452 0.000736771" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="gripper_support"/>
+              <geom size="0.012 0.009 0.006" pos="0.004 0.0035 0.002" type="box" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0"/>
+              <body name="gripper_left" pos="0.028 -0.003 -0.007" quat="0.707388 -0.706825 0 0">
+                <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08"/>
+                <joint name="joint_3" range="0 1.57" actuatorfrcrange="-1000 1000"/>
+                <geom pos="-0.535 0.212 0" quat="6.34136e-07 -0.999999 0.000796326 0.000796326" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="gripper_left"/>
+              </body>
+              <body name="gripper_right" pos="0.028 -0.003 0.011" quat="0.707388 -0.706825 0 0">
+                <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08"/>
+                <joint name="joint_3_mimic" range="0 1.57" actuatorfrcrange="-1000 1000"/>
+                <geom pos="-0.185 -0.57 0" quat="0.000563312 0.706825 0.707388 -0.000562864" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="gripper_right"/>
+              </body>
+              <body name="tool" pos="0.043 -0.005 0.003" quat="0.707388 -0.706825 0 0">
+                <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08"/>
+              </body>
+            </body>
+          </body>
+        </body>
+        <body name="arm_1_support_0" pos="0.015 0.01 0.03" quat="0.000563312 0.000562864 0.706825 0.707388">
+          <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08"/>
+          <joint name="joint_2" range="0 1.57" actuatorfrcrange="-1000 1000"/>
+          <geom pos="0.532 0.18 0.005" quat="0.000796327 0 0 1" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="servo_actuator"/>
+          <body name="arm_1_support_1b" pos="0.035 0 0">
+            <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08"/>
+            <joint name="joint_2_mimic_0b" range="-1.57 0.4" actuatorfrcrange="-1000 1000"/>
+            <geom pos="0.18 -0.162 0.003" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="arm_1_right"/>
+          </body>
+        </body>
+        <body name="arm_0_support" pos="-0.021 -0.019 0.045" quat="0.707388 0.706825 0 0">
+          <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08"/>
+          <joint name="arm_0_support_mimic" range="0 1.57" actuatorfrcrange="-1000 1000"/>
+          <geom pos="0.181 -0.162 0.003" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0 0 0.8 1" density="0" mesh="arm_1_right"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

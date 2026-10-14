@@ -1,0 +1,6 @@
+(version 1)
+# Every GND pad is routed to GND by a track (the autorouter routes GND as a
+# net); the pours are a bonus, so one thermal spoke per pad is enough.
+(rule "gnd_thermal_one_spoke"
+	(condition "A.NetName == 'GND'")
+	(constraint min_resolved_spokes 1))

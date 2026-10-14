@@ -52,6 +52,7 @@ step\ files\ \[archives,\ backups\]/
 stls/
 hardware/cad/
 hardware/step/
+hardware/arm-sim/
 
 # ── Editor ──────────────────────────────────────────────
 .vscode/
@@ -83,3 +84,7 @@ hand_landmarker.task
 
 # ── Alcatel MW45AF control panel (local tool, holds the modem password) ──
 mw45/
+
+# ── Python / tools ──────────────────────────────────────
+__pycache__/
+freerouting.jar

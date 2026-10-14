@@ -1,0 +1,318 @@
+<mujoco model="blackout">
+  <compiler angle="radian" meshdir="meshes_rocker" autolimits="true" />
+  <option timestep="0.001" integrator="implicitfast" cone="elliptic" impratio="10" />
+  <visual>
+    <global offwidth="1600" offheight="1000" />
+  </visual>
+  <default>
+    <default class="frames">
+      <geom rgba=".70 .22 .18 1" contype="0" conaffinity="0" group="2" density="0" />
+    </default>
+    <default class="shell">
+      <geom rgba=".22 .23 .25 1" contype="0" conaffinity="0" group="2" density="0" />
+    </default>
+    <default class="roof">
+      <geom rgba=".17 .17 .19 1" contype="0" conaffinity="0" group="2" density="0" />
+    </default>
+    <default class="pedestal">
+      <geom rgba=".30 .31 .34 1" contype="0" conaffinity="0" group="2" density="0" />
+    </default>
+    <default class="pcb">
+      <geom rgba=".12 .35 .55 1" contype="0" conaffinity="0" group="2" density="0" />
+    </default>
+    <default class="tt">
+      <geom rgba=".85 .75 .25 1" contype="0" conaffinity="0" group="2" density="0" />
+    </default>
+    <default class="rocker">
+      <geom rgba=".15 .15 .16 1" contype="0" conaffinity="0" group="2" density="0" />
+    </default>
+    <default class="core">
+      <geom rgba=".25 .25 .27 1" contype="0" conaffinity="0" group="2" density="0" />
+    </default>
+    <default class="foam">
+      <geom rgba=".08 .08 .08 1" contype="0" conaffinity="0" group="2" density="0" />
+    </default>
+    <default class="arm">
+      <geom rgba=".93 .52 .25 1" contype="0" conaffinity="0" group="2" density="1190" />
+    </default>
+    <default class="col">
+      <geom group="3" rgba=".5 .5 .5 .3" density="0" friction="0.8 0.02 0.001" conaffinity="3" />
+    </default>
+    <default class="armcol">
+      <geom group="3" rgba=".9 .5 .2 .3" density="0" contype="2" conaffinity="0" friction="0.5 0.02 0.001" solref="0.002 1" solimp="0.99 0.999 0.0005" solmix="1000" />
+    </default>
+    <default class="finger">
+      <geom group="3" rgba=".9 .6 .3 .4" friction="2.0 0.05 0.001" condim="6" solref="0.004 1" density="0" />
+    </default>
+    <default class="pad_tpu">
+      <geom group="3" rgba=".2 .8 .4 .4" friction="1.5 0.05 0.005" condim="6" solref="0.02 1" solimp="0.8 0.95 0.003" density="0" />
+    </default>
+  </default>
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" rgb1=".32 .30 .27" rgb2=".28 .26 .24" width="512" height="512" />
+    <material name="grid" texture="grid" texrepeat="8 8" reflectance="0" />
+    <texture name="sky" type="skybox" builtin="gradient" rgb1=".45 .5 .55" rgb2=".08 .09 .1" width="512" height="512" />
+    <mesh name="ch_frames" file="ch_frames.stl" scale="0.001 0.001 0.001" />
+    <mesh name="ch_pcb" file="ch_pcb.stl" scale="0.001 0.001 0.001" />
+    <mesh name="ch_pedestal" file="ch_pedestal.stl" scale="0.001 0.001 0.001" />
+    <mesh name="ch_roof" file="ch_roof.stl" scale="0.001 0.001 0.001" />
+    <mesh name="ch_shell" file="ch_shell.stl" scale="0.001 0.001 0.001" />
+    <mesh name="core_1" file="core_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="core_2" file="core_2.stl" scale="0.001 0.001 0.001" />
+    <mesh name="core_3" file="core_3.stl" scale="0.001 0.001 0.001" />
+    <mesh name="core_4" file="core_4.stl" scale="0.001 0.001 0.001" />
+    <mesh name="foam_1" file="foam_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="foam_2" file="foam_2.stl" scale="0.001 0.001 0.001" />
+    <mesh name="foam_3" file="foam_3.stl" scale="0.001 0.001 0.001" />
+    <mesh name="foam_4" file="foam_4.stl" scale="0.001 0.001 0.001" />
+    <mesh name="gv2_colcam" file="gv2_colcam.stl" scale="0.001 0.001 0.001" />
+    <mesh name="gv2_housing" file="gv2_housing.stl" scale="0.001 0.001 0.001" />
+    <mesh name="gv2_jaw_A" file="gv2_jaw_A.stl" scale="0.001 0.001 0.001" />
+    <mesh name="gv2_jaw_B" file="gv2_jaw_B.stl" scale="0.001 0.001 0.001" />
+    <mesh name="gv2_servo" file="gv2_servo.stl" scale="0.001 0.001 0.001" />
+    <mesh name="rocker_L" file="rocker_L.stl" scale="0.001 0.001 0.001" />
+    <mesh name="rocker_R" file="rocker_R.stl" scale="0.001 0.001 0.001" />
+    <mesh name="tt_L" file="tt_L.stl" scale="0.001 0.001 0.001" />
+    <mesh name="tt_R" file="tt_R.stl" scale="0.001 0.001 0.001" />
+    <mesh name="column_base" content_type="model/stl" file="column_base.stl" scale="0.001 0.001 0.001" />
+    <mesh name="column_left" content_type="model/stl" file="column_left.stl" scale="0.001 0.001 0.001" />
+    <mesh name="column_right" content_type="model/stl" file="column_right.stl" scale="0.001 0.001 0.001" />
+    <mesh name="column_board" content_type="model/stl" file="column_board.stl" scale="0.001 0.001 0.001" />
+    <mesh name="column_connector" content_type="model/stl" file="column_connector.stl" scale="0.001 0.001 0.001" />
+    <mesh name="arm_0_base" content_type="model/stl" file="arm_0_base.stl" scale="0.001 0.001 0.001" />
+    <mesh name="arm_0_left" content_type="model/stl" file="arm_0_left.stl" scale="0.001 0.001 0.001" />
+    <mesh name="arm_0_right" content_type="model/stl" file="arm_0_right.stl" scale="0.001 0.001 0.001" />
+    <mesh name="arm_1_right" content_type="model/stl" file="arm_1_right.stl" scale="0.001 0.001 0.001" />
+    <mesh name="arm_1_connector" content_type="model/stl" file="arm_1_connector.stl" scale="0.001 0.001 0.001" />
+    <mesh name="arm_1_left" content_type="model/stl" file="arm_1_left.stl" scale="0.001 0.001 0.001" />
+    <mesh name="servo_actuator" content_type="model/stl" file="servo_actuator.stl" scale="0.001 0.001 0.001" />
+    <mesh name="gripper_base" content_type="model/stl" file="gripper_base.stl" scale="0.001 0.001 0.001" />
+    <mesh name="gripper_support" content_type="model/stl" file="gripper_support.stl" scale="0.001 0.001 0.001" />
+    <mesh name="gripper_left" content_type="model/stl" file="gripper_left.stl" scale="0.001 0.001 0.001" />
+    <mesh name="gripper_right" content_type="model/stl" file="gripper_right.stl" scale="0.001 0.001 0.001" />
+    <mesh name="arm_1_left_arm_1b" file="arm_1_left_arm_1b.stl" scale="0.001 0.001 0.001" />
+    <mesh name="arm_1_right_arm_1b" file="arm_1_right_arm_1b.stl" scale="0.001 0.001 0.001" />
+    <mesh name="arm_1_right_gripper_support" file="arm_1_right_gripper_support.stl" scale="0.001 0.001 0.001" />
+  </asset>
+  <worldbody>
+    <light pos="0 -1 3" dir="0 .3 -1" directional="true" castshadow="true" diffuse=".8 .8 .8" />
+    <geom name="floor" type="plane" size="4 4 .05" material="grid" friction="0.9 0.02 0.001" />
+    <body name="chassis" pos="0 0 0.0790">
+      <freejoint name="root" />
+      <inertial pos="0 0 0.045" mass="0.9" diaginertia="0.006 0.004 0.008" />
+      <camera name="follow" mode="trackcom" pos="-0.55 -0.45 0.4" xyaxes="0.63 -0.77 0 0.3 0.25 0.92" />
+      <geom type="mesh" mesh="ch_frames" class="frames" />
+      <geom type="mesh" mesh="ch_shell" class="shell" />
+      <geom type="mesh" mesh="ch_roof" class="roof" />
+      <geom type="mesh" mesh="ch_pedestal" class="pedestal" />
+      <geom type="mesh" mesh="ch_pcb" class="pcb" />
+      <geom name="c_body" type="box" pos="-0.00100 0.00000 0.03550" size="0.11100 0.10400 0.03550" class="col" />
+      <geom name="c_armor" type="box" pos="0.13400 0.00000 0.03450" size="0.02400 0.08200 0.03450" class="col" />
+      <geom name="c_roof" type="box" pos="-0.00100 0.00000 0.07900" size="0.11100 0.08100 0.00800" class="col" />
+      <geom name="c_ped" type="box" pos="0.13150 0.00000 0.07250" size="0.02150 0.02700 0.01750" class="col" />
+      <geom name="c_hw170" type="box" pos="0.04365 0.00000 0.10620" size="0.04035 0.02070 0.01920" class="col" />
+      <geom name="c_campod" type="box" pos="0.11890 0.05925 0.08160" size="0.01110 0.02075 0.01660" class="col" />
+      <geom name="c_lcd" type="box" pos="-0.04295 0.00000 0.09420" size="0.03095 0.05180 0.00720" class="col" />
+      <body name="spring_1" pos="0.09200 0.12800 0.03000">
+        <joint name="spring_1" type="slide" axis="0 0 1" range="0 0.014" stiffness="400.0" springref="0" damping="0.4" />
+        <geom type="capsule" fromto="0 0 -0.002 0 0 -0.0298" size="0.004" mass="0.003" rgba=".75 .75 .78 1" friction="0.3 0.01 0.001" group="2" />
+      </body>
+      <body name="spring_2" pos="-0.09500 -0.12800 0.03000">
+        <joint name="spring_2" type="slide" axis="0 0 1" range="0 0.014" stiffness="400.0" springref="0" damping="0.4" />
+        <geom type="capsule" fromto="0 0 -0.002 0 0 -0.0256" size="0.004" mass="0.003" rgba=".75 .75 .78 1" friction="0.3 0.01 0.001" group="2" />
+      </body>
+      <body name="spring_3" pos="0.09200 -0.12800 0.03000">
+        <joint name="spring_3" type="slide" axis="0 0 1" range="0 0.014" stiffness="400.0" springref="0" damping="0.4" />
+        <geom type="capsule" fromto="0 0 -0.002 0 0 -0.0288" size="0.004" mass="0.003" rgba=".75 .75 .78 1" friction="0.3 0.01 0.001" group="2" />
+      </body>
+      <body name="spring_4" pos="-0.09500 0.12800 0.03000">
+        <joint name="spring_4" type="slide" axis="0 0 1" range="0 0.014" stiffness="400.0" springref="0" damping="0.4" />
+        <geom type="capsule" fromto="0 0 -0.002 0 0 -0.0246" size="0.004" mass="0.003" rgba=".75 .75 .78 1" friction="0.3 0.01 0.001" group="2" />
+      </body>
+      <body name="rocker_L" pos="-0.00100 -0.09670 0.01750">
+        <joint name="rocker_L" axis="0 1 0" damping="0.02" range="-0.58 0.51" />
+        <inertial pos="0 0 -0.02" mass="0.1" diaginertia="4e-4 1e-4 4e-4" />
+        <geom type="mesh" mesh="rocker_L" class="rocker" />
+        <geom type="mesh" mesh="tt_L" class="tt" />
+        <body name="wheel_2" pos="-0.10128 -0.03430 -0.05431">
+          <joint name="wheel_2" axis="0 1 0" damping="0.0005" armature="2e-5" frictionloss="0.012" />
+          <inertial pos="0 0 0" mass="0.04" diaginertia="1.5e-5 2.5e-5 1.5e-5" />
+          <geom type="mesh" mesh="core_2" class="core" />
+          <geom type="mesh" mesh="foam_2" class="foam" />
+          <geom name="tyre_2" type="cylinder" size="0.035 0.012" quat="0.7071 0.7071 0 0" friction="1.1 0.02 0.001" condim="4" class="col" />
+        </body>
+        <body name="wheel_3" pos="0.09941 -0.03430 -0.05774">
+          <joint name="wheel_3" axis="0 1 0" damping="0.0005" armature="2e-5" frictionloss="0.012" />
+          <inertial pos="0 0 0" mass="0.04" diaginertia="1.5e-5 2.5e-5 1.5e-5" />
+          <geom type="mesh" mesh="core_3" class="core" />
+          <geom type="mesh" mesh="foam_3" class="foam" />
+          <geom name="tyre_3" type="cylinder" size="0.035 0.012" quat="0.7071 0.7071 0 0" friction="1.1 0.02 0.001" condim="4" class="col" />
+        </body>
+      </body>
+      <body name="rocker_R" pos="0.00000 0.09670 0.01750">
+        <joint name="rocker_R" axis="0 1 0" damping="0.02" range="-0.58 0.51" />
+        <inertial pos="0 0 -0.02" mass="0.1" diaginertia="4e-4 1e-4 4e-4" />
+        <geom type="mesh" mesh="rocker_R" class="rocker" />
+        <geom type="mesh" mesh="tt_R" class="tt" />
+        <body name="wheel_1" pos="0.09888 0.03430 -0.05861">
+          <joint name="wheel_1" axis="0 1 0" damping="0.0005" armature="2e-5" frictionloss="0.012" />
+          <inertial pos="0 0 0" mass="0.04" diaginertia="1.5e-5 2.5e-5 1.5e-5" />
+          <geom type="mesh" mesh="core_1" class="core" />
+          <geom type="mesh" mesh="foam_1" class="foam" />
+          <geom name="tyre_1" type="cylinder" size="0.035 0.012" quat="0.7071 0.7071 0 0" friction="1.1 0.02 0.001" condim="4" class="col" />
+        </body>
+        <body name="wheel_4" pos="-0.10177 0.03430 -0.05342">
+          <joint name="wheel_4" axis="0 1 0" damping="0.0005" armature="2e-5" frictionloss="0.012" />
+          <inertial pos="0 0 0" mass="0.04" diaginertia="1.5e-5 2.5e-5 1.5e-5" />
+          <geom type="mesh" mesh="core_4" class="core" />
+          <geom type="mesh" mesh="foam_4" class="foam" />
+          <geom name="tyre_4" type="cylinder" size="0.035 0.012" quat="0.7071 0.7071 0 0" friction="1.1 0.02 0.001" condim="4" class="col" />
+        </body>
+      </body>
+      <body name="mearm" pos="0.13700 0.00000 0.07500">
+        <body name="base_link">
+          <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08" />
+          <body name="column" pos="0 0 0.024">
+            <joint name="joint_0" range="-0.7853 0.7853" actuatorfrcrange="-1000 1000" />
+            <geom pos="-0.231 -0.05 -0.002" quat="0.707141 0 0 -0.707073" type="mesh" mesh="column_base" class="arm" />
+            <geom pos="-0.8 0.022 -0.1655" quat="0.707141 0.707073 0 0" type="mesh" mesh="column_left" class="arm" />
+            <geom pos="0.71 -0.022 -0.164" quat="3.27596e-05 3.27564e-05 0.707073 0.707141" type="mesh" mesh="column_right" class="arm" />
+            <geom pos="0.028 -0.16 -0.18" quat="0.500048 0.5 -0.499952 -0.5" type="mesh" mesh="column_board" class="arm" />
+            <geom pos="-0.023 -0.16 -0.18" quat="0.500048 0.5 -0.499952 -0.5" type="mesh" mesh="column_board" class="arm" />
+            <geom pos="-0.08 0.005 -0.19" quat="0.707141 0.707073 0 0" type="mesh" mesh="column_connector" class="arm" />
+            <body name="arm_0" pos="0.014 0 0.029" quat="0.500048 0.5 -0.5 0.499952">
+              <joint name="joint_1" range="-1.57 1" actuatorfrcrange="-1000 1000" />
+              <geom pos="0.031 0 0.214" quat="0.707141 -0.707073 0 0" type="mesh" mesh="arm_0_base" class="arm" />
+              <geom pos="0.0515 0.179 0.013" quat="4.63268e-05 1 0 0" type="mesh" mesh="arm_0_left" class="arm" />
+              <geom pos="0.0418 0.154 -0.007" quat="4.63268e-05 1 0 0" type="mesh" mesh="arm_0_right" class="arm" />
+              <body name="connector" pos="0.08 0 0">
+                <joint name="arm_0_connector_mimic" actuatorfrcrange="-1000 1000" />
+                <geom pos="-0.1935 0.45 0.013" quat="0.707141 0 0 -0.707073" type="mesh" mesh="arm_1_connector" class="arm" />
+                <body name="gripper_support" pos="0.012 0.018 0.014" quat="0.707388 0 0 0.706825">
+                  <joint name="gripper_support_mimic" actuatorfrcrange="-1000 1000" />
+                  <geom pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="arm_1_right_gripper_support" class="arm" />
+                  <geom type="mesh" mesh="arm_1_right_gripper_support" pos="0 0 0" quat="1 0 0 0" class="armcol" />
+                </body>
+                <geom type="mesh" mesh="arm_1_connector" pos="-0.1935 0.45 0.013" quat="0.707141 0 0 -0.707073" class="armcol" />
+              </body>
+              <body name="arm_1b" pos="0.08 0 0">
+                <joint name="arm1_mimic_0" actuatorfrcrange="-1000 1000" />
+                <geom pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="arm_1_left_arm_1b" class="arm" />
+                <geom pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="arm_1_right_arm_1b" class="arm" />
+                <body name="gripper" pos="0.1 0.001 0" quat="0.707388 0 0 0.706825">
+                  <joint name="gripper_holder" actuatorfrcrange="-1000 1000" />
+                  <body name="tool" pos="0.07750 -0.00507 0.00150" quat="0.707388 -0.706825 0 0">
+                    <inertial pos="0 0 0" mass="0.001" diaginertia="1e-08 1e-08 1e-08" />
+                  </body>
+                  <geom type="mesh" mesh="gv2_housing" mass="0.02" class="arm" />
+                  <geom type="mesh" mesh="gv2_servo" mass="0.009" class="arm" />
+                  <body name="jaw_A" pos="0.03400 -0.00507 -0.01050">
+                    <joint name="jaw_A" axis="0 1 0" range="-0.035 0.52" damping="0.002" armature="1e-5" />
+                    <geom type="mesh" mesh="gv2_jaw_A" mass="0.008" class="arm" />
+                    <geom type="box" pos="0.04350 0.00000 0.00778" size="0.01380 0.00700 0.00100" euler="0 -0.2005 0" class="pad_tpu" />
+                    <geom type="mesh" mesh="gv2_jaw_A" class="armcol" />
+                  </body>
+                  <body name="jaw_B" pos="0.03400 -0.00507 0.01350">
+                    <joint name="jaw_B" axis="0 -1 0" range="-0.035 0.52" damping="0.002" armature="1e-5" />
+                    <geom type="mesh" mesh="gv2_jaw_B" mass="0.008" class="arm" />
+                    <geom type="box" pos="0.04350 0.00000 -0.00778" size="0.01380 0.00700 0.00100" euler="0 0.2005 0" class="pad_tpu" />
+                    <geom type="mesh" mesh="gv2_jaw_B" class="armcol" />
+                  </body>
+                  <geom type="mesh" mesh="gv2_housing" class="armcol" />
+                  <geom type="mesh" mesh="gv2_servo" class="armcol" />
+                </body>
+                <geom type="mesh" mesh="arm_1_left_arm_1b" pos="0 0 0" quat="1 0 0 0" class="armcol" />
+                <geom type="mesh" mesh="arm_1_right_arm_1b" pos="0 0 0" quat="1 0 0 0" class="armcol" />
+              </body>
+              <geom type="mesh" mesh="arm_0_base" pos="0.031 0 0.214" quat="0.707141 -0.707073 0 0" class="armcol" />
+              <geom type="mesh" mesh="arm_0_left" pos="0.0515 0.179 0.013" quat="4.63268e-05 1 0 0" class="armcol" />
+              <geom type="mesh" mesh="arm_0_right" pos="0.0418 0.154 -0.007" quat="4.63268e-05 1 0 0" class="armcol" />
+            </body>
+            <body name="arm_1_support_0" pos="0.015 0.01 0.03" quat="0.000563312 0.000562864 0.706825 0.707388">
+              <joint name="joint_2" range="0 1.57" actuatorfrcrange="-1000 1000" />
+              <geom pos="0.532 0.18 0.005" quat="0.000796327 0 0 1" type="mesh" mesh="servo_actuator" class="arm" />
+              <body name="arm_1_support_1b" pos="0.035 0 0">
+                <joint name="joint_2_mimic_0b" actuatorfrcrange="-1000 1000" />
+                <geom pos="0.18 -0.162 0.003" quat="1 0 0 0" type="mesh" mesh="arm_1_right" class="arm" />
+                <geom type="mesh" mesh="arm_1_right" pos="0.18 -0.162 0.003" quat="1 0 0 0" class="armcol" />
+              </body>
+            </body>
+            <body name="arm_0_support" pos="-0.021 -0.019 0.045" quat="0.707388 0.706825 0 0">
+              <joint name="arm_0_support_mimic" actuatorfrcrange="-1000 1000" />
+              <geom pos="0.181 -0.162 0.003" quat="1 0 0 0" type="mesh" mesh="arm_1_right" class="arm" />
+              <geom type="mesh" mesh="arm_1_right" pos="0.181 -0.162 0.003" quat="1 0 0 0" class="armcol" />
+            </body>
+            <geom type="mesh" mesh="gv2_colcam" mass="0.032" class="arm" />
+          </body>
+        </body>
+      </body>
+    </body>
+    <body name="artifact_0" pos="0.45 0.0 0.1701">
+      <freejoint />
+      <geom type="box" size="0.01 0.01 0.01" mass="0.012" rgba=".36 .74 .49 1" friction="1.0 0.02 0.001" condim="4" />
+    </body>
+    <body name="artifact_1" pos="0.38 0.2 0.0101">
+      <freejoint />
+      <geom type="box" size="0.01 0.01 0.01" mass="0.012" rgba=".85 .7 .3 1" friction="1.0 0.02 0.001" condim="4" />
+    </body>
+    <body name="artifact_2" pos="0.36 -0.22 0.0101">
+      <freejoint />
+      <geom type="box" size="0.01 0.01 0.01" mass="0.012" rgba=".3 .55 .9 1" friction="1.0 0.02 0.001" condim="4" />
+    </body>
+    <geom name="plinth" type="box" pos="0.45 0.0 0.08" size="0.02 0.03 0.08" rgba=".45 .42 .38 1" />
+    <geom name="ramp" type="box" pos="-0.6 0 0.02" size="0.25 0.25 0.02" euler="0 0.12 0" rgba=".4 .38 .35 1" />
+    <geom name="rock_0" type="ellipsoid" pos="0.9 0.12 0.012" size="0.041999999999999996 0.03 0.03" rgba=".5 .47 .42 1" />
+    <geom name="rock_1" type="ellipsoid" pos="1.0 -0.15 0.010000000000000002" size="0.034999999999999996 0.025 0.025" rgba=".5 .47 .42 1" />
+    <geom name="rock_2" type="ellipsoid" pos="1.15 0.05 0.014000000000000002" size="0.049 0.035 0.035" rgba=".5 .47 .42 1" />
+  </worldbody>
+  <contact>
+    <exclude body1="jaw_A" body2="jaw_B" />
+  </contact>
+  <equality>
+    <joint name="diff_bar" joint1="rocker_L" joint2="rocker_R" polycoef="0 -1 0 0 0" active="false" />
+    <joint joint1="jaw_B" joint2="jaw_A" polycoef="0 1 0 0 0" solref="0.003 1" />
+    <joint joint1="arm_0_support_mimic" joint2="joint_1" polycoef="1.57 1.0 0 0 0" solref="0.002 1" solimp="0.99 0.999 0.0001" />
+    <joint joint1="arm_0_connector_mimic" joint2="joint_1" polycoef="-1.57 -1.0 0 0 0" solref="0.002 1" solimp="0.99 0.999 0.0001" />
+    <joint joint1="gripper_support_mimic" joint2="joint_2" polycoef="-1.57 -1.0 0 0 0" solref="0.002 1" solimp="0.99 0.999 0.0001" />
+    <joint joint1="gripper_holder" joint2="joint_2" polycoef="-1.57 1.0 0 0 0" solref="0.002 1" solimp="0.99 0.999 0.0001" />
+    <tendon tendon1="link_arm1_mimic_0" polycoef="-1.57 0 0 0 0" solref="0.002 1" solimp="0.99 0.999 0.0001" />
+    <tendon tendon1="link_joint_2_mimic_0b" polycoef="1.57 0 0 0 0" solref="0.002 1" solimp="0.99 0.999 0.0001" />
+  </equality>
+  <tendon>
+    <fixed name="link_arm1_mimic_0">
+      <joint joint="arm1_mimic_0" coef="1" />
+      <joint joint="joint_2" coef="1.0" />
+      <joint joint="joint_1" coef="1.0" />
+    </fixed>
+    <fixed name="link_joint_2_mimic_0b">
+      <joint joint="joint_2_mimic_0b" coef="1" />
+      <joint joint="joint_2" coef="1.0" />
+      <joint joint="joint_1" coef="1.0" />
+    </fixed>
+    <fixed name="drive_L">
+      <joint joint="wheel_2" coef="1" />
+      <joint joint="wheel_3" coef="1" />
+    </fixed>
+    <fixed name="drive_R">
+      <joint joint="wheel_1" coef="1" />
+      <joint joint="wheel_4" coef="1" />
+    </fixed>
+  </tendon>
+  <actuator>
+    <general name="drive_L" tendon="drive_L" ctrlrange="-1 1" gainprm="0.07" biastype="affine" biasprm="0 0 -0.00184" forcerange="-0.07 0.07" />
+    <general name="drive_R" tendon="drive_R" ctrlrange="-1 1" gainprm="0.07" biastype="affine" biasprm="0 0 -0.00184" forcerange="-0.07 0.07" />
+    <position name="base" joint="joint_0" kp="2.0" kv="0.03" forcerange="-0.176 0.176" inheritrange="1" />
+    <position name="shoulder" joint="joint_1" kp="2.0" kv="0.03" forcerange="-0.176 0.176" inheritrange="1" />
+    <position name="elbow" joint="joint_2" kp="2.0" kv="0.03" forcerange="-0.176 0.176" inheritrange="1" />
+    <position name="claw" joint="jaw_A" kp="2.0" kv="0.03" forcerange="-0.176 0.176" inheritrange="1" />
+  </actuator>
+  <sensor>
+    <actuatorfrc name="base" actuator="base" />
+    <actuatorfrc name="shoulder" actuator="shoulder" />
+    <actuatorfrc name="elbow" actuator="elbow" />
+    <actuatorfrc name="claw" actuator="claw" />
+    <actuatorfrc name="drive_L" actuator="drive_L" />
+    <actuatorfrc name="drive_R" actuator="drive_R" />
+    <framepos name="claw_tip" objtype="body" objname="tool" />
+  </sensor>
+</mujoco>
