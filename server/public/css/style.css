@@ -543,6 +543,23 @@ input[type="range"]:focus { box-shadow: none; }
 .term-verdict.is-abort { border-left-color: var(--accent); background: var(--abort-bg); color: var(--accent); }
 /* the bar's controls give width back before anything clips */
 .term-bar select { flex: 0 1 auto; min-width: 0; min-height: 26px; max-width: 108px; font-size: 10px; padding: 0 18px 0 5px; background-color: transparent; }
+/* who answers: SAGE (ink) or CLAUDE CODE (accent). Same pill shape as the
+   permissions one so the bar reads as one row of state */
+.term-brain {
+  flex: none; min-height: 26px; padding: 0 8px; cursor: pointer;
+  border: 1px solid var(--line); border-left-width: 2px; border-radius: var(--r);
+  font: 800 11px/1 var(--grotesk); letter-spacing: 0.18em; color: var(--ink); background: transparent;
+  transition: color 0.22s ease, background-color 0.22s ease, border-color 0.22s ease;
+}
+/* model/effort: the words are the whole control, so these never shrink; every
+   bar select keeps a floor so the voice picker is never squeezed to an arrow */
+.term-bar select { min-width: 62px; }
+.term-bar select.term-pick { flex: none; max-width: none; }
+.term-brain.is-claude { color: var(--accent); border-left-color: var(--accent); background: var(--abort-bg); }
+.term-brain:hover { border-color: var(--line-2); border-left-color: currentColor; }
+.term-brain:active { transform: translateY(1px); }
+.term-brain span { display: inline-block; animation: permText 0.32s ease both; }
+@media (prefers-reduced-motion: reduce) { .term-brain span { animation: none; } }
 /* permissions: one tap, and the colour is the state — blue asks, red goes straight through */
 .term-perm {
   flex: none; display: inline-flex; align-items: center; gap: 5px; overflow: hidden;

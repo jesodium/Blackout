@@ -230,7 +230,11 @@ function clawStop(onCmd) {
 // Everything a panic stop has to kill. A bare `stop` is not one: a queued tape
 // or arm step, and the claw's hold repeat, each restart the robot the instant it
 // lands. The panic key goes through here.
-const panicStop = (send) => { blkCancel(); armStopTape(); clawClear(); speakFlush(); send("stop"); };
+// also kills a BRAIN: CLAUDE turn mid-task — it may be the one driving
+const panicStop = (send) => {
+  blkCancel(); armStopTape(); clawClear(); speakFlush(); send("stop");
+  fetch("/api/claude/stop", { method: "POST" }).catch(() => {});
+};
 
 // One deliberate twitch, for letting go of something without flinging the jaws
 // open into their stop. Full power for `ms` and then park — see CLAW_FRAME_MS

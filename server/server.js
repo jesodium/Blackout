@@ -12,6 +12,7 @@ require("./src/cam");
 require("./src/lights");
 require("./src/runs");
 require("./src/sage/routes");
+require("./src/sage/claude");  // BRAIN: CLAUDE, headless claude code
 require("./src/flash");
 require("./src/clients");     // sockets
 require("./src/mcp");

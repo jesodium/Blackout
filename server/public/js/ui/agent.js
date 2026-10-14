@@ -7,6 +7,10 @@ import { Icon, html } from "./core.js";
 import { Head } from "./panels.js";
 import { Stopwatch, assess, deriveIntent } from "./verdict.js";
 
+// the BRAIN: CLAUDE pickers; src/sage/claude.js whitelists the same two lists
+const CLAUDE_MODELS = ["haiku", "sonnet", "opus", "fable"];
+const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+
 // ---- agent feed ----
 const TOOLS = {
   camera:   { icon: "camera", label: "tool.camera",  of: "tool.lookAt" },
@@ -100,16 +104,22 @@ function Feed({ feed, ai, onAsk, onAnswer }) {
     </div>`;
 }
 
-function Agent({ ai, tts, ttsProv, hasDeepgram, confirm, onConfirm, packet, connected, speaking, chats, activeChat, feed, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onToggleTtsProvider, onMock, onAsk, onReport, onAnswer }) {
+function Agent({ ai, tts, ttsProv, hasDeepgram, confirm, onConfirm, brain, onBrain, claudeModel, onModel, claudeEffort, onEffort, packet, connected, speaking, chats, activeChat, feed, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onToggleTtsProvider, onMock, onAsk, onReport, onAnswer }) {
   const intent = deriveIntent(ai, packet, connected);
   const v = assess(packet);
   const briefed = activeChat && activeChat.mission;
+  const claude = brain === "claude";
   const [draft, setDraft] = useState("");
   const send = (e) => {
     e.preventDefault();
     const txt = draft.trim();
     if (!txt || ai.analyzing) return;
     setDraft("");
+    // /claude, /sage, /model <m>, /effort <e>: switch from the prompt line itself
+    const [, cmd, arg] = txt.match(/^\/(claude|sage|model|effort)\s*(\S*)$/i) || [];
+    if (cmd === "model" && CLAUDE_MODELS.includes(arg)) return onModel(arg);
+    if (cmd === "effort" && CLAUDE_EFFORTS.includes(arg)) return onEffort(arg);
+    if (cmd === "claude" || cmd === "sage") return onBrain(cmd);
     onAsk(txt);
   };
   return html`
@@ -124,15 +134,25 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, confirm, onConfirm, packet, conn
           : html`<div class="term">
         <div class="term-bar">
           <button type="button" class="term-back" onClick=${() => onSelectChat("")} title=${t("brief.sessions")}>←</button>
-          <b class="term-who">SAGE</b>
+          <button type="button" class=${"term-brain is-" + brain} onClick=${() => onBrain()}
+            aria-pressed=${claude} title=${t("brain.title")}>
+            <span key=${brain}>${claude ? "CLAUDE" : "SAGE"}</span>
+          </button>
+          ${claude ? html`
+            <select class="term-pick" value=${claudeModel} onChange=${e => onModel(e.target.value)} title=${t("brain.model")} aria-label=${t("brain.model")}>
+              ${CLAUDE_MODELS.map(m => html`<option key=${m} value=${m}>${m}</option>`)}
+            </select>
+            <select class="term-pick" value=${claudeEffort} onChange=${e => onEffort(e.target.value)} title=${t("brain.effort")} aria-label=${t("brain.effort")}>
+              ${CLAUDE_EFFORTS.map(v => html`<option key=${v} value=${v}>${v}</option>`)}
+            </select>` : null}
           <span class="term-state">${t(intent.label)}</span>
           <span class=${"term-verdict is-" + v.kind} title=${v.cause}>${v.label}</span>
           ${""}
-          <button type="button" class=${"term-perm is-" + (confirm ? "ask" : "bypass")}
+          ${claude ? null : html`<button type="button" class=${"term-perm is-" + (confirm ? "ask" : "bypass")}
             onClick=${onConfirm} aria-pressed=${!!confirm} title=${t("agent.permTitle")}>
             <${Icon} key=${confirm} n=${confirm ? "shield" : "shield-off"} />
             <span class="term-perm-t" key=${"t" + confirm}>${t(confirm ? "agent.permAsk" : "agent.permBypass")}</span>
-          </button>
+          </button>`}
           <select class="agent-voice-sel" title=${t("agent.voiceTitle")} aria-label=${t("agent.voiceTitle")}
             value=${!tts ? "off" : (hasDeepgram && ttsProv === "deepgram" ? "deepgram" : "edge")}
             onChange=${e => {
@@ -150,8 +170,8 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, confirm, onConfirm, packet, conn
         <div class=${"term-hero" + (speaking ? " is-speaking" : "")}><${SageFace} mood=${intent.key} /></div>
         <${Feed} feed=${feed} ai=${ai} onAsk=${onAsk} onAnswer=${onAnswer} />
         <form class="agent-foot term-prompt" onSubmit=${send}>
-          <input class="term-input" type="text" value=${draft} placeholder=${t("term.ph")}
-            aria-label=${t("term.ph")} disabled=${ai.analyzing}
+          <input class="term-input" type="text" value=${draft} placeholder=${t(claude ? "brain.ph" : "term.ph")}
+            aria-label=${t(claude ? "brain.ph" : "term.ph")} disabled=${ai.analyzing}
             onInput=${e => setDraft(e.target.value)} />
           <${Ask} onAsk=${onAsk} busy=${ai.analyzing} />
           ${""}
