@@ -127,6 +127,25 @@ function App() {
   movesRef.current = moves;
   const toggleMoves = useCallback(() => setMoves(m => { localStorage.setItem("sageMoves", String(!m)); return !m; }), []);
 
+  // OPTIONS -> BRAIN: "sage" is Cerebras through /api/chat, "claude" is headless
+  // Claude Code with the whole PC plus the rover's MCP tools (src/sage/claude.js).
+  const [brain, setBrain] = useState(() => localStorage.getItem("brain") === "claude" ? "claude" : "sage");
+  const brainRef = useRef(brain);
+  brainRef.current = brain;
+  const [claudeModel, setClaudeModel] = useState(() => localStorage.getItem("claudeModel") || "haiku");
+  const [claudeEffort, setClaudeEffort] = useState(() => localStorage.getItem("claudeEffort") || "low");
+  const claudeOpts = useRef({});
+  claudeOpts.current = { model: claudeModel, effort: claudeEffort };
+  const pickModel = useCallback((m) => { localStorage.setItem("claudeModel", m); setClaudeModel(m); }, []);
+  const pickEffort = useCallback((e) => { localStorage.setItem("claudeEffort", e); setClaudeEffort(e); }, []);
+  const toggleBrain = useCallback((to) => {
+    const n = to === "claude" || to === "sage" ? to : brainRef.current === "claude" ? "sage" : "claude";
+    if (n === brainRef.current) return;
+    localStorage.setItem("brain", n);
+    setBrain(n);
+    pushFeed({ kind: "note", text: t(n === "claude" ? "brain.toClaude" : "brain.toSage") });
+  }, [pushFeed]);
+
   // SAGE LAMP off (the default) means she never writes the headlamp on her own —
   // asking her for it in words still works, the server reads that off the turn.
   const [lamp, setLamp] = useState(() => localStorage.getItem("sageLamp") !== "false");
@@ -271,6 +290,12 @@ function App() {
     socket.on("sage-confirm", d => {
       if (!d?.id) return;
       pushFeed({ kind: "confirm", confirmId: d.id, name: d.name, arg: d.arg || null, state: "pending" });
+    });
+
+    // Claude Code's own tools, one row per call while it works
+    socket.on("claude-step", d => {
+      if (d?.say) pushFeed({ kind: "sage", text: d.say });
+      if (d?.name) pushFeed({ kind: "tool", name: d.name, arg: d.arg || null });
     });
 
     socket.on("sage-step", d => {
@@ -661,6 +686,24 @@ function App() {
     setAi(p => ({ ...p, analyzing: true, badge: "badge.thinking", phase: "thinking", since: t0, llm: null, tts: null }));
     const next = [...(chat.messages || []), { role: "user", content: text }].slice(-12);
     setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: next } : c));
+    if (brainRef.current === "claude") {
+      setAi(p => ({ ...p, badge: "badge.claude" }));
+      try {
+        const r = await fetch("/api/claude", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, session: chat.claudeSession, lang: getLang(), ...claudeOpts.current }),
+        });
+        const data = await r.json();
+        const ok = !!data.text;
+        setChats(cs => cs.map(c => c.id === chat.id ? { ...c, claudeSession: data.session || c.claudeSession,
+          messages: ok ? [...next, { role: "assistant", content: data.text }].slice(-12) : next } : c));
+        addLog(data.cost != null ? `claude replied · $${data.cost.toFixed(3)}` : t("log.replied"), "ai");
+        showSage({ text: data.text || data.error || "No response.", status: null }, t0, ok);
+      } catch (e) {
+        setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
+      }
+      return;
+    }
     try {
       const r = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -998,7 +1041,8 @@ function App() {
           </div>
           <${Split} id="rail" />
           <aside class="col-rail">
-            <${Agent} ai=${ai} tts=${tts} ttsProv=${ttsProv} hasDeepgram=${hasDeepgram} confirm=${confirm} onConfirm=${toggleConfirm} packet=${view} connected=${live} speaking=${speaking}
+            <${Agent} ai=${ai} tts=${tts} ttsProv=${ttsProv} hasDeepgram=${hasDeepgram} confirm=${confirm} onConfirm=${toggleConfirm}
+              brain=${brain} onBrain=${toggleBrain} claudeModel=${claudeModel} onModel=${pickModel} claudeEffort=${claudeEffort} onEffort=${pickEffort} packet=${view} connected=${live} speaking=${speaking}
               chats=${chats} activeChat=${activeChat} feed=${activeChat?.feed || NO_FEED} onNewChat=${newChat} onSelectChat=${selectChat}
               onDeleteChat=${deleteChat} onBrief=${briefMission} onSpeak=${speakBrief}
               onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onMock=${mockData} onAsk=${ask}
