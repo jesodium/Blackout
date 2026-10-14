@@ -2,6 +2,13 @@ WRO 2026 Project. Future Innovators.
 
 Single Arduino Giga R1 WiFi (sensors, BLE) + Node.js dashboard.
 
+<p>
+  <img src="docs/renders/rover-front.jpg" width="49%" alt="Blackout V3 rover, front three-quarter render">
+  <img src="docs/renders/rover-side.jpg" width="49%" alt="Blackout V3 rover, front render with MeArm">
+  <img src="docs/renders/shield-iso.jpg" width="49%" alt="Giga R1 sensor hub shield, angled render">
+  <img src="docs/renders/shield-top.jpg" width="49%" alt="Giga R1 sensor hub shield, top render">
+</p>
+
 ## Quick start
 
 ### 1. Sensors (Giga R1 WiFi)
