@@ -19,6 +19,10 @@ As designed the weight folds every arm up ~10° until the tyres jam against the 
 `drivetrain_test.py` also runs it with a bump stop, arm springs and locked arms. Arm travel limits come from
 `tools/v4_limits.py` (geometry sweep against the chassis) into `tools/raw/v4_limits.json`.
 
+2026-10-17: `blackout.xml` is the current build: v4 plate screwed to the side frames (8x M3x16 csk), body walls +15 mm
+(`LIFT`), roof + HW-170/LCD boxes + RPLIDAR C1 raised with it, arm group 4 mm forward down the hood, demo plinth +16 mm
+(v4 rides higher). `tools/sweep_check.py --v4` checks the arm against that roof stack.
+
 `--diffbar` fits the proposed roof differential bar (not needed now that the corner springs are modelled).
 As built: the four corner bump-stop springs (photos IMG_3813-15, `tools/corner_springs.py`) catch the body at ~3° pitch.
 Before they were modelled:

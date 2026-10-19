@@ -140,6 +140,12 @@ if __name__ == '__main__':
                 def place():
                     for w in NSApp.windows(): w.setFrame_display_(scr.visibleFrame(), True)
                 placed = False
+            pinch = [1.0]   # trackpad pinch zoom, GLFW never sees the macOS magnify gesture
+            try:
+                from AppKit import NSEvent
+                def magnify(e): pinch[0] *= 1 - e.magnification(); return e
+                NSEvent.addLocalMonitorForEventsMatchingMask_handler_(1 << 30, magnify)   # NSEventMaskMagnify
+            except ImportError: pass
             # orbit camera that follows the rover: mouse still rotates/zooms, Esc frees it
             v.cam.type, v.cam.trackbodyid = mujoco.mjtCamera.mjCAMERA_TRACKING, m.body('chassis').id
             v.cam.distance, v.cam.azimuth, v.cam.elevation = 0.9, 140, -22
@@ -148,6 +154,7 @@ if __name__ == '__main__':
                 if '--screen' in sys.argv and not placed and d.time > 0.5:   # window only exists once a few frames are drawn
                     callAfter(place); placed = True
                 with v.lock():
+                    if pinch[0] != 1.0: v.cam.distance = float(np.clip(v.cam.distance * pinch[0], 0.15, 5)); pinch[0] = 1.0
                     for _ in range(10):
                         if script and int(d.time * 1000) % 10 == 0: phase = next(script)
                         elif not script and (speed or steer): drive(speed + steer, speed - steer)
