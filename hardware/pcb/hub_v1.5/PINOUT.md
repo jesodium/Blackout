@@ -56,7 +56,6 @@ On J22 the pins keep the L298N header's order (ENA IN1 IN2 IN3 IN4 ENB), so the 
 
 | Port | Pin | Giga pin | Signal | V | Firmware |
 |---|---|---|---|---|---|
-| **J28 AUX A0** (PH3) | 1/2/3 | 3V3 / A0 / GND | VCC, SIG, GND | 3V3 | A0: `analogRead(A0)` or digital |
 | **J29 AUX D44/46** (PH4) | 1 | 3V3 | VCC | 3V3 | |
 | | 2 | D44 | S1 | 3V3 | digital |
 | | 3 | D46 | S2 | 3V3 | digital |
@@ -105,6 +104,12 @@ Pins 1-8 are in the same order as the module's 14-pin header, so the cable crimp
 | `IMU UART4 D15` | 2 | GND | GND | – | |
 | | 3 `TX` | D15 via 1 kΩ (R9) | BNO086 TXO → Serial4 RX | 3V3 | `Serial4`, RVC 115200 |
 | | 4 `RX` | D14 | Serial4 TX (unused in RVC) | 3V3 | |
+| **J28 GPS** (PH4, v1.6, turned: pin 1 on **top**) | 1 | 3V3 | NEO-7M VCC | 3V3 | module LDO takes 3.3-5 V, u-blox IO is 3.3 V |
+| `GPS UART2 D19` | 2 | GND | GND | – | |
+| | 3 `TX` | D19 via 1 kΩ (R14) | NEO-7M TX → Serial2 RX | 3V3 | `Serial2.begin(9600)` (NEO-7M default) |
+| | 4 `RX` | D18 | Serial2 TX → NEO-7M RX | 3V3 | |
+
+J28 was the AUX A0 port until v1.6. The NEO-7M runs on 3V3 here, so the whole cable stays at 3.3 V and no level shifter is needed.
 
 +5V_FUSED comes from the Giga's 5V pin through F1 (1.1 A PTC). There is no external 5V input.
 
@@ -123,11 +128,11 @@ Pins 1-8 are in the same order as the module's 14-pin header, so the cable crimp
 
 | Row | Col 1 | Col 2 | Col 3 | Col 4 | Col 5 | Col 6 | Col 7 |
 |---|---|---|---|---|---|---|---|
-| top (label above) | **3V3** | D10 (LCD CS) | D11 (LCD MOSI) | D12 (PWM) | D13 (LCD SCK) | D18 = Serial2 TX | D19 = Serial2 RX |
+| top (label above) | **3V3** | D10 (LCD CS) | D11 (LCD MOSI) | D12 (PWM) | D13 (LCD SCK) | D18 = Serial2 TX (GPS) | D19 = Serial2 RX (GPS) |
 | bottom (label below) | **GND** | A1 | A2 | A3 | A4 | A6 | A7 |
 
 - **D10, D11 and D13 have been the LCD lines since v1.4** (printed inverted). They're still on J30 for probing, but don't drive them from here while the LCD is plugged in.
-- **D18/D19** are printed TX1/RX1 on the Giga, but in code they are `Serial2`.
+- **D18/D19** are printed TX1/RX1 on the Giga, but in code they are `Serial2`. Since v1.6 they are the GPS (J28). Don't drive them from J30 while the GPS is plugged in.
 - **A7** also feeds the Giga's 3.5 mm audio jack.
 - Schematic pin numbers: odd pins are the bottom row (pin 1 = GND), even pins are the top row (pin 2 = 3V3).
 
@@ -142,11 +147,11 @@ A8-A11 are ADC-only (a compile error as digital). The silkscreen under the rail 
 
 ## Giga pins the shield uses (inverted labels)
 
-D2-D7, D8/D9 (Wire2), D1 + D10 + D11 + D13 (LCD, v1.4), D14-D17, D20/D21 (Wire), D26, D28, D30, D32, D50, D52, SCL1/SDA1 (Wire1), A5, A0 + D44 + D46 (AUX ports, v1.3), 3V3, 5V, GND. D72 comes in by flying wire to TP1.
+D2-D7, D8/D9 (Wire2), D1 + D10 + D11 + D13 (LCD, v1.4), D14-D19, D20/D21 (Wire), D26, D28, D30, D32, D50, D52, SCL1/SDA1 (Wire1), A5, D44 + D46 (AUX port, v1.3), D18/D19 (GPS, v1.6), 3V3, 5V, GND. D72 comes in by flying wire to TP1.
 Optional: D34 (JP5).
 
 ## Still free after v1.4
 
-- Broken out on J30: D12, D18/D19, A1-A4, A6, A7.
-- Only at the stacking header: D0 (D1 is the LCD DC, so Serial1 is gone), all of D22-D53 except D26, D28, D30, D32, D44, D46, D50 and D52, plus A8-A11 (analog only), DAC0/DAC1 and CANRX/CANTX.
+- Broken out on J30: D12, A2-A4, A6, A7.
+- Only at the stacking header: A0 (free since v1.6), D0 (D1 is the LCD DC, so Serial1 is gone), all of D22-D53 except D26, D28, D30, D32, D44, D46, D50 and D52, plus A8-A11 (analog only), DAC0/DAC1 and CANRX/CANTX.
 - D34 is free unless JP5 is moved to D34.

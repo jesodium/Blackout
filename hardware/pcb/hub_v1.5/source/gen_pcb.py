@@ -124,9 +124,15 @@ for p in design.parts:
         leg = p.get("legend", [])
         n = len(leg)
         if p["fp"].startswith("Connector_JST:JST_PH") and rot == 90:   # pin 1 at the bottom
-            text(lab, x + 6.7, y, 0.8, angle=90)
+            lx, ly, la = p.get("label_at", (x + 6.7, y, 90))
+            text(lab, lx, ly, 0.8, angle=la)
             for i, s in enumerate(leg):
                 text(s, x + 4.7, y - (i - (n - 1) / 2) * 2.0, 0.8)
+        elif p["fp"].startswith("Connector_JST:JST_PH") and rot == 270:   # pin 1 at the top
+            lx, ly, la = p.get("label_at", (x - 6.7, y, 90))
+            text(lab, lx, ly, 0.8, angle=la)
+            for i, s in enumerate(leg):
+                text(s, x - 4.1, y + (i - (n - 1) / 2) * 2.0, 0.8)
         elif p["fp"].startswith("Connector_JST:JST_PH") and rot == 180:   # pads face the Giga header
             text(lab, x, y + 5.3, 0.8)
             for i, s in enumerate(leg):
@@ -220,7 +226,7 @@ for i, line in enumerate([
         "WIRE D20/21 = ARM PCA9685 ONLY",
         "W1 = SDA1 D102 / SCL1 D101   W2 = SDA2 D9 / SCL2 D8",
         "UART3 D16/D17 = LIDAR   UART4 D14/D15 = IMU",
-        "AUX A0, D44/46   MQ135 A1   GYRO ON W1",
+        "GPS UART2 D18/D19   AUX D44/46   MQ135 A1   GYRO W1",
         "A7 ALSO FEEDS AUDIO JACK   A8-A11 ANALOG ONLY",
         "INVERTED PIN LABEL = USED BY THIS SHIELD",
         "JP1-3 PULLUPS OPEN   JP4 RLY 5V|3V3   JP5 BUZ D72|D34",

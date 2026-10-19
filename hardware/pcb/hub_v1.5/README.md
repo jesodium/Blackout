@@ -1,5 +1,7 @@
 # BLACKOUT Sensor Hub v1.5
 
+**v1.6** (2026-10-19): J28 is now `GPS UART2 D19` (PH4: 3V3, GND, NEO-7M TX through R14 1k to D19, D18 to its RX), replacing the AUX A0 port. Turned 270° so its pads clear the I2C1_SCL track. Built with `source/keep.sh <outdir>` (`MP=50`, REFS default `J28 R14`). The +3V3 link to J28 pin 1 is one hand-added F.Cu track at x 161.5 (y 78.0 to 72.6), because Freerouting kept leaving it open. ERC 0, DRC 0 errors/0 unconnected, verify.py ok. The v1.5 board is in git (19eb38a).
+
 **v1.5** (2026-10-12): J32 `W1 GYRO I2C` (PH4: 3V3, GND, SCL1, SDA1) and J33 `MQ135 5V A1` (PH4: fused 5V, GND, DO not connected, AO through R12 10k / R13 15k to A1, max 3.15 V). F1, C1, C3, C4, R10/R11 and D1/D2 moved into free gaps; C5/C6 dropped. Built with `source/keep.sh <outdir>` (`DROP="net:+5V_FUSED" MP=100`), checked with `source/verify.py`, fab files from `source/fab.py`. The v1.4 board and schematic are in `kicad/archive_v1.4/`. Ordering notes: `../README.txt`. The rest of this file describes v1.4.
 
 This is a **Giga R1 WiFi shield that turns the rover's sensors into plug-in modules.** Every sensor gets its own keyed JST-PH port, labelled on the silkscreen with bus, address, pin names and voltage.
