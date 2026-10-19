@@ -65,7 +65,7 @@ P("J2", "Connector_Generic:Conn_01x10", "GIGA_D8-D13_I2C1", GH10,
   names={1: "SCL1/D101", 2: "SDA1/D102", 3: "AREF", 4: "GND", 5: "D13", 6: "D12",
          7: "D11", 8: "D10", 9: "D9/SDA2", 10: "D8/SCL2"})
 P("J3", "Connector_Generic:Conn_01x08", "GIGA_A0-A7", GH8,
-  {1: "GPIO_A0", 2: "MQ135_AO", 3: "GPIO_A2", 4: "GPIO_A3", 5: "GPIO_A4", 6: "DHT_DATA", 7: "GPIO_A6", 8: "GPIO_A7"},
+  {1: None, 2: "MQ135_AO", 3: "GPIO_A2", 4: "GPIO_A3", 5: "GPIO_A4", 6: "DHT_DATA", 7: "GPIO_A6", 8: "GPIO_A7"},
   at=(150.8, 97.46, 90), giga=True, names={i: "A%d" % (i - 1) for i in range(1, 9)})
 P("J4", "Connector_Generic:Conn_01x08", "GIGA_D0-D7", GH8,
   {1: "MOT_ENB", 2: "MOT_IN4", 3: "MOT_IN3", 4: "MOT_IN2", 5: "MOT_IN1", 6: "MOT_ENA", 7: "LCD_DC", 8: None},
@@ -143,9 +143,11 @@ ph("J20", 3, "BUZZER", {1: "+3V3", 2: "BUZZ", 3: "GND"},
    133.75, R3Y, "BUZZER", ["3V", "S", "G"])
 ph("J24", 2, "LIDAR_PWM", {1: "LIDAR_PWM_PORT", 2: "GND"},
    150.1, R3Y, "LIDAR PWM", ["P", "G"])
-# spare ports for sensors added later: A0 works analog or digital, D44/D46 digital
-ph("J28", 3, "AUX_3P", {1: "+3V3", 2: "GPIO_A0", 3: "GND"},
-   163.8, R3Y, "AUX A0", ["3V", "S", "G"])
+# v1.6: NEO-7M GPS on Serial2 replaces the AUX A0 port. 3V3 power: the u-blox IO is 3.3V
+# and the module's LDO takes 3.3-5V, so nothing on this cable can reach 5V. 1k on its TX like J23/J25.
+ph("J28", 4, "GPS_NEO-7M", {1: "+3V3", 2: "GND", 3: "GPS_TXO", 4: "UART2_TX"},
+   162.6, 81.0, "GPS UART2 D19", ["3V", "G", "TX", "RX"], rot=270, label_at=(162.6, 73.9, 0))
+# spare port for sensors added later: D44/D46 digital
 ph("J29", 4, "AUX_4P", {1: "+3V3", 2: "GPIO_D44", 3: "GPIO_D46", 4: "GND"},
    176.3, R3Y, "AUX D44/46", ["3V", "44", "46", "G"])
 # row 4 -- actuators + power
@@ -187,6 +189,7 @@ for i, bus in enumerate(["I2C0", "I2C1", "I2C2"]):
 r("R7", "10k", "+3V3", "DHT_DATA", "10k", (126.75, R3Y, 90))
 r("R8", "1k", "LIDAR_TXO", "UART3_RX", "1k", (184.5, R2Y, 90))   # current limit vs a 5V TX
 r("R9", "1k", "UART4_TXO", "UART4_RX", "1k", (161.85, R2Y + 0.5, 90))
+r("R14", "1k", "GPS_TXO", "UART2_RX", "1k", (168.5, 76.0, 90))
 r("R10", "1k", "+3V3", "LED3V3_A", "1k", (119.0, 97.5, 0))
 r("R11", "1k", "+5V_FUSED", "LED5V_A", "1k", (189.5, 66.0, 90))
 r("R12", "10k", "MQ135_AO5V", "MQ135_AO", "10k", (123.0, 72.9, 0))   # MQ135 divider: 5V * 15/25 = 3.0V max
@@ -234,7 +237,7 @@ GIGA_SILK = {
     "J6": ["D%d" % i for i in range(14, 22)],
 }
 # nets that are a breakout or an OPTION, not a function the shield performs
-NOT_USED = {"BUZZ_D34", "UART2_TX", "UART2_RX"} | {n for n in
+NOT_USED = {"BUZZ_D34"} | {n for n in
             ["GPIO_D12", "GPIO_A2", "GPIO_A3", "GPIO_A4", "GPIO_A6", "GPIO_A7"]}
 
 MHS = [(115.24, 49.2), (113.97, 97.46), (166.04, 64.44), (166.04, 92.38), (190.17, 49.2), (196.52, 97.46)]

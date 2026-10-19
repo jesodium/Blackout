@@ -6973,37 +6973,20 @@
 			)
 		)
 	)
-	(global_label "GPIO_A0"
-		(shape passive)
-		(at 34.29 147.32 180)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "f6472707-00e5-5565-8ab8-e792207db262")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 34.29 147.32 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
+	(no_connect
+		(at 34.29 147.32)
+		(uuid "7b060bce-bd3e-54b9-91f8-24dc5f605a22")
 	)
 	(text "A0"
 		(exclude_from_sim no)
-		(at 24.09 147.32 0)
+		(at 32.29 147.32 0)
 		(effects
 			(font
 				(size 1 1)
 			)
 			(justify right)
 		)
-		(uuid "73bfe5b7-04e1-57a3-852f-1ccdc54f3234")
+		(uuid "d0204736-c1ec-520d-a354-3135f42b6169")
 	)
 	(global_label "MQ135_AO"
 		(shape passive)
@@ -13569,28 +13552,17 @@
 			)
 		)
 	)
-	(text "v1.5: GYRO (WIRE1) + MQ135 (5V, AO / 10k-15k -> A1)"
-		(exclude_from_sim no)
-		(at 365 233.87 0)
-		(effects
-			(font
-				(size 2 2)
-			)
-			(justify left)
-		)
-		(uuid "6b4ccdf9-6c6e-5e2e-aee8-f61d93cb9139")
-	)
 	(symbol
 		(lib_id "Connector_Generic_MountingPin:Conn_01x04_MountingPin")
-		(at 384.81 247.65 0)
+		(at 384.81 234.95 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
-		(uuid "b269e8c9-9162-5b9e-8b42-4b29415527b5")
-		(property "Reference" "J32"
-			(at 388.62 242.57 0)
+		(uuid "6b5ed990-0cb3-50f1-a739-5d07c6b67951")
+		(property "Reference" "J28"
+			(at 388.62 229.87 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13598,8 +13570,8 @@
 				(justify left)
 			)
 		)
-		(property "Value" "GYRO_I2C1"
-			(at 388.62 244.35 0)
+		(property "Value" "GPS_NEO-7M"
+			(at 388.62 231.65 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13608,7 +13580,7 @@
 			)
 		)
 		(property "Footprint" "Connector_JST:JST_PH_B4B-PH-SM4-TB_1x04-1MP_P2.00mm_Vertical"
-			(at 384.81 247.65 0)
+			(at 384.81 234.95 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13617,7 +13589,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 384.81 247.65 0)
+			(at 384.81 234.95 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13626,7 +13598,7 @@
 			)
 		)
 		(property "LCSC" "C160354"
-			(at 384.81 247.65 0)
+			(at 384.81 234.95 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13635,7 +13607,328 @@
 			)
 		)
 		(property "MPN" "JST B4B-PH-SM4-TB(LF)(SN)"
-			(at 384.81 247.65 0)
+			(at 384.81 234.95 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "1f896496-abf2-5477-acd1-bbbc742dc40d")
+		)
+		(pin "2"
+			(uuid "bdee1a50-d26d-52e8-bfe6-ca932aad23a0")
+		)
+		(pin "3"
+			(uuid "817799fc-8516-55c7-8e5b-2d3d15667fbf")
+		)
+		(pin "4"
+			(uuid "14e210d2-7b1c-57a8-9921-c7f417dc95bc")
+		)
+		(pin "MP"
+			(uuid "5c9ab772-eedf-5818-a593-b3646dc69a90")
+		)
+		(instances
+			(project "blackout_sensor_hub"
+				(path "/0601046e-76c9-533b-92b7-54da6edc1183"
+					(reference "J28")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(global_label "+3V3"
+		(shape passive)
+		(at 379.73 232.41 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "0d4c0c5d-4b82-5973-a5ba-2bb40a41eb68")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 379.73 232.41 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "GND"
+		(shape passive)
+		(at 379.73 234.95 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "6cd8c8e3-c6dd-52cb-8265-8436aae6f10a")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 379.73 234.95 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "GPS_TXO"
+		(shape passive)
+		(at 379.73 237.49 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "c4d89293-7876-5860-afce-e1af19d39a92")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 379.73 237.49 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "UART2_TX"
+		(shape passive)
+		(at 379.73 240.03 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "0d3da96c-60c3-505b-908c-60eef1b65a25")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 379.73 240.03 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "GND"
+		(shape passive)
+		(at 384.81 245.11 270)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "fabae969-5aec-5932-82ff-564410ce1f84")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 384.81 245.11 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:R")
+		(at 384.81 257.81 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "f5f1fa94-59f4-5c4d-bb14-80f1f050b611")
+		(property "Reference" "R14"
+			(at 384.81 252.71 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "1k"
+			(at 384.81 254.51 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder"
+			(at 384.81 257.81 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 384.81 257.81 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C17513"
+			(at 384.81 257.81 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0805W8F1001T5E"
+			(at 384.81 257.81 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "15d1f247-c73b-5bc0-91ff-9516051c2497")
+		)
+		(pin "2"
+			(uuid "81be348f-cf9b-5a63-a5fa-71a4abb90853")
+		)
+		(instances
+			(project "blackout_sensor_hub"
+				(path "/0601046e-76c9-533b-92b7-54da6edc1183"
+					(reference "R14")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(global_label "GPS_TXO"
+		(shape passive)
+		(at 381 257.81 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "b9bca3d8-56c0-5772-9444-ca49a5566cf5")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 381 257.81 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "UART2_RX"
+		(shape passive)
+		(at 388.62 257.81 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "5ee311be-94e4-5598-b8c5-7f7096bb56d2")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 388.62 257.81 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+	)
+	(text "v1.5: GYRO (WIRE1) + MQ135 (5V, AO / 10k-15k -> A1)"
+		(exclude_from_sim no)
+		(at 365 266.89 0)
+		(effects
+			(font
+				(size 2 2)
+			)
+			(justify left)
+		)
+		(uuid "6176ed07-0d2b-5cb4-8c69-76484604f2c0")
+	)
+	(symbol
+		(lib_id "Connector_Generic_MountingPin:Conn_01x04_MountingPin")
+		(at 384.81 280.67 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "b269e8c9-9162-5b9e-8b42-4b29415527b5")
+		(property "Reference" "J32"
+			(at 388.62 275.59 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "GYRO_I2C1"
+			(at 388.62 277.37 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Connector_JST:JST_PH_B4B-PH-SM4-TB_1x04-1MP_P2.00mm_Vertical"
+			(at 384.81 280.67 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 384.81 280.67 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C160354"
+			(at 384.81 280.67 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "JST B4B-PH-SM4-TB(LF)(SN)"
+			(at 384.81 280.67 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13669,7 +13962,7 @@
 	)
 	(global_label "+3V3"
 		(shape passive)
-		(at 379.73 245.11 180)
+		(at 379.73 278.13 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -13679,7 +13972,7 @@
 		)
 		(uuid "e95851c0-492a-5951-be3a-9be76102b2b5")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 379.73 245.11 0)
+			(at 379.73 278.13 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13690,7 +13983,7 @@
 	)
 	(global_label "GND"
 		(shape passive)
-		(at 379.73 247.65 180)
+		(at 379.73 280.67 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -13700,7 +13993,7 @@
 		)
 		(uuid "64b4d8b6-77af-5cd2-bcf4-ed0b97526f6d")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 379.73 247.65 0)
+			(at 379.73 280.67 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13711,7 +14004,7 @@
 	)
 	(global_label "I2C1_SCL"
 		(shape passive)
-		(at 379.73 250.19 180)
+		(at 379.73 283.21 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -13721,7 +14014,7 @@
 		)
 		(uuid "193b2c8d-ef94-52de-a93c-497f06db264a")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 379.73 250.19 0)
+			(at 379.73 283.21 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13732,7 +14025,7 @@
 	)
 	(global_label "I2C1_SDA"
 		(shape passive)
-		(at 379.73 252.73 180)
+		(at 379.73 285.75 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -13742,7 +14035,7 @@
 		)
 		(uuid "32943c27-26a1-5151-a181-22d4a5a5af61")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 379.73 252.73 0)
+			(at 379.73 285.75 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13753,7 +14046,7 @@
 	)
 	(global_label "GND"
 		(shape passive)
-		(at 384.81 257.81 270)
+		(at 384.81 290.83 270)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -13763,7 +14056,7 @@
 		)
 		(uuid "7e8956bc-88b4-5d15-8ef8-f2d5df830e71")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 384.81 257.81 0)
+			(at 384.81 290.83 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13774,7 +14067,7 @@
 	)
 	(symbol
 		(lib_id "Connector_Generic_MountingPin:Conn_01x04_MountingPin")
-		(at 384.81 270.51 0)
+		(at 384.81 303.53 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -13782,7 +14075,7 @@
 		(dnp no)
 		(uuid "60b8d6f7-31e3-54e2-add7-1cd39c33fc02")
 		(property "Reference" "J33"
-			(at 388.62 265.43 0)
+			(at 388.62 298.45 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13791,7 +14084,7 @@
 			)
 		)
 		(property "Value" "MQ135"
-			(at 388.62 267.21 0)
+			(at 388.62 300.23 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13800,7 +14093,7 @@
 			)
 		)
 		(property "Footprint" "Connector_JST:JST_PH_B4B-PH-SM4-TB_1x04-1MP_P2.00mm_Vertical"
-			(at 384.81 270.51 0)
+			(at 384.81 303.53 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13809,7 +14102,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 384.81 270.51 0)
+			(at 384.81 303.53 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13818,7 +14111,7 @@
 			)
 		)
 		(property "LCSC" "C160354"
-			(at 384.81 270.51 0)
+			(at 384.81 303.53 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13827,7 +14120,7 @@
 			)
 		)
 		(property "MPN" "JST B4B-PH-SM4-TB(LF)(SN)"
-			(at 384.81 270.51 0)
+			(at 384.81 303.53 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13861,7 +14154,7 @@
 	)
 	(global_label "+5V_FUSED"
 		(shape passive)
-		(at 379.73 267.97 180)
+		(at 379.73 300.99 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -13871,7 +14164,7 @@
 		)
 		(uuid "d04cbee1-eee9-545c-a04d-2da99a4110f6")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 379.73 267.97 0)
+			(at 379.73 300.99 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13882,7 +14175,7 @@
 	)
 	(global_label "GND"
 		(shape passive)
-		(at 379.73 270.51 180)
+		(at 379.73 303.53 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -13892,7 +14185,7 @@
 		)
 		(uuid "85db6bc7-e32d-5869-baf7-8962fada7239")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 379.73 270.51 0)
+			(at 379.73 303.53 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13902,12 +14195,12 @@
 		)
 	)
 	(no_connect
-		(at 379.73 273.05)
+		(at 379.73 306.07)
 		(uuid "81aa76ed-b37e-58bf-ac11-74476ab5cb5e")
 	)
 	(global_label "MQ135_AO5V"
 		(shape passive)
-		(at 379.73 275.59 180)
+		(at 379.73 308.61 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -13917,7 +14210,7 @@
 		)
 		(uuid "50130ad3-3032-5554-adbc-e1bb1b82464b")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 379.73 275.59 0)
+			(at 379.73 308.61 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13928,7 +14221,7 @@
 	)
 	(global_label "GND"
 		(shape passive)
-		(at 384.81 280.67 270)
+		(at 384.81 313.69 270)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -13938,7 +14231,7 @@
 		)
 		(uuid "368e0f93-3a0a-5ffd-bbb1-70b98acb4814")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 384.81 280.67 0)
+			(at 384.81 313.69 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13949,7 +14242,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 384.81 293.37 90)
+		(at 384.81 326.39 90)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -13957,7 +14250,7 @@
 		(dnp no)
 		(uuid "7871f5d8-659c-5e22-80da-e2bb4f9293e9")
 		(property "Reference" "R12"
-			(at 384.81 288.27 90)
+			(at 384.81 321.29 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13965,7 +14258,7 @@
 			)
 		)
 		(property "Value" "10k"
-			(at 384.81 290.07 90)
+			(at 384.81 323.09 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13973,7 +14266,7 @@
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder"
-			(at 384.81 293.37 0)
+			(at 384.81 326.39 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13982,7 +14275,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 384.81 293.37 0)
+			(at 384.81 326.39 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13991,7 +14284,7 @@
 			)
 		)
 		(property "LCSC" "C17414"
-			(at 384.81 293.37 0)
+			(at 384.81 326.39 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -14000,7 +14293,7 @@
 			)
 		)
 		(property "MPN" "UNI-ROYAL 0805W8F1002T5E"
-			(at 384.81 293.37 0)
+			(at 384.81 326.39 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -14025,7 +14318,7 @@
 	)
 	(global_label "MQ135_AO5V"
 		(shape passive)
-		(at 381 293.37 180)
+		(at 381 326.39 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -14035,7 +14328,7 @@
 		)
 		(uuid "c7250728-f07d-5070-bb7d-fec27af0b997")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 381 293.37 0)
+			(at 381 326.39 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -14046,7 +14339,7 @@
 	)
 	(global_label "MQ135_AO"
 		(shape passive)
-		(at 388.62 293.37 0)
+		(at 388.62 326.39 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -14056,7 +14349,7 @@
 		)
 		(uuid "c10dd5e6-0623-51d5-9c6e-862e45380178")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 388.62 293.37 0)
+			(at 388.62 326.39 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -14067,7 +14360,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 384.81 303.53 90)
+		(at 384.81 336.55 90)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -14075,7 +14368,7 @@
 		(dnp no)
 		(uuid "7de64a48-7ae9-5a1d-a546-c61947f30962")
 		(property "Reference" "R13"
-			(at 384.81 298.43 90)
+			(at 384.81 331.45 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -14083,7 +14376,7 @@
 			)
 		)
 		(property "Value" "15k"
-			(at 384.81 300.23 90)
+			(at 384.81 333.25 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -14091,7 +14384,7 @@
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder"
-			(at 384.81 303.53 0)
+			(at 384.81 336.55 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -14100,7 +14393,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 384.81 303.53 0)
+			(at 384.81 336.55 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -14109,7 +14402,7 @@
 			)
 		)
 		(property "LCSC" "C17475"
-			(at 384.81 303.53 0)
+			(at 384.81 336.55 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -14118,7 +14411,7 @@
 			)
 		)
 		(property "MPN" "UNI-ROYAL 0805W8F1502T5E"
-			(at 384.81 303.53 0)
+			(at 384.81 336.55 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -14143,7 +14436,7 @@
 	)
 	(global_label "MQ135_AO"
 		(shape passive)
-		(at 381 303.53 180)
+		(at 381 336.55 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -14153,7 +14446,7 @@
 		)
 		(uuid "b8ae067a-a637-5239-b047-7161a204e568")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 381 303.53 0)
+			(at 381 336.55 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -14164,7 +14457,7 @@
 	)
 	(global_label "GND"
 		(shape passive)
-		(at 388.62 303.53 0)
+		(at 388.62 336.55 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -14174,7 +14467,7 @@
 		)
 		(uuid "c1683e29-b05c-5df9-b101-1f4b29f78191")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 388.62 303.53 0)
+			(at 388.62 336.55 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -15826,15 +16119,15 @@
 		(uuid "d1fff2e7-632d-58c4-bf52-50813a726be1")
 	)
 	(symbol
-		(lib_id "Connector_Generic_MountingPin:Conn_01x03_MountingPin")
+		(lib_id "Connector_Generic_MountingPin:Conn_01x04_MountingPin")
 		(at 469.9 210.82 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
-		(uuid "6b5ed990-0cb3-50f1-a739-5d07c6b67951")
-		(property "Reference" "J28"
+		(uuid "55d5e0af-aa79-5829-8cf1-3539eb03bd9e")
+		(property "Reference" "J29"
 			(at 473.71 205.74 0)
 			(effects
 				(font
@@ -15843,7 +16136,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "AUX_3P"
+		(property "Value" "AUX_4P"
 			(at 473.71 207.52 0)
 			(effects
 				(font
@@ -15852,176 +16145,8 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Connector_JST:JST_PH_B3B-PH-SM4-TB_1x03-1MP_P2.00mm_Vertical"
-			(at 469.9 210.82 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 469.9 210.82 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "LCSC" "C160353"
-			(at 469.9 210.82 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "MPN" "JST B3B-PH-SM4-TB(LF)(SN)"
-			(at 469.9 210.82 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(pin "1"
-			(uuid "1f896496-abf2-5477-acd1-bbbc742dc40d")
-		)
-		(pin "2"
-			(uuid "bdee1a50-d26d-52e8-bfe6-ca932aad23a0")
-		)
-		(pin "3"
-			(uuid "817799fc-8516-55c7-8e5b-2d3d15667fbf")
-		)
-		(pin "MP"
-			(uuid "5c9ab772-eedf-5818-a593-b3646dc69a90")
-		)
-		(instances
-			(project "blackout_sensor_hub"
-				(path "/0601046e-76c9-533b-92b7-54da6edc1183"
-					(reference "J28")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(global_label "+3V3"
-		(shape passive)
-		(at 464.82 208.28 180)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "0d4c0c5d-4b82-5973-a5ba-2bb40a41eb68")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 464.82 208.28 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-	)
-	(global_label "GPIO_A0"
-		(shape passive)
-		(at 464.82 210.82 180)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "6cd8c8e3-c6dd-52cb-8265-8436aae6f10a")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 464.82 210.82 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-	)
-	(global_label "GND"
-		(shape passive)
-		(at 464.82 213.36 180)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "c4d89293-7876-5860-afce-e1af19d39a92")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 464.82 213.36 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-	)
-	(global_label "GND"
-		(shape passive)
-		(at 469.9 218.44 270)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "fabae969-5aec-5932-82ff-564410ce1f84")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 469.9 218.44 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Connector_Generic_MountingPin:Conn_01x04_MountingPin")
-		(at 469.9 231.14 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(dnp no)
-		(uuid "55d5e0af-aa79-5829-8cf1-3539eb03bd9e")
-		(property "Reference" "J29"
-			(at 473.71 226.06 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "AUX_4P"
-			(at 473.71 227.84 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
 		(property "Footprint" "Connector_JST:JST_PH_B4B-PH-SM4-TB_1x04-1MP_P2.00mm_Vertical"
-			(at 469.9 231.14 0)
+			(at 469.9 210.82 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16030,7 +16155,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 469.9 231.14 0)
+			(at 469.9 210.82 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16039,7 +16164,7 @@
 			)
 		)
 		(property "LCSC" "C160354"
-			(at 469.9 231.14 0)
+			(at 469.9 210.82 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16048,7 +16173,7 @@
 			)
 		)
 		(property "MPN" "JST B4B-PH-SM4-TB(LF)(SN)"
-			(at 469.9 231.14 0)
+			(at 469.9 210.82 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16082,7 +16207,7 @@
 	)
 	(global_label "+3V3"
 		(shape passive)
-		(at 464.82 228.6 180)
+		(at 464.82 208.28 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -16092,7 +16217,7 @@
 		)
 		(uuid "1631a00b-d18f-5e31-94d3-5c37878541ad")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 464.82 228.6 0)
+			(at 464.82 208.28 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16103,7 +16228,7 @@
 	)
 	(global_label "GPIO_D44"
 		(shape passive)
-		(at 464.82 231.14 180)
+		(at 464.82 210.82 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -16113,7 +16238,7 @@
 		)
 		(uuid "90bc25d5-a45b-5efa-a9ab-d4be65d01650")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 464.82 231.14 0)
+			(at 464.82 210.82 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16124,7 +16249,7 @@
 	)
 	(global_label "GPIO_D46"
 		(shape passive)
-		(at 464.82 233.68 180)
+		(at 464.82 213.36 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -16134,7 +16259,7 @@
 		)
 		(uuid "4307c0c1-eceb-5fb7-88dd-26d845bf0326")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 464.82 233.68 0)
+			(at 464.82 213.36 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16145,7 +16270,7 @@
 	)
 	(global_label "GND"
 		(shape passive)
-		(at 464.82 236.22 180)
+		(at 464.82 215.9 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -16155,7 +16280,7 @@
 		)
 		(uuid "d71933d3-d6e2-5e60-9112-cc1c3b9086a1")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 464.82 236.22 0)
+			(at 464.82 215.9 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16166,7 +16291,7 @@
 	)
 	(global_label "GND"
 		(shape passive)
-		(at 469.9 241.3 270)
+		(at 469.9 220.98 270)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -16176,7 +16301,7 @@
 		)
 		(uuid "ca07ddf2-7d92-54c8-9a25-79a0e46c23ac")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 469.9 241.3 0)
+			(at 469.9 220.98 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16187,18 +16312,18 @@
 	)
 	(text "MECHANICAL"
 		(exclude_from_sim no)
-		(at 450 253.73 0)
+		(at 450 233.41 0)
 		(effects
 			(font
 				(size 2 2)
 			)
 			(justify left)
 		)
-		(uuid "ea0b16d1-b884-53f6-8185-45f73aa94956")
+		(uuid "0d956d34-542f-5364-83d0-2f4259a7f47f")
 	)
 	(symbol
 		(lib_id "Mechanical:MountingHole")
-		(at 459.74 266.7 0)
+		(at 459.74 246.38 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom no)
@@ -16206,7 +16331,7 @@
 		(dnp no)
 		(uuid "0bccf0d6-8fc0-58fb-bb36-4218e76013e7")
 		(property "Reference" "H1"
-			(at 459.74 262.89 0)
+			(at 459.74 242.57 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16214,7 +16339,7 @@
 			)
 		)
 		(property "Value" "M3"
-			(at 459.74 270.51 0)
+			(at 459.74 250.19 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16222,7 +16347,7 @@
 			)
 		)
 		(property "Footprint" "Blackout:MountingHole_3.2mm_M3_Shield"
-			(at 459.74 266.7 0)
+			(at 459.74 246.38 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16231,7 +16356,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 459.74 266.7 0)
+			(at 459.74 246.38 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16250,7 +16375,7 @@
 	)
 	(symbol
 		(lib_id "Mechanical:MountingHole")
-		(at 469.9 266.7 0)
+		(at 469.9 246.38 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom no)
@@ -16258,7 +16383,7 @@
 		(dnp no)
 		(uuid "0a12e2c7-4a84-5aa8-b40a-1c21f7cc4ac6")
 		(property "Reference" "H2"
-			(at 469.9 262.89 0)
+			(at 469.9 242.57 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16266,7 +16391,7 @@
 			)
 		)
 		(property "Value" "M3"
-			(at 469.9 270.51 0)
+			(at 469.9 250.19 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16274,7 +16399,7 @@
 			)
 		)
 		(property "Footprint" "Blackout:MountingHole_3.2mm_M3_Shield"
-			(at 469.9 266.7 0)
+			(at 469.9 246.38 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16283,7 +16408,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 469.9 266.7 0)
+			(at 469.9 246.38 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16302,7 +16427,7 @@
 	)
 	(symbol
 		(lib_id "Mechanical:MountingHole")
-		(at 480.06 266.7 0)
+		(at 480.06 246.38 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom no)
@@ -16310,7 +16435,7 @@
 		(dnp no)
 		(uuid "7ba45eec-d815-50a4-b94c-662b26c9dfa4")
 		(property "Reference" "H3"
-			(at 480.06 262.89 0)
+			(at 480.06 242.57 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16318,7 +16443,7 @@
 			)
 		)
 		(property "Value" "M3"
-			(at 480.06 270.51 0)
+			(at 480.06 250.19 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16326,7 +16451,7 @@
 			)
 		)
 		(property "Footprint" "Blackout:MountingHole_3.2mm_M3_Shield"
-			(at 480.06 266.7 0)
+			(at 480.06 246.38 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16335,7 +16460,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 480.06 266.7 0)
+			(at 480.06 246.38 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16354,7 +16479,7 @@
 	)
 	(symbol
 		(lib_id "Mechanical:MountingHole")
-		(at 490.22 266.7 0)
+		(at 490.22 246.38 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom no)
@@ -16362,7 +16487,7 @@
 		(dnp no)
 		(uuid "83619400-2d3b-5148-843a-8ad3a8d62365")
 		(property "Reference" "H4"
-			(at 490.22 262.89 0)
+			(at 490.22 242.57 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16370,7 +16495,7 @@
 			)
 		)
 		(property "Value" "M3"
-			(at 490.22 270.51 0)
+			(at 490.22 250.19 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16378,7 +16503,7 @@
 			)
 		)
 		(property "Footprint" "Blackout:MountingHole_3.2mm_M3_Shield"
-			(at 490.22 266.7 0)
+			(at 490.22 246.38 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16387,7 +16512,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 490.22 266.7 0)
+			(at 490.22 246.38 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16406,7 +16531,7 @@
 	)
 	(symbol
 		(lib_id "Mechanical:MountingHole")
-		(at 500.38 266.7 0)
+		(at 500.38 246.38 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom no)
@@ -16414,7 +16539,7 @@
 		(dnp no)
 		(uuid "a54e68c4-79a8-50fa-b140-2c9b0be284a4")
 		(property "Reference" "H5"
-			(at 500.38 262.89 0)
+			(at 500.38 242.57 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16422,7 +16547,7 @@
 			)
 		)
 		(property "Value" "M3"
-			(at 500.38 270.51 0)
+			(at 500.38 250.19 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16430,7 +16555,7 @@
 			)
 		)
 		(property "Footprint" "Blackout:MountingHole_3.2mm_M3_Shield"
-			(at 500.38 266.7 0)
+			(at 500.38 246.38 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16439,7 +16564,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 500.38 266.7 0)
+			(at 500.38 246.38 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16458,7 +16583,7 @@
 	)
 	(symbol
 		(lib_id "Mechanical:MountingHole")
-		(at 510.54 266.7 0)
+		(at 510.54 246.38 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom no)
@@ -16466,7 +16591,7 @@
 		(dnp no)
 		(uuid "6a08c022-5f65-51f4-9184-efca6bec314c")
 		(property "Reference" "H6"
-			(at 510.54 262.89 0)
+			(at 510.54 242.57 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16474,7 +16599,7 @@
 			)
 		)
 		(property "Value" "M3"
-			(at 510.54 270.51 0)
+			(at 510.54 250.19 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16482,7 +16607,7 @@
 			)
 		)
 		(property "Footprint" "Blackout:MountingHole_3.2mm_M3_Shield"
-			(at 510.54 266.7 0)
+			(at 510.54 246.38 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -16491,7 +16616,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 510.54 266.7 0)
+			(at 510.54 246.38 0)
 			(effects
 				(font
 					(size 1.27 1.27)

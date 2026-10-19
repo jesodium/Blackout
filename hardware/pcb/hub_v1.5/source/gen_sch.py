@@ -174,12 +174,12 @@ columns = [
            ("GPIO SENSORS (3V3 ONLY)", ["J18", "J19", "R7", "J20", "JP5", "TP1"])]),
     (385, [
            ("ACTUATORS", ["J21", "JP4", "J22"]),
-           ("UARTS", ["J23", "R8", "J24", "JP7", "J25", "R9"]),
+           ("UARTS", ["J23", "R8", "J24", "JP7", "J25", "R9", "J28", "R14"]),
            ("v1.5: GYRO (WIRE1) + MQ135 (5V, AO / 10k-15k -> A1)", ["J32", "J33", "R12", "R13"])]),
     (470, [("5V: GIGA 5V PIN -> PTC", ["F1", "C1", "C2", "R11", "D2"]),
            ("3V3 (from Giga)", ["C3", "C4", "R10", "D1"]),
            ("SPARE GPIO (v1.1)", ["J30", "J31"]),
-           ("AUX PORTS", ["J28", "J29"]),
+           ("AUX PORTS", ["J29"]),
            ("MECHANICAL", ["H1", "H2", "H3", "H4", "H5", "H6"])]),
 ]
 
