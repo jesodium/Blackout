@@ -8,7 +8,6 @@ const { io } = require("../http");
 const { chat } = require("../brain");
 const state = require("../state");
 const recorder = require("../recorder");
-const ledStrip = require("../ledstrip");
 const { eyeParts } = require("../vision");
 const { setLed, getLed } = require("../lights");
 const { readArmMoves, readTapes } = require("../data");
@@ -85,24 +84,16 @@ function takeSnapshot(reason) {
 }
 
 async function askSage(messages, { maxTokens = 400, confirm = false, lamp = false } = {}) {
-  // one choke point for every model call, so the strip's "thinking" and her
-  // verdict colour come for free in chat, analysis and the autonomous loop
-  ledStrip.busy(true);
-  let resp;
-  try {
-    resp = await chat({
-      // json_object because the language instruction costs her the envelope:
-      // asked to answer in Spanish she answered in Spanish PROSE, and a reply
-      // with no json is a reply with no status, no tool and no card -- 3 of 8
-      // carried a status against 8 of 8 with the mode on. parseSage still takes
-      // bare prose, so this is belt over braces, not a new contract.
-      messages: langLast(messages),
-      max_tokens: maxTokens,
-      response_format: { type: "json_object" },
-    });
-  } finally {
-    ledStrip.busy(false);
-  }
+  const resp = await chat({
+    // json_object because the language instruction costs her the envelope:
+    // asked to answer in Spanish she answered in Spanish PROSE, and a reply
+    // with no json is a reply with no status, no tool and no card -- 3 of 8
+    // carried a status against 8 of 8 with the mode on. parseSage still takes
+    // bare prose, so this is belt over braces, not a new contract.
+    messages: langLast(messages),
+    max_tokens: maxTokens,
+    response_format: { type: "json_object" },
+  });
   // names the cause when parseSage has to salvage: "length" is her running out
   // of max_tokens mid-json, which the Spanish dashboard hits first (same
   // sentence, ~25% more tokens). Raise maxTokens if this starts showing up.
@@ -125,7 +116,6 @@ async function askSage(messages, { maxTokens = 400, confirm = false, lamp = fals
         emitStep({ kind: "tool", name: "lamp", detail: `${from} → ${sage.led} · failed: ${e.message}` });
       }));
   }
-  if (sage.status) ledStrip.sage(sage.status);
   if (sage.finding && await allow("finding", sage.finding)) recordFinding(sage.finding, lastImage(messages));
   if (sage.snapshot && await allow("snapshot", sage.snapshot)) takeSnapshot(sage.snapshot);
   return sage;

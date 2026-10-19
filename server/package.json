@@ -33,7 +33,6 @@
     "test:tape": "node test/tape.mjs",
     "test:armrec": "python3 tools/armrec.py --selftest",
     "test:sonar": "node test/sonar.mjs",
-    "test:led": "node test/led.mjs",
     "test:split": "node test/split.mjs",
     "test:camusb": "node src/camserial.js --selftest",
     "test:mcp": "node mcp.mjs --selftest",
