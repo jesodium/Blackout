@@ -24,7 +24,18 @@ def variant(xml, mode):
 def load(x, extra=''):
     s = ET.tostring(x, encoding='unicode').replace('</worldbody>', extra + '</worldbody>', 1)
     m = mujoco.MjModel.from_xml_string(s.replace('meshdir="', f'meshdir="{HERE}/'))
-    return m, mujoco.MjData(m)
+    d = mujoco.MjData(m); close_linkage(m, d.qpos)
+    return m, d
+
+
+def close_linkage(m, q):
+    """MeArm follower bars where the mimics/tendons want them, else they snap 90° at t=0 and kick the rover over"""
+    mimic = [(m.eq_obj1id[i], m.eq_obj2id[i], m.eq_data[i][:2]) for i in range(m.neq) if m.eq_type[i] == mujoco.mjtEq.mjEQ_JOINT and m.eq(i).name != 'diff_bar']
+    linked = [(m.wrap_objid[m.tendon_adr[t]:m.tendon_adr[t] + m.tendon_num[t]], m.wrap_prm[m.tendon_adr[t]:m.tendon_adr[t] + m.tendon_num[t]], m.eq_data[i][0])
+              for i in range(m.neq) if m.eq_type[i] == mujoco.mjtEq.mjEQ_TENDON for t in [m.eq_obj1id[i]]]
+    for _ in range(3):
+        for j1, j2, (c0, c1) in mimic: q[m.jnt_qposadr[j1]] = c0 + c1 * q[m.jnt_qposadr[j2]]
+        for js, cs, a0 in linked: q[m.jnt_qposadr[js[0]]] = a0 - sum(c * q[m.jnt_qposadr[j]] for j, c in zip(js[1:], cs[1:]))
 
 
 def ids(m, pre): return {i for i in range(m.ngeom) if (m.geom(i).name or '').startswith(pre)}

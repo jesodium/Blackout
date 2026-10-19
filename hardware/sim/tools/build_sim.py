@@ -18,7 +18,11 @@ V4_FRAMES = -0.020       # kg, side frames lost their rocker pivot bosses (2026-
 V4_ARM_DAMP = 0.02       # N·m·s pivot friction, nothing else holds the arms (no springs in the v4 design)
 ARM_DENSITY = 1190       # acrylic/PLA-ish
 UPPER_ARM, FOREARM = 80, 100    # mm pivot to pivot, stock MeArm 80 / 81; from ARM_MOUNT the claw bottoms out ~10 cm above the floor
-ARM_MOUNT = (137, 0, 75)         # mm, MeArm base_link in rover frame: on a wedge pedestal on the front armor (was roof, (68, 0, 91))
+ARM_MOUNT = (137, 0, 75) if ROCKER else (141, 0, 73.96)   # mm, MeArm base_link in rover frame: wedge pedestal on the front armor; v4 build slid 4 mm forward down the hood (2026-10-17)
+LIFT = 0 if ROCKER else 15.0    # mm, body walls cut at Y 42 and stretched, roof + everything on it raised (2026-10-17)
+M_LIFT_WALLS, M_ROOFSTACK = 0.040, 0.18   # kg, ~53 cm³ of extra wall printed; roof + HW-170 box + LCD box that went up LIFT
+M_LIDAR = 0.12                  # kg, RPLIDAR C1 (~110 g) + riser
+PLINTH = 0.160 if ROCKER else 0.176   # m, demo plinth; v4 rides 16 mm higher, same reach to the cube
 SPRING_K, SPRING_GAP = 400.0, 3.0   # N/m corner bump-stop springs, mm gap to the tyre at rest (photos IMG_3813-15)
 GRIPPER_V2 = True        # gear claw + arm cam (hardware/cad/gripper_cam) instead of the stock MeArm claw
 GV2_MASS = dict(housing=0.020, servo=0.009, jaw=0.008, colcam=0.032)   # kg printed (~70% solid PLA) + SG90; colcam = column pod + ESP32-CAM-MB
@@ -39,10 +43,12 @@ def group(names, origin, out, faces=20000):
 chassis = {'frames': ['side_frame_L_1', 'side_frame_R_1'],
            'shell': ['front_panel_1', 'front_armor_1', 'ultrasonic_visor_1', 'electronics_box_1', 'lower_plate_1',
                      'electronics_plate_1', *(['Pivot_cap-mk2_1', 'Pivot_cap-mk2_2', *[f'bracket_{i}.stl' for i in range(4)]] if ROCKER else ['v4_plate_1'])],
-           'roof': ['roof4.stl' if ROCKER else 'roof2_1'], 'pedestal': ['arm_pedestal_1'],
+           'roof': ['roof4.stl' if ROCKER else 'roof2_1'], 'pedestal': ['arm_pedestal_1' if ROCKER else 'arm_pedestal_armor_1'],
            'pcb': ['giga_r1_1', 'blackout_shield_v1.4_1', 'giga_female_headers_1', 'L298N_1', 'HC-SR04_1']}
 if ROCKER:   # 2026-10-13: HW-170 box on the roof, ESP32-CAM pod on the armor hood (hardware/cad/hw170_box, gripper_cam)
     chassis['shell'] += ['hw170_box.stl', 'esp32cam_armor.stl', 'lcd_box.stl']; chassis['pcb'] += ['hw170_board.stl']   # + 3.5in LCD box (hardware/cad/lcd_box)
+else:
+    chassis['shell'] += ['hw170_box_1', 'esp32cam_armor_1', 'lcd_box_1', 'lidar_riser_1', 'rplidar_c1_1']
 for k, v in chassis.items(): group(v, (0, 0, 0), 'ch_' + k)
 # rockers: pivot axis along MuJoCo y. rockers-mk3_1 is Fusion Z- (MuJoCo y-)
 piv = {'L': (-1.0, -96.7, 17.5), 'R': (0.0, 96.7, 17.5)}
@@ -62,9 +68,9 @@ if not ROCKER:
     lim = json.load(open(f'{RAW}/v4_limits.json'))   # travel to first chassis contact from the CAD pose, tools/v4_limits.py
     for k in (1, 2, 3, 4):
         p = fusion_to_mj(np.array([lim[str(k)]['pivot']]))[0]
-        w = min(wheels, key=lambda i: np.linalg.norm(wheels[i][[0, 1]] - load(f'v4_arm_{k}').bounds.mean(0)[[0, 1]]))
+        w = min(wheels, key=lambda i: np.linalg.norm(wheels[i][[0, 1]] - load(f'v4_leg_{k}').bounds.mean(0)[[0, 1]]))
         tt = min((1, 2, 3, 4), key=lambda i: np.linalg.norm(load(f'TTGearmotor-demo_{i}').bounds.mean(0) - wheels[w]))
-        group([f'v4_arm_{k}', f'TTGearmotor-demo_{tt}'], p, f'swing_{k}')
+        group([f'v4_leg_{k}', f'TTGearmotor-demo_{tt}'], p, f'swing_{k}')
         arms[k] = (p, w, lim[str(k)]['up'], lim[str(k)]['down'] or 60)
 # corner springs: seat under each bracket (corner_springs.py), plunger hangs to SPRING_GAP above its tyre
 springs = []
@@ -141,7 +147,7 @@ for body, extra in [('arm_0', UPPER_ARM - 80), ('arm_0_support', UPPER_ARM - 80)
 CAD = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'cad', 'gripper_cam')
 GV2_PIVOT = {'A': np.array([34.0, -5.07, -10.5]), 'B': np.array([34.0, -5.07, 13.5])}   # jaw hinges, body frame mm
 def to_gripper(v): return np.c_[-v[:, 0] - 251.0, v[:, 1] - 209.07, -v[:, 2]]
-def to_column(v): return np.c_[-v[:, 0] - 137.0, v[:, 2], v[:, 1] - 99.0]   # URDF 'column' body, same ICP fit (exact)
+def to_column(v): return np.c_[-v[:, 0] - 137.0, v[:, 2], v[:, 1] - (99.0 if ROCKER else 95.0)]   # URDF 'column' body, same ICP fit (exact); v4 build: pod 4 mm higher to clear the raised roof
 if GRIPPER_V2:
     for out, srcs, origin in [('gv2_housing', ['gripper_bottom', 'gripper_top'], 0), ('gv2_servo', ['gripper_servo_dummy'], 0),
                               ('gv2_jaw_A', ['jaw_A'], GV2_PIVOT['A']), ('gv2_jaw_B', ['jaw_B'], GV2_PIVOT['B']), ('gv2_colcam', ['esp32cam_column_pod', 'dummy3'], 0)]:
@@ -183,14 +189,19 @@ ET.SubElement(wb, 'geom', name='floor', type='plane', size='4 4 .05', material='
 mm2 = lambda v: ' '.join(f'{a/1000:.5f}' for a in v)
 ch = ET.SubElement(wb, 'body', name='chassis', pos=f'0 0 {ground/1000 + 0.003:.4f}')
 ET.SubElement(ch, 'freejoint', name='root')
-ET.SubElement(ch, 'inertial', pos='0 0 0.045', mass=str(M_CHASSIS if ROCKER else M_CHASSIS + V4_PLATE + V4_FRAMES), diaginertia='0.006 0.004 0.008')
+mc = M_CHASSIS if ROCKER else M_CHASSIS + V4_PLATE + V4_FRAMES + M_LIFT_WALLS
+cz = 45 + (0 if ROCKER else (M_ROOFSTACK * LIFT + M_LIFT_WALLS * (64 - 45)) / mc)
+ET.SubElement(ch, 'inertial', pos=f'0 0 {cz / 1000:.4f}', mass=str(mc), diaginertia='0.006 0.004 0.008')
+if not ROCKER: ET.SubElement(ET.SubElement(ch, 'body', name='lidar', pos=f'-0.100 0 {(135 + LIFT) / 1000:.3f}'), 'inertial', pos='0 0 0', mass=str(M_LIDAR), diaginertia='6e-5 6e-5 6e-5')
 ET.SubElement(ch, 'camera', name='follow', mode='trackcom', pos='-0.55 -0.45 0.4', xyaxes='0.63 -0.77 0 0.3 0.25 0.92')
 for k in chassis: mesh_geom(ch, 'ch_' + k, 'frames' if k == 'frames' else k if k in ('roof', 'pedestal', 'pcb') else 'shell')
 # collision boxes (MuJoCo mm coords): body, front armor, roof, pedestal
-for nm, lo, hi in [('c_body', (-112, -104, 0), (110, 104, 71)), ('c_armor', (110, -82, 0), (158, 82, 69)),
-                   ('c_roof', (-112, -81, 71), (110, 81, 87)), ('c_ped', (ARM_MOUNT[0] - 27, -27, 55), (ARM_MOUNT[0] + 16, 27, ARM_MOUNT[2] + 15)),
+for nm, lo, hi in [('c_body', (-112, -104, 0), (110, 104, 71 + LIFT)), ('c_armor', (110, -82, 0), (158, 82, 69)),
+                   ('c_roof', (-112, -81, 71 + LIFT), (110, 81, 87 + LIFT)), ('c_ped', (ARM_MOUNT[0] - 27, -27, 55), (ARM_MOUNT[0] + 16, 27, ARM_MOUNT[2] + 15)),
                    *([('c_hw170', (3.3, -20.7, 87), (84, 20.7, 125.4)), ('c_campod', (107.8, 38.5, 65), (130, 80, 98.2)), ('c_lcd', (-73.9, -51.8, 87), (-12, 51.8, 101.4))] if ROCKER else []),
-                   *([] if ROCKER else [('c_plate', (-100, -82.5, -10), (100, 82.5, -4)),     # v4 plate + its 2 pivot blocks
+                   *([] if ROCKER else [('c_hw170', (8.3, -28.7, 87 + LIFT), (89, 28.7, 125.4 + LIFT)), ('c_campod', (111.8, 38.5, 64.2), (134.4, 80, 97.2)),
+                                        ('c_lcd', (-62.9, -59.8, 85 + LIFT), (-1, 59.8, 101.4 + LIFT)), ('c_lidar', (-132, -34, 87 + LIFT), (-68, 34, 161.3 + LIFT)),
+                                        ('c_plate', (-100, -82.5, -10), (100, 82.5, -4)),     # v4 plate + its 2 pivot blocks
                                         ('c_blk_L', (-25, -63, -50), (25, -53, -10)), ('c_blk_R', (-25, 53, -50), (25, 63, -10))])]:
     lo, hi = np.array(lo, float), np.array(hi, float)
     ET.SubElement(ch, 'geom', name=nm, type='box', pos=mm2((lo + hi) / 2), size=mm2((hi - lo) / 2), **{'class': 'col'})
@@ -262,10 +273,10 @@ for b in ab.iter('body'):
     for g in [g for g in b.findall('geom') if g.get('type') == 'mesh']:
         ET.SubElement(b, 'geom', type='mesh', mesh=g.get('mesh'), **{k: g.get(k) for k in ('pos', 'quat') if g.get(k)}, **{'class': 'armcol'})
 # targets
-for i, (p, rgba) in enumerate([((0.45, 0.0, 0.1701), '.36 .74 .49 1'), ((0.38, 0.2, 0.0101), '.85 .7 .3 1'), ((0.36, -0.22, 0.0101), '.3 .55 .9 1')]):
+for i, (p, rgba) in enumerate([((0.45, 0.0, PLINTH + 0.0101), '.36 .74 .49 1'), ((0.38, 0.2, 0.0101), '.85 .7 .3 1'), ((0.36, -0.22, 0.0101), '.3 .55 .9 1')]):
     ob = ET.SubElement(wb, 'body', name=f'artifact_{i}', pos=' '.join(map(str, p)))
     ET.SubElement(ob, 'freejoint'); ET.SubElement(ob, 'geom', type='box', size='0.01 0.01 0.01', mass='0.012', rgba=rgba, friction='1.0 0.02 0.001', condim='4')
-ET.SubElement(wb, 'geom', name='plinth', type='box', pos='0.45 0.0 0.08', size='0.02 0.03 0.08', rgba='.45 .42 .38 1')
+ET.SubElement(wb, 'geom', name='plinth', type='box', pos=f'0.45 0.0 {PLINTH / 2}', size=f'0.02 0.03 {PLINTH / 2}', rgba='.45 .42 .38 1')
 ET.SubElement(wb, 'geom', name='ramp', type='box', pos='-0.6 0 0.02', size='0.25 0.25 0.02', euler='0 0.12 0', rgba='.4 .38 .35 1')
 for k, (px, py, r) in enumerate([(0.9, 0.12, 0.03), (1.0, -0.15, 0.025), (1.15, 0.05, 0.035)]):
     ET.SubElement(wb, 'geom', name=f'rock_{k}', type='ellipsoid', pos=f'{px} {py} {r*0.4}', size=f'{r*1.4} {r} {r}', rgba='.5 .47 .42 1')

@@ -1,13 +1,21 @@
 # Sweeps the MeArm through its joint ranges and reports any arm surface inside the roof-top parts
 # (HW-170 box, cam pods, roof). Sim arm has no collisions, so this is the "does it hit" check.
-import sys, numpy as np, mujoco, trimesh
+import sys, json, numpy as np, mujoco, trimesh
 HERE = __file__.rsplit('/', 2)[0]
-RAW = HERE + '/tools/raw_rocker/'
-m = mujoco.MjModel.from_xml_path(HERE + '/blackout_rocker.xml'); d = mujoco.MjData(m)
+V4 = '--v4' in sys.argv   # current rover: v4 drivetrain, body +15 mm, lidar on the roof
+RAW = HERE + ('/tools/raw/' if V4 else '/tools/raw_rocker/')
+m = mujoco.MjModel.from_xml_path(HERE + ('/blackout.xml' if V4 else '/blackout_rocker.xml')); d = mujoco.MjData(m)
 f2m = lambda v: np.c_[-v[:, 0], v[:, 2], v[:, 1]]
 def static(name):
     t = trimesh.load(RAW + name); t.vertices = f2m(t.vertices); return t
-OBST = {'hw170_box': static('hw170_box.stl'), 'lcd_box': static('lcd_box.stl'), 'cam_armor': static('esp32cam_armor.stl'), 'roof': static('roof4.stl')}
+def hull(name):   # Fusion display meshes aren't watertight; these parts are boxy, so the hull is a fair stand-in
+    j = json.load(open(RAW + name + '.json')); return trimesh.Trimesh(f2m(np.array(j['v']).reshape(-1, 3) * 10)).convex_hull
+if V4:
+    roof = trimesh.load(HERE + '/../cad/roof4h_bite_print.stl'); v = roof.vertices
+    roof.vertices = f2m(np.c_[v[:, 0] - 110, 102 - v[:, 2], v[:, 1] - 81])   # print frame -> Fusion, roof top now Y 102
+    OBST = {'hw170_box': hull('hw170_box_1'), 'lcd_box': hull('lcd_box_1'), 'cam_armor': hull('esp32cam_armor_1'), 'lidar': hull('rplidar_c1_1'), 'roof': roof}
+else:
+    OBST = {'hw170_box': static('hw170_box.stl'), 'lcd_box': static('lcd_box.stl'), 'cam_armor': static('esp32cam_armor.stl'), 'roof': static('roof4.stl')}
 mimic = [(m.eq_obj1id[i], m.eq_obj2id[i], m.eq_data[i][:2]) for i in range(m.neq) if m.eq_type[i] == mujoco.mjtEq.mjEQ_JOINT and m.eq(i).name != 'diff_bar']
 linked = []
 for i in range(m.neq):
