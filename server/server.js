@@ -17,7 +17,6 @@ require("./src/flash");
 require("./src/clients");     // sockets
 require("./src/mcp");
 const { connectSerial } = require("./src/link");
-const { startStrip } = require("./src/lights");
 const { MDNS_HOST, startMdns } = require("./src/net");
 const { pregenOnboarding } = require("./src/tts");
 
@@ -25,7 +24,6 @@ if (process.env.SERIAL_AUTOCONNECT === "true") connectSerial();
 else console.log("USB serial auto-connect off — select a port in the dashboard (SERIAL_AUTOCONNECT=true to auto-open).");
 
 startMdns();
-startStrip();
 
 server.listen(PORT, () => {
   console.log(`Server at http://localhost:${PORT}`);

@@ -5,7 +5,6 @@
 const { io, fwdIp, isHost } = require("./http");
 const { usbWrite } = require("./link");
 const state = require("./state");
-const ledStrip = require("./ledstrip");
 const { camCount } = require("./vision");
 const { getLed } = require("./lights");
 const { mockPacket } = require("./telemetry");
@@ -69,9 +68,6 @@ io.on("connection", (socket) => {
   // browser owns the transcript (localStorage), the server just repeats it.
   socket.on("feed", (e) => { if (isHost(socket)) socket.broadcast.emit("feed", e); });
   socket.on("sage-confirm-res", (d) => { if (d && d.id) answerConfirm(d.id, !!d.ok); });
-
-  // the only strip input the server can't derive: TTS ends in the browser
-  socket.on("speaking", (b) => { if (isHost(socket)) ledStrip.speaking(!!b); });
 
   socket.on("set-language", (code) => {
     state.currentLanguage = (code === "es") ? "es" : "en";

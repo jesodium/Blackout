@@ -1,8 +1,7 @@
 // What the numbers mean: the status bands, the readings as Sage reads them, the
-// trend line, and the hud level pushed to the board's panel and the room strip.
+// trend line, and the hud level pushed to the board's panel.
 const { io } = require("./http");
 const { usbWrite } = require("./link");
-const ledStrip = require("./ledstrip");
 const state = require("./state");
 
 function band(v, warn, danger) {
@@ -53,10 +52,6 @@ function pushHud(d) {
   const level = ["ok", "warn", "bad"][Math.max(...Object.values(s).map(v => RANK[v] ?? 0))];
 
   const dist = d.dist >= 999 ? "CLEAR" : `${Math.round(d.dist)}cm`;
-  // a wall inside 10cm is amber to the board (warn = intermittent beep, not a
-  // held tone) but RED on the room strip: the strip is what an operator across
-  // the room is watching, and proximity is the one thing they can act on.
-  ledStrip.level(s.dist === "NEAR" ? "bad" : level);
   const msg = `hud,${level},${Math.round(d.temp)}C ${Math.round(d.humid)}%|${dist}`;
   const now = Date.now();
   if (now - lastHudAt < HUD_MIN_GAP) return;

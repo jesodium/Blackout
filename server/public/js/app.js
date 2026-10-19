@@ -206,8 +206,8 @@ function App() {
     // opens with stopSpeech(), so it used to cut whatever the run was saying.
     // Off a tape a new turn still cuts in, which is the interruption we want.
     (armLedger.tapeOn ? speakQueued : speak)(text, {
-      onStart: () => { setSpeaking(true); socketRef.current?.emit("speaking", true); setAi(p => ({ ...p, phase: null, tts: Date.now() - t })); },
-      onEnd: () => { setSpeaking(false); socketRef.current?.emit("speaking", false); },
+      onStart: () => { setSpeaking(true); setAi(p => ({ ...p, phase: null, tts: Date.now() - t })); },
+      onEnd: () => { setSpeaking(false); },
     });
   }, []);
 
@@ -810,7 +810,7 @@ function App() {
 
   const toggleTts = useCallback(() => setTts(p => {
     const n = !p; ttsRef.current = n; localStorage.setItem("tts", n);
-    if (!n) { stopSpeech(); setSpeaking(false); socketRef.current?.emit("speaking", false); }
+    if (!n) { stopSpeech(); setSpeaking(false); }
     return n;
   }), []);
   const toggleTtsProvider = useCallback(() => setTtsProv(p => p === "edge" ? "deepgram" : "edge"), []);
