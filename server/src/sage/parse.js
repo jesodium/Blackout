@@ -144,6 +144,13 @@ function salvage(s) {
   try { return JSON.parse('"' + m[1].replace(/\\+$/, "") + '"').trim() || s; } catch { return m[1]; }
 }
 
+// the job she hands to Claude, written as a full instruction; "null"/"none" as
+// a string is her saying no, not a task
+function parseClaude(v) {
+  const s = typeof v === "string" ? v.trim() : "";
+  return s && !/^(null|none|no|ninguno)$/i.test(s) ? s.slice(0, 1000) : null;
+}
+
 const wantsTool = (sage, step, max) => !!(sage && sage.tool) && step < max - 1;
 
 // armMoves/tapes are the RAW folders (readTakes), not a filtered map: the
@@ -168,10 +175,11 @@ function parseSage(raw, armMoves, tapes) {
         move: parseMove(o.move),
         arm: parseArm(o.arm, armMovesFor(armMoves, "sage_can_use"), armMoves),
         tape: parseTape(o.tape, armMovesFor(tapes, "sage_can_use"), tapes),
+        claude: parseClaude(o.claude),
       };
     } catch { console.warn("sage: reply is not valid json (cut off?) — salvaging text"); }
   }
-  return { text: start !== -1 ? salvage(s) : s, status: null, action: null, tool: null, toolArg: null, led: null, finding: null, snapshot: null, move: null, arm: null, tape: null };
+  return { text: start !== -1 ? salvage(s) : s, status: null, action: null, tool: null, toolArg: null, led: null, finding: null, snapshot: null, move: null, arm: null, tape: null, claude: null };
 }
 
-module.exports = { parseSage, snapSummary, askFor, wantsTool, SAGE_TOOLS, parseArm, parseTape, armMovesFor, ARM_REPEAT_MS };
+module.exports = { parseSage, parseClaude, snapSummary, askFor, wantsTool, SAGE_TOOLS, parseArm, parseTape, armMovesFor, ARM_REPEAT_MS };

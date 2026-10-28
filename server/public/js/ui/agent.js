@@ -21,6 +21,7 @@ const TOOLS = {
   lamp:     { icon: "gear",   label: "tool.lamp" },
   ask:      { icon: "mic",    label: "tool.ask" },
   analysis: { icon: "camera", label: "tool.analysis" },
+  claude:   { icon: "step",   label: "tool.claude" },
 };
 
 // One card for every yes/no Sage puts in front of the operator: a drive move, an
@@ -69,6 +70,17 @@ function FeedLine({ e, onAnswer }) {
         <p class="fl-t">${t("tool.used")} <b><${Icon} n=${spec.icon} /> ${what}</b></p>
         ${e.detail ? html`<p class="fl-detail">└ ${e.detail}</p>` : null}
         ${e.img ? html`<img class="fl-shot" src=${e.img} alt=${what} loading="lazy" />` : null}
+      </div></div>`;
+  }
+  // a job Sage handed to Claude: ticks while it runs, then says how it ended
+  if (e.kind === "job") {
+    const st = e.state || "running";
+    return html`<div class=${"fl fl-tool fl-job is-" + st}>
+      <span class="fl-mark">${st === "running" ? "◐" : "◆"}</span>
+      <div class="fl-body">
+        <p class="fl-t">${t("job." + st)} <b><${Icon} n="step" /> ${e.task}</b>
+          ${st === "running" ? html` <b><${Stopwatch} since=${e.since || Date.now()} /></b>` : null}</p>
+        ${e.note ? html`<p class="fl-detail">└ ${e.note}</p>` : null}
       </div></div>`;
   }
   if (e.kind === "user") return html`<div class="fl fl-user">

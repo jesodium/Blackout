@@ -18,6 +18,7 @@ server/public/findings/
 # 10s telemetry dumps Sage asked for — mission output, not source
 server/public/snapshots/
 server/public/shots/
+server/public/claude/
 # Throwaway CDP probes
 server/*-tmp.mjs
 npm-debug.log*
