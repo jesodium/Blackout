@@ -1,7 +1,7 @@
 # BLACKOUT — WRO 2026 Future Innovators
 
 Team Blackout (Carlos Jaramillo, Dylan Crespo, Ricardo Gaudiano), I.B.C.M, Panama.
-Qualified to the Puerto Rico 2026 final. The robot is **Blackout V3 "Vortex"**: a
+Qualified to the Puerto Rico 2026 final. The robot is **Blackout V4**: a
 rover that helps archaeologists explore and document dig sites ("shaping
 archaeology with robotics"). An AI copilot, **Sage**, sees through its camera and
 talks to the operator.

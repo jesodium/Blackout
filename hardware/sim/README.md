@@ -36,4 +36,4 @@ As is, the corner springs hold the rover at ~5° with the arm out.
 
 Rebuild after CAD changes: run `tools/fusion_dump.py` in Fusion (`python3 tools/fusion_http.py tools/fusion_dump.py`),
 then `~/.venvs/cad/bin/python tools/build_sim.py` (add `--rocker` for the old drivetrain, built from `tools/raw_rocker/`). Calibration knobs (servo torque, TT stall/no-load,
-masses) are at the top of `build_sim.py`.
+masses) are at the top of `build_sim.py`. Then `~/.venvs/cad/bin/python tools/export_glb.py` refreshes the dashboard Live View model (`server/public/models/rover.glb`).
