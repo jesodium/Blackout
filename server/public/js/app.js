@@ -24,6 +24,9 @@ import { Split } from "./ui/split.js";
 import { Topbar } from "./ui/topbar.js";
 import { UpdateBar, UpdateModal } from "./ui/update.js";
 
+// the PC the server runs on (Electron loads localhost too) — not a LAN tablet
+const LOCAL_HOST = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+
 // ---- app ----
 function App() {
   const [connected, setConnected] = useState(false);
@@ -59,6 +62,8 @@ function App() {
   const [flashLog, setFlashLog] = useState("");
   const [flashCode, setFlashCode] = useState(null);
   const [speaking, setSpeaking] = useState(false);
+  const speakingRef = useRef(false);
+  speakingRef.current = speaking;
   const [fpv, setFpv] = useState(false);
   const [fpvZoom, setFpvZoom] = useState(0);
   const [rec, setRec] = useState(null);
@@ -180,6 +185,7 @@ function App() {
   useEffect(() => { lastBands.current = {}; }, [activeId]);
 
   const packetRef = useRef(null);
+  const jobFeed = useRef({});
 
   useEffect(() => {
     const id = setInterval(() => setFresh(Date.now() - lastPkt.current < PKT_STALE_MS), 1000);
@@ -296,6 +302,29 @@ function App() {
     socket.on("claude-step", d => {
       if (d?.say) pushFeed({ kind: "sage", text: d.say });
       if (d?.name) pushFeed({ kind: "tool", name: d.name, arg: d.arg || null });
+    });
+
+    // Sage handed a job to Claude (src/sage/claude.js delegate): one feed row that
+    // runs, then flips to done. The result waits until she is quiet — not
+    // thinking, not talking, no tape — then she says it. Only the PC's own
+    // dashboard speaks it, or every LAN tablet would read it out too.
+    socket.on("claude-job", d => {
+      if (!d?.id) return;
+      if (d.state === "running") { jobFeed.current[d.id] = pushFeed({ kind: "job", task: d.task, state: "running", since: d.at }); return; }
+      const fid = jobFeed.current[d.id];
+      delete jobFeed.current[d.id];
+      const line = d.state === "done" ? d.text : t("job.said." + d.state, { msg: d.text || "" });
+      if (fid != null) patchFeed(fid, { state: d.state, note: d.text });
+      else pushFeed({ kind: "job", task: d.task, state: d.state, note: d.text });
+      if (!LOCAL_HOST) return;
+      const chat = activeRef.current;
+      if (chat) setChats(cs => cs.map(c => c.id === chat.id
+        ? { ...c, messages: [...(c.messages || []), { role: "assistant", content: `(Claude finished "${d.task}") ${line}` }].slice(-12) } : c));
+      const say = () => {
+        if (analyzingRef.current || speakingRef.current || armLedger.tapeOn) return void setTimeout(say, 500);
+        if (ttsRef.current) speakTimed(d.state === "done" ? `${t("job.said.done")} ${line}` : line);
+      };
+      say();
     });
 
     socket.on("sage-step", d => {
@@ -707,7 +736,7 @@ function App() {
     try {
       const r = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, lang: getLang(), moves: movesRef.current, lamp: lampRef.current, demo: demoRef.current, confirm: confirmRef.current }),
+        body: JSON.stringify({ messages: next, lang: getLang(), moves: movesRef.current, lamp: lampRef.current, demo: demoRef.current, confirm: confirmRef.current, claude: claudeOpts.current }),
       });
       const data = await r.json();
       const sage = data.reply, ok = !!(sage && sage.text);

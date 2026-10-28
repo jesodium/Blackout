@@ -67,7 +67,9 @@ io.on("connection", (socket) => {
   // the operator's agent feed, mirrored to the judge tablets. Relay only — the host
   // browser owns the transcript (localStorage), the server just repeats it.
   socket.on("feed", (e) => { if (isHost(socket)) socket.broadcast.emit("feed", e); });
-  socket.on("sage-confirm-res", (d) => { if (d && d.id) answerConfirm(d.id, !!d.ok); });
+  // a card can hand Claude a shell (sage "claude"), so a read-only tablet's tap
+  // is not an answer — same grant as driving
+  socket.on("sage-confirm-res", (d) => { if (d && d.id && clients.get(socket.id)?.granted) answerConfirm(d.id, !!d.ok); });
 
   socket.on("set-language", (code) => {
     state.currentLanguage = (code === "es") ? "es" : "en";

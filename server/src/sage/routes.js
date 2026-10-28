@@ -1,14 +1,15 @@
 // Sage's http endpoints: the operator's chat turn, a one-shot scan, the BLK
 // editor's helper, the yes/no calls a running workflow makes, and a tape's
 // spoken lines.
-const { app, io } = require("../http");
+const { app, io, localReq } = require("../http");
 const { hasAI, chat } = require("../brain");
 const state = require("../state");
 const recorder = require("../recorder");
 const { eyeParts, grabFrames } = require("../vision");
 const { readingLines } = require("../status");
 const { parseSage } = require("./parse");
-const { askSage, agentLoop, recordFinding, lastImage, LAMP_ASKED } = require("./agent");
+const { askSage, agentLoop, askConfirm, recordFinding, lastImage, LAMP_ASKED } = require("./agent");
+const { delegate, jobLine } = require("./claude");
 const { contextOrDark, armLine, tapeLine, camLine } = require("./context");
 const { CHAT_SYSTEM, BLK_SYSTEM, demoLine, LANG_INSTRUCT, langMsg } = require("./prompts");
 
@@ -27,6 +28,9 @@ app.post("/api/chat", async (req, res) => {
   if (typeof req.body?.demo === "boolean") state.demoMode = req.body.demo;
   const lastSaid = String(msgs[msgs.length - 1]?.content || "");
   const lamp = state.lampAllowed || LAMP_ASKED.test(lastSaid);
+  // Claude runs with a shell, so only the PC's own dashboard can hand it work —
+  // same loopback rule as /api/claude. A tablet's Sage is told she can't.
+  const handoff = localReq(req);
   try {
     const mapped = msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }));
 
@@ -40,9 +44,19 @@ app.post("/api/chat", async (req, res) => {
       ...(moves ? [] : [{ role: "system", content: "MOVE LOCK: your drive, your arm and the runs the crew recorded are all locked out right now — say so in your own words as a scout would (\"I'm parked until the crew unlocks me\"), never by naming these fields. Never offer to move, and never set \"move\", \"arm\" or \"tape\" this turn." }]),
       ...(lamp ? [] : [{ role: "system", content: "LAMP LOCK: your headlamp is held where the crew left it this turn. Set \"led\" to null whatever you think of the light, and don't mention the lamp unless they bring it up." }]),
       ...camLine(),
+      ...(handoff ? jobLine() : [{ role: "system", content: "CLAUDE LOCK: jobs can't be handed to Claude from this device. Set \"claude\" null; if asked for one, say it has to be asked from the crew's PC." }]),
       ...mapped,
     ], { maxTokens: 400, confirm: req.body?.confirm === true, lamp });
     if (!moves && reply) { reply.move = null; reply.arm = null; reply.tape = null; }
+    // The hand-off always asks, in BYPASS too: it is a shell on the crew's PC and
+    // she suggests, never drives. Asked off the main path like the lamp, so her
+    // "handing that to Claude" is spoken now and the card waits on its own.
+    if (reply?.claude && handoff) {
+      const task = reply.claude, opts = { lang, model: req.body?.claude?.model, effort: req.body?.claude?.effort };
+      askConfirm("claude", task).then((ok) => ok && !delegate(task, opts) &&
+        io.emit("claude-job", { id: `${Date.now()}`, task, state: "busy", text: null }));
+    }
+    if (reply && !handoff) reply.claude = null;
     res.json({ reply, steps });
   } catch (err) {
     res.status(500).json({ error: err.message });

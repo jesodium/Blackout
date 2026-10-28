@@ -215,4 +215,4 @@ async function agentLoop(messages, { maxTokens = 400, confirm = false, lamp = fa
   return { reply: sage, steps };
 }
 
-module.exports = { askSage, agentLoop, answerConfirm, recordFinding, lastImage, saveShot, emitStep, LAMP_ASKED };
+module.exports = { askSage, agentLoop, answerConfirm, askConfirm, recordFinding, lastImage, saveShot, emitStep, LAMP_ASKED };
