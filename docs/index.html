@@ -49,6 +49,9 @@ h2 em,h1 em{font-style:normal;color:var(--accent)}
 .hero{padding:160px 0 64px;border:0}
 .hero h1{font-size:clamp(3rem,9vw,6rem);font-weight:400;line-height:.95}
 .hero p.lead{margin:20px 0 32px}
+.hero-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:48px;align-items:center}
+.hero-grid img{width:100%;aspect-ratio:4/5;object-fit:cover;border:1px solid var(--line)}
+@media(max-width:800px){.hero-grid{grid-template-columns:1fr}.hero-grid img{aspect-ratio:4/3}}
 .facts-label{margin-top:64px;font-size:.75rem;letter-spacing:.22em;text-transform:uppercase;color:var(--muted)}
 .facts{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);margin-top:12px}
 .facts div{padding:18px 0;font-size:.85rem;color:var(--muted)}
@@ -137,9 +140,14 @@ footer a{color:var(--muted)}
 
 <section class="hero" id="top">
   <div class="wrap">
-    <h1>Send it into<br>the <em>dark.</em></h1>
-    <p class="lead">A robot that explores dangerous archaeological sites so people don't have to. Built by three students from Panama.</p>
-    <a class="btn primary" href="#sponsor">Help us get to Puerto Rico →</a>
+    <div class="hero-grid">
+      <div>
+        <h1>Send it into<br>the <em>dark.</em></h1>
+        <p class="lead">A robot that explores dangerous archaeological sites so people don't have to. Built by three students from Panama.</p>
+        <a class="btn primary" href="#sponsor">Help us get to Puerto Rico →</a>
+      </div>
+      <img src="img/cave_demo.jpg" alt="Blackout's light shining into a cave tunnel">
+    </div>
     <p class="facts-label">WRO 2026 International Final · Puerto Rico · 7 Dec</p>
     <div class="facts" id="timer">
       <div><b>--</b>days</div>
