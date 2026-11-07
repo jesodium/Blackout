@@ -1,7 +1,7 @@
 // ---- voice commands ----
 const norm = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
   .replace(/[\u00a1\u00bf!?]/g, "").replace(/\s+/g, " ").trim();
-const DRIVE_PWM = 140, DRIVE_MS = 501;
+const DRIVE_PWM = 140, SPIN_PWM = 255, DRIVE_MS = 501; // below 255 the rover doesn't spin
 
 const ORDER = /^(?:sage[\s,]*)?(?:te (?:lo )?ordeno|te pido|orden|i order you|order)(?:\s+que)?\b\s*(.+)/;
 const LEAD = "^(?:sage[\\s,]*)?(?:please\\s+|por favor\\s+)?(?:(?:can|could) you\\s+)?" +
@@ -23,8 +23,8 @@ const DIRS = [
     cmd: (ms) => `drv,back,${DRIVE_PWM},${ms}`,  ackKey: "sage.backAck" },
   { w: "forward|ahead|straight|adelante|delante|avanz\\w*|avanc\\w*",
     cmd: (ms) => `drv,fwd,${DRIVE_PWM},${ms}`,   ackKey: "sage.fwdAck" },
-  { w: "left|izquierda",  cmd: (ms) => `drv,left,${DRIVE_PWM},${ms}`,  ackKey: "sage.leftAck" },
-  { w: "right|derecha",   cmd: (ms) => `drv,right,${DRIVE_PWM},${ms}`, ackKey: "sage.rightAck" },
+  { w: "left|izquierda",  cmd: (ms) => `drv,left,${SPIN_PWM},${ms}`,  ackKey: "sage.leftAck" },
+  { w: "right|derecha",   cmd: (ms) => `drv,right,${SPIN_PWM},${ms}`, ackKey: "sage.rightAck" },
 ].map(d => ({ ...d, bare: new RegExp(`\\b(?:${d.w})\\b`), re: drv(d.w) }));
 
 // A trigger with `tape` plays a recorded run straight from here — no model round

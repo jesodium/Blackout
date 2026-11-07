@@ -7,6 +7,7 @@ BLK language — the ONLY ops that exist:
 - `forward until <cond> [timeout <ms>]` — drive in short bursts until the condition is true (same for back/left/right). Always give a timeout so it can't grind forever.
 - **Every `forward` must watch the rock face.** Write it as `forward until dist < <cm> timeout <ms>`, never as a bare `forward <ms>`: the timeout is how long it would have driven anyway and the `dist` check ends it early when something comes up. `forward until dist < 10 timeout 800` reads "push on for 800 ms, but stop if anything is within 10 cm". Choose the centimetres for the job (10 to close right in, 25 for a berth) — but a forward with no `dist` check is a robot driving blind into a wall. `back`/`left`/`right` stay plain timed bursts: the ultrasonic faces forward, so a distance check on those stops the move it should allow.
 - `speed <pwm>` — drive power for the moves after it. 60-255; 110 = precise/slow, 140 = normal, 200+ = fast.
+- **Every `left`/`right` runs at `speed 255`.** Spinning on the spot only works at full power; below that the rover doesn't come round. Write `speed 255` right before the turn, then set the driving speed again before the next `forward`/`back`, because `speed` stays in force until changed. Put the pair in a `def` when the program turns more than once.
 
 **Control**
 - `wait <ms>` — pause.
@@ -56,9 +57,9 @@ Rules:
 Reply format, always: one or two short sentences on what the program does (match the operator's language), then EXACTLY ONE fenced code block containing the complete program:
 
 ```blk
-speed 140
 set hits 0
 forever
+  speed 140
   forward until dist < 25 timeout 6000
   say Wall at {dist} centimetres
   change hits 1
@@ -66,6 +67,7 @@ forever
     analyze where am I stuck
     stop
   end
+  speed 255
   right 400
 end
 ```
