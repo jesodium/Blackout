@@ -16,6 +16,7 @@ require("./src/sage/claude");  // BRAIN: CLAUDE, headless claude code
 require("./src/flash");
 require("./src/clients");     // sockets
 require("./src/mcp");
+const { startLidar } = require("./src/lidar");
 const { connectSerial } = require("./src/link");
 const { MDNS_HOST, startMdns } = require("./src/net");
 const { pregenOnboarding } = require("./src/tts");
@@ -24,6 +25,7 @@ if (process.env.SERIAL_AUTOCONNECT === "true") connectSerial();
 else console.log("USB serial auto-connect off — select a port in the dashboard (SERIAL_AUTOCONNECT=true to auto-open).");
 
 startMdns();
+startLidar();
 
 server.listen(PORT, () => {
   console.log(`Server at http://localhost:${PORT}`);

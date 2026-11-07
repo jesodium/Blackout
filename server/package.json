@@ -35,6 +35,7 @@
     "test:sonar": "node test/sonar.mjs",
     "test:split": "node test/split.mjs",
     "test:camusb": "node src/camserial.js --selftest",
+    "test:lidar": "node src/lidar.js --selftest",
     "test:mcp": "node mcp.mjs --selftest",
     "mcp": "node mcp.mjs"
   },

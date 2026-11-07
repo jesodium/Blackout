@@ -6,6 +6,7 @@ const { execFile, execFileSync, spawn } = require("child_process");
 const { app, io } = require("./http");
 const { disconnectSerial } = require("./link");
 const { closeUsbCam } = require("./cam");
+const { heldPort } = require("./lidar");
 
 const ROOT_DIR = path.join(__dirname, "..", "..");
 let flashing = false;
@@ -45,6 +46,7 @@ app.get("/api/flash/boards", (req, res) => {
     }
 
     for (const { addr, fqbns } of ports) {
+      if (addr === heldPort()) continue;   // same usb adapter as a cam, but it's no board
       const hit = BOARD_PROFILES.find(p => fqbns.length
         ? fqbns.some(f => f.startsWith(p.fqbnPrefix))
         : p.ports.some(pat => addr.includes(pat)));

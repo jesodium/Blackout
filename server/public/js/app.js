@@ -17,7 +17,7 @@ import { FPV_ZOOMS, FpvOverlay, FpvSage } from "./ui/fpv.js";
 import { JudgeView, SensorStrip } from "./ui/judge.js";
 import { appendLog } from "./ui/logs.js";
 import { BlePickerModal, DevicesModal, Toasts, mcpWhat } from "./ui/modals.js";
-import { CamBox, ThreeDeeBox } from "./ui/panels.js";
+import { CamBox, LidarBox, ThreeDeeBox } from "./ui/panels.js";
 import { Replay, ReplayList } from "./ui/replay.js";
 import { ReportModal, buildReport } from "./ui/report.js";
 import { Split } from "./ui/split.js";
@@ -178,6 +178,9 @@ function App() {
   const [mirrorFeed, setMirrorFeed] = useState([]);
 
   const socketRef = useRef(null);
+  // 5 scans a second go straight to the pane's canvas, not through App's state
+  const lidarScanRef = useRef(null);
+  const [lidar, setLidar] = useState(null);
   const ttsRef = useRef(localStorage.getItem("tts") !== "false");
   const lastObstacle = useRef(0);
   const lastDist = useRef(0);
@@ -260,6 +263,8 @@ function App() {
         return me.granted;
       });
     });
+    socket.on("lidar", setLidar);
+    socket.on("lidar-scan", d => lidarScanRef.current?.(d));
     socket.on("sensor-data", d => {
       if (!d) return;
       const lat = d.timestamp ? Math.max(0, Date.now() - d.timestamp) : NaN;
@@ -1061,7 +1066,11 @@ function App() {
         <main class="cockpit" id="sensors">
           <div class="col-main">
             <div class="stage-row">
-              <${ThreeDeeBox} packet=${view} onLog=${addLog} />
+              <div class="stage-side">
+                <${ThreeDeeBox} packet=${view} onLog=${addLog} />
+                <${Split} id="lidar" axis="y" />
+                <${LidarBox} status=${lidar} scanRef=${lidarScanRef} />
+              </div>
               <${Split} id="cam" />
               <${CamBox} packet=${view} onFpv=${() => toggleFpv(true)} />
             </div>

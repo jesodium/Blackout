@@ -127,12 +127,12 @@ function ThreeDeeBox({ packet, onLog }) {
     <section class="zone stage-3d reveal" aria-labelledby="stage3d-h">
       <div class="zone-head">
         <h2 class="zone-title" id="stage3d-h">${t("stage.title")}</h2>
+        <span class="tag">${t(packet ? "tag.gyroLocked" : "tag.gyroStandby")}</span>
       </div>
       <div class="stage-body">
         <div class="stage-view stage-view--3d">
           <canvas id="vis-canvas" ref=${canvasRef}></canvas>
           ${failed && html`<div class="viewport-fallback">${t("view.unavailable")}<br/><small>${failed} — ${t("view.liveBelow")}</small></div>`}
-          <span class="stage-chip">${t(packet ? "tag.gyroLocked" : "tag.gyroStandby")}</span>
           <div class="hud-cams" role="group" aria-label=${t("cam.group")}>
             ${cams.map(c => html`<button key=${c} type="button"
               class=${"hud-btn" + (cam === c ? " is-active" : "")}
@@ -202,4 +202,66 @@ function MotorDebug({ onCmd, enabled }) {
     </div>`;
 }
 
-export { CamBox, Head, MotorDebug, Reading, ThreeDeeBox, Trends };
+// outer ring, in metres. Zooms out at once so nothing falls off the edge, and in
+// only with room to spare, or a wall sitting on a step makes the rings breathe.
+const LIDAR_RANGES = [1, 2, 4, 8, 16];
+function lidarRange(scan, cur) {
+  const far = scan.filter(Boolean).sort((a, b) => a - b);
+  if (!far.length) return cur;
+  const m = far[Math.floor(far.length * 0.95)] / 1000;
+  const fit = LIDAR_RANGES.find(r => m <= r) ?? LIDAR_RANGES.at(-1);
+  if (fit >= cur) return fit;
+  return m <= fit * 0.8 ? fit : cur;
+}
+
+function LidarBox({ status, scanRef }) {
+  const canvasRef = useRef(null);
+  const rangeRef = useRef(LIDAR_RANGES[2]);
+  const [range, setRange] = useState(rangeRef.current);
+  const live = status?.state === "live";
+
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!live) { cv.getContext("2d").clearRect(0, 0, cv.width, cv.height); return; }
+    scanRef.current = (scan) => {
+      const r = lidarRange(scan, rangeRef.current);
+      if (r !== rangeRef.current) { rangeRef.current = r; setRange(r); }
+      const dpr = window.devicePixelRatio || 1;
+      const w = cv.clientWidth * dpr, h = cv.clientHeight * dpr;
+      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+      const ctx = cv.getContext("2d");
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = getComputedStyle(cv).color;
+      // the rings' 96 of 200: same circle, or a wall reads at the wrong distance
+      const px = (Math.min(w, h) * 0.48) / (r * 1000);
+      const dot = 1.5 * dpr;
+      scan.forEach((mm, deg) => {
+        if (!mm || mm > r * 1000) return;
+        const a = (deg * Math.PI) / 180;   // 0 is straight up, clockwise, on both lidars
+        ctx.fillRect(w / 2 + Math.sin(a) * mm * px - dot / 2, h / 2 - Math.cos(a) * mm * px - dot / 2, dot, dot);
+      });
+    };
+    return () => { scanRef.current = null; };
+  }, [live]);
+
+  const tag = live ? `${status.model} · ${range} m` : t("lidar." + (status?.state || "none"));
+  return html`
+    <section class="zone stage-lidar reveal" aria-labelledby="lidar-h">
+      <div class="zone-head">
+        <h2 class="zone-title" id="lidar-h">${t("zone.lidar")}</h2>
+        <span class="tag" title=${status?.port || ""}>${tag}</span>
+      </div>
+      <div class="stage-body">
+        <div class="stage-view lidar-scope">
+          <svg viewBox="0 0 200 200" aria-hidden="true">
+            <circle cx="100" cy="100" r="48" /><circle cx="100" cy="100" r="96" />
+            ${live && html`<path d="M100 4v7" />`}
+            <circle class="lidar-dot" cx="100" cy="100" r="2" />
+          </svg>
+          <canvas ref=${canvasRef}></canvas>
+        </div>
+      </div>
+    </section>`;
+}
+
+export { CamBox, Head, LidarBox, MotorDebug, Reading, ThreeDeeBox, Trends };

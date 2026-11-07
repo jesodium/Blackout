@@ -378,7 +378,25 @@ input[type="range"]:focus { box-shadow: none; }
 .stage-row { display: flex; flex: 1; min-height: 0; gap: var(--gap); }
 /* the camera is what the operator actually flies on, so it gets the width; the
    3d attitude view is a glance, not a picture. */
-.stage-3d { flex: 1; min-width: 0; }
+.stage-side { flex: 0.8; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--gap); }
+.stage-3d { flex: 1; min-width: 0; min-height: 0; }
+.stage-lidar { flex: 0 0 58%; min-height: 0; }
+.lidar-scope { padding: 18px; }
+.lidar-scope svg { width: 100%; height: 100%; display: block; fill: none; stroke: var(--line); }
+.lidar-scope circle, .lidar-scope path { vector-effect: non-scaling-stroke; }
+.lidar-scope canvas { position: absolute; inset: 18px; width: calc(100% - 36px); height: calc(100% - 36px); color: var(--ink); }
+.lidar-scope .lidar-dot { fill: var(--ink-3); stroke: none; }
+/* the live view is a glance now: one quiet row of views, nothing stacked over the rover */
+.stage-3d .hud-cams { top: 8px; left: 8px; flex-direction: row; gap: 2px; }
+.stage-3d .hud-btn { padding: 4px 6px; font-size: 8.5px; letter-spacing: 0.08em; background: none; border-color: transparent; }
+.stage-3d .hud-btn.is-active { color: var(--ink); background: none; border-color: transparent; }
+.stage-3d .compass { top: 6px; right: 8px; }
+.stage-3d .compass svg { width: 28px; height: 28px; }
+.stage-3d .compass span { display: none; }
+.stage-3d .hud-tele { left: 8px; right: 8px; bottom: 6px; flex-wrap: nowrap; justify-content: space-between; gap: 4px; background: none; border: none; }
+.stage-3d .hud-tele div { gap: 4px; }
+.stage-3d .hud-tele dt { font-size: 7.5px; letter-spacing: 0.1em; }
+.stage-3d .hud-tele dd { font-size: 10px; white-space: nowrap; }
 .stage-cam { flex: 1.8; min-width: 0; }
 .stage-body { position: relative; flex: 1; min-height: 0; background: var(--inset); }
 
@@ -1347,7 +1365,10 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   .split { display: none; }
   .col-main, .col-rail { flex: none; }
   .stage-row { flex-direction: column; flex: none; }
+  .stage-side { flex: none; }
   .stage-3d { flex: none; }
+  .stage-lidar { flex: none; }
+  .stage-lidar .stage-body { height: min(28dvh, 220px); flex: none; }
   .stage-3d .stage-body { height: min(28dvh, 220px); flex: none; }
   .stage-cam { flex: none; }
   .stage-cam .stage-body { height: min(44dvh, 440px); flex: none; }
@@ -1409,7 +1430,7 @@ label.chip.is-off { opacity: 0.4; cursor: not-allowed; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }
 
-.is-fpv .topbar, .is-fpv .update-bar, .is-fpv .stage-3d, .is-fpv .drive, .is-fpv .drawer { display: none; }
+.is-fpv .topbar, .is-fpv .update-bar, .is-fpv .stage-side, .is-fpv .drive, .is-fpv .drawer { display: none; }
 .is-fpv .cockpit { display: block; padding: 0; overflow: hidden; }
 .is-fpv .stage-cam { position: fixed; inset: 0; z-index: 0; border: none; border-radius: 0; background: #000; }
 .is-fpv .stage-cam .zone-head { display: none; }

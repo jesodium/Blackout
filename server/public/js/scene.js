@@ -14,7 +14,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   scene.background = new THREE.Color(0x060607);
   scene.fog = new THREE.Fog(0x060607, 7, 14);
 
-  const cam = { x: 3.2, y: 2.4, z: 4.8, tx: 3.2, ty: 2.4, tz: 4.8 };
+  const cam = { x: 1, y: 0.75, z: 1.5, tx: 1, ty: 0.75, tz: 1.5 };
   const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 30);
   camera.position.set(cam.x, cam.y, cam.z);
   camera.lookAt(0, 0.2, 0);
@@ -80,10 +80,10 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   scene.add(wall);
 
   const presets = {
-    isometric: { x: 3.2, y: 2.4, z: 4.8 },
-    front: { x: 0, y: 0.7, z: 3.4 },
-    top: { x: 0.01, y: 6.2, z: 0.01 },
-    side: { x: 4.4, y: 0.6, z: 0 },
+    isometric: { x: 1, y: 0.75, z: 1.5 },
+    front: { x: 0, y: 0.5, z: 1.9 },
+    top: { x: 0.01, y: 2.4, z: 0.01 },
+    side: { x: 2.1, y: 0.5, z: 0 },
   };
 
   const state = {
@@ -168,7 +168,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
       cam.x += (cam.tx - cam.x) * 0.06; cam.y += (cam.ty - cam.y) * 0.06; cam.z += (cam.tz - cam.z) * 0.06;
       camera.position.set(cam.x, cam.y, cam.z);
     }
-    camera.lookAt(0, 0.22, 0);
+    camera.lookAt(0, 0.42, 0);
 
     if (state.rover && !isNaN(state.tRoll)) {
       state.roll += (state.tRoll - state.roll) * 0.1;
@@ -217,6 +217,9 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
   resize();
   setTimeout(resize, 120); setTimeout(resize, 420);
   window.addEventListener("resize", resize);
+  // a split drag resizes the pane without the window firing anything
+  const paneWatch = new ResizeObserver(resize);
+  if (canvas.parentElement) paneWatch.observe(canvas.parentElement);
 
   return {
     bindCompass(el) { compassEl = el; },
@@ -246,6 +249,7 @@ export function createRoverScene(canvas, { onLog = () => {} } = {}) {
     dispose() {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
+      paneWatch.disconnect();
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
       renderer.dispose();
