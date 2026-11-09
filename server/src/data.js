@@ -3,7 +3,7 @@
 // nothing here caches.
 const fs = require("fs");
 const path = require("path");
-const { app } = require("./http");
+const { app, localReq } = require("./http");
 const { armMovesFor } = require("./sage/parse");
 
 const DATA = path.join(__dirname, "..", "data");
@@ -124,4 +124,42 @@ app.delete("/api/blk/:name", (req, res) => {
   res.json({ ok: true });
 });
 
-module.exports = { readArmMoves, readTapes };
+// ---- missions ----
+// A mission is a folder of chats: its brief, the notes Sage keeps across every
+// chat in it ("remember"), and the chats themselves. Lived in the host browser's
+// localStorage until 2026-11-08 -- one browser, 12 messages, no memory between
+// chats. The host dashboard still owns the content and writes a mission back
+// whole when it changes; the server reads it to hand Sage the folder's memory.
+// Loopback only, same rule as /api/mission: a tablet mirrors the feed, it doesn't
+// get the crew's chat history.
+const MISSION_DIR = path.join(DATA, "missions");
+fs.mkdirSync(MISSION_DIR, { recursive: true });
+
+const missionPath = (id) => (/^m\d{6,16}$/.test(String(id)) ? path.join(MISSION_DIR, id + ".json") : null);
+function readMission(id) {
+  const p = missionPath(id);
+  try { return p ? JSON.parse(fs.readFileSync(p, "utf8")) : null; } catch { return null; }
+}
+
+app.get("/api/missions", (req, res) => {
+  if (!localReq(req)) return res.status(403).json({ error: "loopback only" });
+  const all = fs.readdirSync(MISSION_DIR).filter(f => f.endsWith(".json")).map(f => readMission(f.slice(0, -5))).filter(Boolean);
+  res.json(all.sort((a, b) => (a.created || 0) - (b.created || 0)));
+});
+
+app.put("/api/missions/:id", (req, res) => {
+  if (!localReq(req)) return res.status(403).json({ error: "loopback only" });
+  const p = missionPath(req.params.id), m = req.body;
+  if (!p || !m || m.id !== req.params.id || !Array.isArray(m.chats)) return res.status(400).json({ error: "need {id, chats: []}" });
+  fs.writeFileSync(p, JSON.stringify(m));
+  res.json({ ok: true });
+});
+
+app.delete("/api/missions/:id", (req, res) => {
+  if (!localReq(req)) return res.status(403).json({ error: "loopback only" });
+  const p = missionPath(req.params.id);
+  if (p && fs.existsSync(p)) fs.unlinkSync(p);
+  res.json({ ok: true });
+});
+
+module.exports = { readArmMoves, readTapes, readMission };

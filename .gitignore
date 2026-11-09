@@ -89,3 +89,5 @@ mw45/
 # ── Python / tools ──────────────────────────────────────
 __pycache__/
 freerouting.jar
+server/data/missions/
+electron/package-lock.local.json

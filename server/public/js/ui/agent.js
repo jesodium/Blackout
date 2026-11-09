@@ -22,6 +22,7 @@ const TOOLS = {
   ask:      { icon: "mic",    label: "tool.ask" },
   analysis: { icon: "camera", label: "tool.analysis" },
   claude:   { icon: "step",   label: "tool.claude" },
+  remember: { icon: "step",   label: "tool.remember" },
 };
 
 // One card for every yes/no Sage puts in front of the operator: a drive move, an
@@ -116,10 +117,9 @@ function Feed({ feed, ai, onAsk, onAnswer }) {
     </div>`;
 }
 
-function Agent({ ai, tts, ttsProv, hasDeepgram, confirm, onConfirm, brain, onBrain, claudeModel, onModel, claudeEffort, onEffort, packet, connected, speaking, chats, activeChat, feed, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onToggleTtsProvider, onMock, onAsk, onReport, onAnswer }) {
+function Agent({ ai, tts, ttsProv, hasDeepgram, confirm, onConfirm, brain, onBrain, claudeModel, onModel, claudeEffort, onEffort, packet, connected, speaking, missions, mission, onNewMission, onSelectMission, onDeleteMission, onForget, chats, activeChat, feed, onNewChat, onSelectChat, onDeleteChat, onBrief, onSpeak, onAnalyze, onToggleTts, onToggleTtsProvider, onMock, onAsk, onReport, onAnswer }) {
   const intent = deriveIntent(ai, packet, connected);
   const v = assess(packet);
-  const briefed = activeChat && activeChat.mission;
   const claude = brain === "claude";
   const [draft, setDraft] = useState("");
   const send = (e) => {
@@ -139,10 +139,18 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, confirm, onConfirm, brain, onBra
       style=${{ "--agent-c": intent.color }} aria-labelledby="agent-h">
       <${Head} title=${t("zone.agent")} tag=${t(ai.badge)} />
       <div class="agent-body">
-        ${!activeChat
-          ? html`<${ChatSelect} chats=${chats} onNew=${onNewChat} onSelect=${onSelectChat} onDelete=${onDeleteChat} />`
-          : !briefed
-          ? html`<${Briefing} onBrief=${onBrief} onBack=${() => onSelectChat("")} onSpeak=${onSpeak} busy=${ai.analyzing} />`
+        ${!mission
+          ? html`<${ChatSelect} head=${t("mission.list")} items=${missions} empty=${t("mission.empty")} newLabel=${t("mission.new")}
+              sub=${m => `${t("mission.chats", { n: (m.chats || []).length })} · ${t(m.brief ? "chat.briefed" : "chat.notBriefed")}`}
+              onNew=${onNewMission} onSelect=${onSelectMission} onDelete=${onDeleteMission} delLabel=${t("mission.delete")} />`
+          : !mission.brief
+          ? html`<${Briefing} onBrief=${onBrief} onBack=${() => onSelectMission("")} onSpeak=${onSpeak} busy=${ai.analyzing} />`
+          : !activeChat
+          ? html`<${ChatSelect} head=${mission.title} items=${chats} empty=${t("chat.empty")} newLabel=${t("chat.new")}
+              sub=${c => t("mission.msgs", { n: (c.messages || []).length })}
+              onNew=${onNewChat} onSelect=${onSelectChat} onDelete=${onDeleteChat} delLabel=${t("chat.delete")} onBack=${() => onSelectMission("")}>
+              <${Notes} mission=${mission} onForget=${onForget} />
+            </${ChatSelect}>`
           : html`<div class="term">
         <div class="term-bar">
           <button type="button" class="term-back" onClick=${() => onSelectChat("")} title=${t("brief.sessions")}>←</button>
@@ -212,23 +220,44 @@ function Agent({ ai, tts, ttsProv, hasDeepgram, confirm, onConfirm, brain, onBra
     </section>`;
 }
 
-function ChatSelect({ chats, onNew, onSelect, onDelete }) {
+// one list for both levels: the missions, and the chats inside one
+function ChatSelect({ head, items, sub, empty, newLabel, delLabel, onNew, onSelect, onDelete, onBack, children }) {
   return html`
     <div class="chat-select">
-      <div class="mission-head"><span class="mission-k">${t("chat.sessions")}</span></div>
-      ${chats.length === 0
-        ? html`<p class="chat-empty">${t("chat.empty")}</p>`
+      <div class="mission-head">
+        ${onBack ? html`<button type="button" class="term-back" onClick=${onBack} title=${t("mission.list")}>←</button>` : null}
+        <span class="mission-k">${head}</span>
+      </div>
+      ${children}
+      ${items.length === 0
+        ? html`<p class="chat-empty">${empty}</p>`
         : html`<div class="chat-list">
-            ${chats.slice().reverse().map((c, i) => html`
+            ${items.slice().reverse().map(c => html`
               <div key=${c.id} class="chat-item">
                 <button type="button" class="chat-item-main" onClick=${() => onSelect(c.id)}>
                   <span class="chat-item-title">${c.title || t("chat.untitled")}</span>
-                  <span class="chat-item-sub">${c.mission ? t("chat.briefed") : t("chat.notBriefed")}</span>
+                  <span class="chat-item-sub">${sub(c)}</span>
                 </button>
-                <button type="button" class="chat-del" onClick=${() => onDelete(c.id)} title=${t("chat.delete")} aria-label=${t("chat.delete")}>×</button>
+                <button type="button" class="chat-del" onClick=${() => onDelete(c.id)} title=${delLabel} aria-label=${delLabel}>×</button>
               </div>`)}
           </div>`}
-      <button type="button" class="btn btn--primary chat-new" onClick=${onNew}>${t("chat.new")}</button>
+      <button type="button" class="btn btn--primary chat-new" onClick=${onNew}>${newLabel}</button>
+    </div>`;
+}
+
+// the folder's brief and what Sage noted in it — every chat in the folder reads
+// these, so the operator gets to strike a wrong one
+function Notes({ mission, onForget }) {
+  const notes = mission.memory || [];
+  return html`
+    <div class="mission-notes">
+      <p class="mission-brief">${mission.brief}</p>
+      <span class="mission-k">${t("mission.notes")}</span>
+      ${notes.length === 0 ? html`<p class="note-empty">${t("mission.notesEmpty")}</p>`
+        : notes.map(n => html`<div key=${n} class="note">
+            <span>${n}</span>
+            <button type="button" class="chat-del" onClick=${() => onForget(n)} title=${t("mission.forget")} aria-label=${t("mission.forget")}>×</button>
+          </div>`)}
     </div>`;
 }
 

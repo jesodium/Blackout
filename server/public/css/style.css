@@ -818,7 +818,13 @@ input[type="range"]:focus { box-shadow: none; }
 .briefing .mission-input { height: clamp(52px, 8dvh, 84px); }
 
 .chat-select { padding: 10px 16px 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
-.mission-head { display: flex; align-items: center; justify-content: space-between; }
+.mission-head { display: flex; align-items: center; gap: 8px; }
+.mission-notes { display: flex; flex-direction: column; gap: 6px; max-height: 38%; overflow-y: auto; }
+.mission-brief { margin: 0; font: 400 12.5px/1.4 var(--grotesk); color: var(--ink-2); }
+.note { display: flex; align-items: center; gap: 6px; font: 400 12px/1.35 var(--grotesk); }
+.note span { flex: 1; }
+.note .chat-del { width: 22px; height: 22px; }
+.note-empty { margin: 0; font: 400 11.5px var(--grotesk); color: var(--ink-3); }
 .chat-empty { margin: auto 0; text-align: center; color: var(--ink-3); font: 400 13px var(--grotesk); }
 .chat-list { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; overflow-y: auto; }
 .chat-item { display: flex; align-items: stretch; gap: 6px; }

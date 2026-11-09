@@ -17,7 +17,7 @@ const ES = {
   claro: "clear", despejado: "clear", precaucion: "caution",
   "precauci\u00f3n": "caution", peligro: "danger",
   camara: "camera", "c\u00e1mara": "camera", sensores: "sensors",
-  analizar: "analyze",
+  analizar: "analyze", recordar: "remember",
 };
 const deEs = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [ES[k.toLowerCase()] || k, v]));
 
@@ -176,10 +176,11 @@ function parseSage(raw, armMoves, tapes) {
         arm: parseArm(o.arm, armMovesFor(armMoves, "sage_can_use"), armMoves),
         tape: parseTape(o.tape, armMovesFor(tapes, "sage_can_use"), tapes),
         claude: parseClaude(o.claude),
+        remember: parseClaude(o.remember)?.slice(0, 200) ?? null,
       };
     } catch { console.warn("sage: reply is not valid json (cut off?) — salvaging text"); }
   }
-  return { text: start !== -1 ? salvage(s) : s, status: null, action: null, tool: null, toolArg: null, led: null, finding: null, snapshot: null, move: null, arm: null, tape: null, claude: null };
+  return { text: start !== -1 ? salvage(s) : s, status: null, action: null, tool: null, toolArg: null, led: null, finding: null, snapshot: null, move: null, arm: null, tape: null, claude: null, remember: null };
 }
 
 module.exports = { parseSage, parseClaude, snapSummary, askFor, wantsTool, SAGE_TOOLS, parseArm, parseTape, armMovesFor, ARM_REPEAT_MS };

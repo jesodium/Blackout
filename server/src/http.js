@@ -14,7 +14,8 @@ const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-app.use(express.json());
+// a mission folder goes back whole (every chat's transcript), past the 100kb default
+app.use(express.json({ limit: "8mb" }));
 app.use(express.text({ type: "text/plain" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
 

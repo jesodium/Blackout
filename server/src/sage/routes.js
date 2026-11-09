@@ -10,12 +10,12 @@ const { readingLines } = require("../status");
 const { parseSage } = require("./parse");
 const { askSage, agentLoop, askConfirm, recordFinding, lastImage, LAMP_ASKED } = require("./agent");
 const { delegate, jobLine } = require("./claude");
-const { contextOrDark, armLine, tapeLine, camLine } = require("./context");
+const { contextOrDark, armLine, tapeLine, camLine, folderLine } = require("./context");
 const { CHAT_SYSTEM, BLK_SYSTEM, demoLine, LANG_INSTRUCT, langMsg } = require("./prompts");
 
 app.post("/api/chat", async (req, res) => {
   if (!hasAI) return res.status(503).json({ error: "AI key not set" });
-  const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-12) : [];
+  const msgs = Array.isArray(req.body?.messages) ? req.body.messages.slice(-30) : [];
   if (!msgs.length) return res.status(400).json({ error: "messages required" });
   const lang = LANG_INSTRUCT[req.body?.lang] ? req.body.lang : "en";
 
@@ -39,6 +39,7 @@ app.post("/api/chat", async (req, res) => {
       ...demoLine(),
       ...langMsg(lang),
       { role: "system", content: contextOrDark(state.freshData()) },
+      ...folderLine(req.body?.mission, req.body?.chat),
       ...(moves ? armLine() : []),
       ...(moves ? tapeLine() : []),
       ...(moves ? [] : [{ role: "system", content: "MOVE LOCK: your drive, your arm and the runs the crew recorded are all locked out right now — say so in your own words as a scout would (\"I'm parked until the crew unlocks me\"), never by naming these fields. Never offer to move, and never set \"move\", \"arm\" or \"tape\" this turn." }]),

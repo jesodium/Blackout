@@ -2,7 +2,7 @@
 // allowed to reach for (recorded arm takes, tapes, the gripper cam).
 const state = require("../state");
 const { readingLines, trendLine } = require("../status");
-const { readArmMoves, readTapes } = require("../data");
+const { readArmMoves, readTapes, readMission } = require("../data");
 const { camCount, getLed } = require("../vision");
 const { armMovesFor } = require("./parse");
 
@@ -51,7 +51,28 @@ function camLine() {
     "NO GRIPPER EYE: this rig has only the forward camera. Never set \"tool\" to \"armcam\". If the operator asks about the arm camera, say once, plainly, that you have no eye down on the arm — then drop it and never mention it again." }];
 }
 
+// The mission folder this chat lives in: what she noted, what was found and what
+// the other chats in it were about. This is her memory across chats -- each chat
+// still only carries its own last messages. Capped so a long mission can't eat
+// the prompt: the newest notes, findings and chats win.
+const clip = (s, n) => (s = String(s || "").replace(/\s+/g, " ").trim()).length > n ? s.slice(0, n) + "…" : s;
+function folderLine(missionId, chatId) {
+  const m = readMission(missionId);
+  if (!m) return [];
+  const notes = (m.memory || []).slice(-30);
+  const finds = (m.chats || []).flatMap((c) => c.findings || []).slice(-15);
+  const others = (m.chats || []).filter((c) => c.id !== chatId && c.messages?.length).slice(-6);
+  const out = [`MISSION FOLDER "${clip(m.title, 60)}" — this chat is one of several in it. Use what follows as your memory; it's yours, never read it out as a list.`];
+  if (notes.length) out.push(`Notes you kept in this mission:\n${notes.map((n) => `- ${clip(n, 200)}`).join("\n")}`);
+  if (finds.length) out.push(`Found so far:\n${finds.map((f) => `- ${clip(f.text, 120)}`).join("\n")}`);
+  if (others.length) out.push(`Other chats in this mission:\n${others.map((c) => {
+    const last = c.messages.slice(-2).map((x) => `${x.role === "user" ? "operator" : "you"}: ${clip(x.content, 140)}`).join(" / ");
+    return `- "${clip(c.title, 40)}" — ${last}`;
+  }).join("\n")}`);
+  return [{ role: "system", content: out.join("\n\n") }];
+}
+
 // what every chat-shaped turn says when there is no packet to read
 const contextOrDark = (d) => (d ? buildChatContext(d) : "No live readings right now — running dark.");
 
-module.exports = { buildChatContext, buildAiPrompt, contextOrDark, armLine, tapeLine, camLine };
+module.exports = { buildChatContext, buildAiPrompt, contextOrDark, armLine, tapeLine, camLine, folderLine };

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { compile as blkCompile, guard as blkGuard, parse as blkParse, serialize as blkSerialize } from "./blk.mjs";
@@ -25,6 +25,9 @@ import { Topbar } from "./ui/topbar.js";
 import { UpdateBar, UpdateModal } from "./ui/update.js";
 
 // the PC the server runs on (Electron loads localhost too) — not a LAN tablet
+// messages a chat keeps and sends each turn; the folder's notes carry the rest
+const KEEP_MSGS = 30;
+const clip = (s, n) => (s.length > n ? s.slice(0, n) + "…" : s);
 const LOCAL_HOST = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
 
 // ---- app ----
@@ -95,9 +98,23 @@ function App() {
     return () => clearTimeout(id);
   }, [granted]);
 
-  const [chats, setChats] = useState(() => { try { return JSON.parse(localStorage.getItem("chats") || "[]"); } catch { return []; } });
+  // Missions are folders of chats, kept server-side (data/missions/) so Sage reads
+  // the folder's notes, findings and other chats on every turn. setChats acts on
+  // the chats of EVERY folder: each update maps by chat id, so a reply lands in
+  // its own folder even if the operator switched missions while she was thinking.
+  const [missions, setMissions] = useState([]);
+  const [missionId, setMissionId] = useState(() => localStorage.getItem("activeMission") || "");
   const [activeId, setActiveId] = useState(() => localStorage.getItem("activeChat") || "");
-  const activeChat = chats.find(c => c.id === activeId) || null;
+  const mission = missions.find(m => m.id === missionId) || null;
+  const chats = mission?.chats || NO_FEED;
+  const rawChat = chats.find(c => c.id === activeId) || null;
+  // the brief belongs to the folder; every chat in it reads it as chat.mission
+  const activeChat = useMemo(() => rawChat && { ...rawChat, mission: mission.brief || "", missionId: mission.id }, [rawChat, mission]);
+  const setChats = useCallback((fn) => setMissions(ms => ms.map(m => {
+    const cs = m.chats || [], next = fn(cs);
+    return next.length === cs.length && next.every((c, i) => c === cs[i]) ? m : { ...m, chats: next };
+  })), []);
+  const patchMission = useCallback((id, fn) => setMissions(ms => ms.map(m => m.id === id ? { ...m, ...fn(m) } : m)), []);
   const activeRef = useRef(null);
   useEffect(() => { activeRef.current = activeChat; }, [activeChat]);
 
@@ -163,7 +180,45 @@ function App() {
   const demoRef = useRef(demo);
   demoRef.current = demo;
   const toggleDemo = useCallback(() => setDemo(d => { localStorage.setItem("sageDemo", String(!d)); return !d; }), []);
-  useEffect(() => { localStorage.setItem("chats", JSON.stringify(chats)); }, [chats]);
+  // what the server last got, by id: only a folder that changed is written back,
+  // one write at a time so a slow PUT can't land after a newer one
+  const savedRef = useRef(null), saveChain = useRef(Promise.resolve());
+  const saveQueue = (fn) => { saveChain.current = saveChain.current.then(fn).catch(e => console.error("missions:", e.message)); };
+  useEffect(() => {
+    if (VIEWER) return;
+    fetch("/api/missions").then(r => (r.ok ? r.json() : [])).then(ms => {
+      savedRef.current = Object.fromEntries(ms.map(m => [m.id, m]));
+      // chats from before missions were folders (localStorage): each becomes a
+      // folder of its own, since each carried its own brief
+      let old = [];
+      try { old = JSON.parse(localStorage.getItem("chats") || "[]"); } catch { }
+      const moved = (Array.isArray(old) ? old : []).map((c, i) => ({ id: "m" + ((c.created || Date.now()) + i), title: c.title || t("mission.newTitle"),
+        brief: c.mission || "", memory: [], created: c.created || Date.now(), chats: [c] }));
+      if (moved.length) {
+        const home = moved.find(m => m.chats[0].id === localStorage.getItem("activeChat"));
+        if (home) setMissionId(home.id);
+        // removed only once the server has them all; ids come off `created`, so a
+        // retry after a failed import overwrites instead of duplicating
+        for (const m of moved) savedRef.current[m.id] = m;
+        saveQueue(() => Promise.all(moved.map(m => fetch(`/api/missions/${m.id}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(m) })
+          .then(r => { if (!r.ok) throw new Error("import " + r.status); })))
+          .then(() => localStorage.removeItem("chats")));
+      }
+      setMissions([...ms, ...moved]);
+    }).catch(e => console.error("missions:", e.message));
+  }, []);
+  useEffect(() => {
+    if (!savedRef.current) return;     // not loaded yet: [] here is not "everything deleted"
+    const id = setTimeout(() => {
+      for (const m of missions) if (savedRef.current[m.id] !== m) {
+        savedRef.current[m.id] = m;
+        saveQueue(() => fetch(`/api/missions/${m.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(m) }));
+      }
+    }, 400);
+    return () => clearTimeout(id);
+  }, [missions]);
+  useEffect(() => { localStorage.setItem("activeMission", missionId); }, [missionId]);
   useEffect(() => { localStorage.setItem("activeChat", activeId); }, [activeId]);
   useEffect(() => { localStorage.setItem("ttsProvider", ttsProv); setTtsProvider(ttsProv); }, [ttsProv]);
   useEffect(() => {
@@ -324,7 +379,7 @@ function App() {
       if (!LOCAL_HOST) return;
       const chat = activeRef.current;
       if (chat) setChats(cs => cs.map(c => c.id === chat.id
-        ? { ...c, messages: [...(c.messages || []), { role: "assistant", content: `(Claude finished "${d.task}") ${line}` }].slice(-12) } : c));
+        ? { ...c, messages: [...(c.messages || []), { role: "assistant", content: `(Claude finished "${d.task}") ${line}` }].slice(-KEEP_MSGS) } : c));
       const say = () => {
         if (analyzingRef.current || speakingRef.current || armLedger.tapeOn) return void setTimeout(say, 500);
         if (ttsRef.current) speakTimed(d.state === "done" ? `${t("job.said.done")} ${line}` : line);
@@ -712,14 +767,15 @@ function App() {
       const ms = driveMs(norm(text));
       const sent = await sendCmd(trigger.cmd(ms));
       const ack = { text: t(sent ? trigger.ackKey : "toast.cmdNoLink", { s: (ms / 1000).toFixed(1) }), status: null };
-      setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...(c.messages || []), { role: "user", content: text }, { role: "assistant", content: ack.text }].slice(-12) } : c));
+      setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...(c.messages || []), { role: "user", content: text }, { role: "assistant", content: ack.text }].slice(-KEEP_MSGS) } : c));
       showSage(ack, null, sent);
       return;
     }
     const t0 = Date.now();
     setAi(p => ({ ...p, analyzing: true, badge: "badge.thinking", phase: "thinking", since: t0, llm: null, tts: null }));
-    const next = [...(chat.messages || []), { role: "user", content: text }].slice(-12);
-    setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: next } : c));
+    const next = [...(chat.messages || []), { role: "user", content: text }].slice(-KEEP_MSGS);
+    // a chat is named by the first thing said in it
+    setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: next, title: c.messages?.length ? c.title : clip(text, 40) } : c));
     if (brainRef.current === "claude") {
       setAi(p => ({ ...p, badge: "badge.claude" }));
       try {
@@ -730,7 +786,7 @@ function App() {
         const data = await r.json();
         const ok = !!data.text;
         setChats(cs => cs.map(c => c.id === chat.id ? { ...c, claudeSession: data.session || c.claudeSession,
-          messages: ok ? [...next, { role: "assistant", content: data.text }].slice(-12) : next } : c));
+          messages: ok ? [...next, { role: "assistant", content: data.text }].slice(-KEEP_MSGS) : next } : c));
         addLog(data.cost != null ? `claude replied · $${data.cost.toFixed(3)}` : t("log.replied"), "ai");
         showSage({ text: data.text || data.error || "No response.", status: null }, t0, ok);
       } catch (e) {
@@ -741,17 +797,21 @@ function App() {
     try {
       const r = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, lang: getLang(), moves: movesRef.current, lamp: lampRef.current, demo: demoRef.current, confirm: confirmRef.current, claude: claudeOpts.current }),
+        body: JSON.stringify({ messages: next, mission: chat.missionId, chat: chat.id, lang: getLang(), moves: movesRef.current, lamp: lampRef.current, demo: demoRef.current, confirm: confirmRef.current, claude: claudeOpts.current }),
       });
       const data = await r.json();
       const sage = data.reply, ok = !!(sage && sage.text);
-      if (ok) setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...next, { role: "assistant", content: sage.text }].slice(-12) } : c));
+      if (ok) setChats(cs => cs.map(c => c.id === chat.id ? { ...c, messages: [...next, { role: "assistant", content: sage.text }].slice(-KEEP_MSGS) } : c));
+      if (sage?.remember) {
+        patchMission(chat.missionId, m => ({ memory: [...(m.memory || []).filter(n => n !== sage.remember), sage.remember].slice(-40) }));
+        pushFeed({ kind: "tool", name: "remember", detail: sage.remember });
+      }
       addLog(t("log.replied"), "ai");
       showSage(ok ? sage : { text: data.error || "No response.", status: null }, t0, ok);
     } catch (e) {
       setAi(p => ({ ...p, text: t("ai.comms", { msg: e.message }), badge: "badge.online", analyzing: false, phase: null }));
     }
-  }, [addLog, showSage, pushFeed, sendCmd, runTape]);
+  }, [addLog, showSage, pushFeed, sendCmd, runTape, patchMission]);
 
   // a card only ever runs when the operator presses YES. NO sends nothing at all.
   const onAnswer = useCallback(async (item, yes) => {
@@ -858,16 +918,38 @@ function App() {
     setLang(code); setLangState(code);
     socketRef.current?.emit("set-language", code);
   }, []);
-  const newChat = useCallback(() => {
-    const id = "c" + Date.now();
-    setChats(cs => [...cs, { id, title: t("chat.newTitle"), mission: "", messages: [], created: Date.now() }]);
-    setActiveId(id);
+  const newMission = useCallback(() => {
+    const id = "m" + Date.now();
+    setMissions(ms => [...ms, { id, title: t("mission.newTitle"), brief: "", memory: [], created: Date.now(), chats: [] }]);
+    setMissionId(id); setActiveId("");
     socketRef.current?.emit("set-mission", "");
   }, []);
+  const selectMission = useCallback((id) => {
+    setMissionId(id); setActiveId("");
+    socketRef.current?.emit("set-mission", "");
+  }, []);
+  const deleteMission = useCallback((id) => {
+    setMissions(ms => ms.filter(m => m.id !== id));
+    saveQueue(() => fetch(`/api/missions/${id}`, { method: "DELETE" }));
+    setMissionId(a => (a === id ? "" : a));
+  }, []);
+  const forgetNote = useCallback((note) => {
+    patchMission(missionId, m => ({ memory: (m.memory || []).filter(n => n !== note) }));
+  }, [missionId, patchMission]);
+  const addChat = (mid, title) => {
+    const id = "c" + Date.now();
+    patchMission(mid, m => ({ chats: [...(m.chats || []), { id, title, messages: [], created: Date.now() }] }));
+    setActiveId(id);
+  };
+  const newChat = useCallback(() => {
+    if (!mission) return;
+    addChat(mission.id, t("chat.newTitle"));
+    socketRef.current?.emit("set-mission", mission.brief || "");
+  }, [mission]);
   const selectChat = useCallback((id) => {
     setActiveId(id);
-    socketRef.current?.emit("set-mission", (chats.find(c => c.id === id)?.mission) || "");
-  }, [chats]);
+    socketRef.current?.emit("set-mission", (id && mission?.brief) || "");
+  }, [mission]);
   const deleteChat = useCallback((id) => {
     setChats(cs => cs.filter(c => c.id !== id));
     setActiveId(a => {
@@ -877,15 +959,16 @@ function App() {
       return "";
     });
   }, []);
+  // the brief is the folder's; briefing opens its first chat, where Sage answers
   const briefMission = useCallback((text) => {
     text = (text || "").trim();
-    const chat = activeRef.current;
-    if (!text || !chat) return;
+    if (!text || !mission) return;
     addLog(t("log.missionSent", { text }), "system");
-    setChats(cs => cs.map(c => c.id === chat.id ? { ...c, mission: text, title: text.length > 30 ? text.slice(0, 30) + "…" : text } : c));
+    patchMission(mission.id, () => ({ brief: text, title: clip(text, 30) }));
+    addChat(mission.id, t("chat.newTitle"));
     setAi(p => ({ ...p, analyzing: true, badge: "badge.copying", phase: "thinking", since: Date.now() }));
     socketRef.current?.emit("set-mission", text);
-  }, [addLog]);
+  }, [addLog, mission, patchMission]);
   const clearSerial = useCallback(() => setSerialLines([]), []);
 
   const closeDrawer = useCallback(() => {
@@ -1081,6 +1164,7 @@ function App() {
           <aside class="col-rail">
             <${Agent} ai=${ai} tts=${tts} ttsProv=${ttsProv} hasDeepgram=${hasDeepgram} confirm=${confirm} onConfirm=${toggleConfirm}
               brain=${brain} onBrain=${toggleBrain} claudeModel=${claudeModel} onModel=${pickModel} claudeEffort=${claudeEffort} onEffort=${pickEffort} packet=${view} connected=${live} speaking=${speaking}
+              missions=${missions} mission=${mission} onNewMission=${newMission} onSelectMission=${selectMission} onDeleteMission=${deleteMission} onForget=${forgetNote}
               chats=${chats} activeChat=${activeChat} feed=${activeChat?.feed || NO_FEED} onNewChat=${newChat} onSelectChat=${selectChat}
               onDeleteChat=${deleteChat} onBrief=${briefMission} onSpeak=${speakBrief}
               onAnalyze=${analyze} onToggleTts=${toggleTts} onToggleTtsProvider=${toggleTtsProvider} onMock=${mockData} onAsk=${ask}
