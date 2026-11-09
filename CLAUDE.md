@@ -101,6 +101,9 @@ PCA9685 at 0x40 on `Wire` alone, OE on D32, servo rail 5-6V (never 12V).
   Library `delay()`s count (that's why `dht.setDelay(0)` exists).
 - Black box: `log,` dumps the event ring + last reset reason (works over USB too).
   Empty ring + brownout = power problem, not software.
+- FAT32 stick on the USB-A port = run log at `/blackout.log` (`usblog.h`):
+  telemetry, commands (`> cmd`), black box events, millis-stamped. A thread
+  writes it, so `loop()` never waits on the stick; hot-pull is fine.
 - Sonar takes one ping per send, median of a ring buffer seeded to -1.
 - Relay pins: write the level **before** `pinMode(OUTPUT)`. Same for PCA9685 OE.
 - `noTone()` can leave an active buzzer on; `buzzSet()` parks the pin low.
@@ -115,6 +118,9 @@ PCA9685 at 0x40 on `Wire` alone, OE on D32, servo rail 5-6V (never 12V).
   providers were tested and rejected (too slow or no vision) — don't redo it.
 - TTS: Deepgram if keyed, else Edge neural voices.
 - She calls tools via a `tool` field in her JSON (`agentLoop()`), bounded steps.
+- Chats live in **mission folders** (`server/data/missions/<id>.json`, gitignored,
+  loopback only). Each turn she gets the folder's notes, findings and other chats
+  (`folderLine()`); her `remember` field adds a note. Off-topic chat is allowed.
 - She **suggests**, never drives: moves (BLK), arm takes and tapes show as cards
   the operator must approve. OPTIONS → SAGE MOVES / SAGE LAMP gate her.
 - Proposed `forward` moves get a sonar guard (`guard()` in `blk.mjs`).

@@ -22,3 +22,4 @@ jobs:
             - name: DHT11
             - name: Adafruit BME280 Library
             - name: U8g2
+            - name: Arduino_USBHostMbed5

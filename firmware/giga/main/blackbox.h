@@ -22,12 +22,6 @@ uint8_t logHead = 0;          // next slot to write
 uint16_t logCount = 0;        // total ever logged, so a full ring still says how many were lost
 uint32_t resetBits = 0;
 
-void logEvt(uint8_t code, uint32_t arg = 0) {
-  logRing[logHead] = { millis(), arg, code };
-  logHead = (logHead + 1) % LOG_N;
-  logCount++;
-}
-
 // the reset flags are one register and a handful of bits; decoding them here
 // keeps the dashboard free of a second copy that could drift.
 String resetWhy(uint32_t r) {
@@ -162,3 +156,26 @@ uint8_t tetTick;
 
 #define SAVER_ENV_INTERVAL 6000
 #define SAVER_SEND_INTERVAL 500
+
+// one ring slot as the E:log line the dashboard reads -- shared by the dump and the live echo
+String logLine(const LogEvt &e) {
+  String l = "E:log,";
+  l += e.ms;
+  l += ",";
+  l += logName(e.code);
+  if (e.code == LOG_BOOT) { l += " ("; l += resetWhy(e.arg); l += ")"; }
+  else if (e.arg) { l += " "; l += e.arg; l += "ms"; }
+  return l;
+}
+
+// Echoed live on usb too, so a cabled rover shows each drop/stall as it lands
+// instead of only on the next "log," dump. Not over BLE: a notify from inside
+// a "notify failed" or "ble down" is the one write guaranteed to go nowhere.
+void logEvt(uint8_t code, uint32_t arg = 0) {
+  logRing[logHead] = { millis(), arg, code };
+  String l = logLine(logRing[logHead]);
+  Serial.println(l);
+  usbLog(l);
+  logHead = (logHead + 1) % LOG_N;
+  logCount++;
+}

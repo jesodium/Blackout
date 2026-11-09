@@ -70,12 +70,7 @@ void dumpLog() {
   Serial.println(head);
   if (bleConnected) sensorChar.writeValue(head);
   for (uint8_t k = 0; k < n; k++, i = (i + 1) % LOG_N) {
-    String l = "E:log,";
-    l += logRing[i].ms;
-    l += ",";
-    l += logName(logRing[i].code);
-    if (logRing[i].code == LOG_BOOT) { l += " ("; l += resetWhy(logRing[i].arg); l += ")"; }
-    else if (logRing[i].arg) { l += " "; l += logRing[i].arg; l += "ms"; }
+    String l = logLine(logRing[i]);
     Serial.println(l);
     if (bleConnected) sensorChar.writeValue(l);
     blePump();
@@ -86,6 +81,7 @@ void dumpLog() {
 
 void handleCmd(String c) {
   c.trim();
+  if (c.length()) usbLog("> " + c);
   if (c == "stop") stopRoutine();
   else if (c.startsWith("go,")) startRoutine(c.substring(3));
   else if (c.startsWith("drv,")) startDrive(c);

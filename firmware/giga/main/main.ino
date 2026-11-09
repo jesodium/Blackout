@@ -62,6 +62,7 @@ U8G2_SSD1306_128X64_NONAME_F_SW_I2C oled(U8G2_R0, U8X8_PIN_NONE, U8X8_PIN_NONE, 
 bool bleReady = false;                 // poll() before begin() has no transport
 inline void blePump() { if (bleReady) BLE.poll(); }
 
+#include "usblog.h"
 #include "blackbox.h"
 
 // ---- ble ----
@@ -116,9 +117,10 @@ uint8_t sonarIdx = 0;
 void setup() {
   resetBits = RCC->RSR;            // read before anything clears it
   RCC->RSR |= RCC_RSR_RMVF;        // and clear, or every later boot reads this one
-  logEvt(LOG_BOOT, resetBits);
   Serial.begin(9600);
   Serial.setTimeout(50);
+  usbLogBegin();
+  logEvt(LOG_BOOT, resetBits);     // after begin: it echoes on usb now
   pinMode(TRIG_PIN, OUTPUT);
   for (uint8_t i = 0; i < SONAR_ITER; i++) sonarRing[i] = -1;  // 0 would read as a wall at 0cm
 
@@ -274,5 +276,6 @@ void loop() {
   line += lux;
 
   Serial.println(line);
+  usbLog(line);
   if (!sensorChar.writeValue(line) && bleConnected) logEvt(LOG_NOTIFY_FAIL);
 }
