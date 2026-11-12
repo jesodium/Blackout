@@ -4,9 +4,12 @@ on:
   push:
     paths:
       - "firmware/giga/**"
+      - ".github/workflows/arduino-compile.yml"
   pull_request:
     paths:
       - "firmware/giga/**"
+      - ".github/workflows/arduino-compile.yml"
+  workflow_dispatch:
 
 jobs:
   compile-giga:
