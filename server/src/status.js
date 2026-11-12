@@ -37,6 +37,7 @@ function readingLines(data) {
     data.pressure ? `Pressure: ${data.pressure} hPa` : null,
     data.pressure ? `Elevation: ${Math.round(data.alt)} m relative to where you started` : null,
     `Distance to the rock face ahead: ${data.dist} cm [${s.dist}]`,
+    data.gas ? `Relative Gas Index: ${Math.round(data.gas)}/100 (100 = cleanest air this sensor has seen, lower = more gas)` : null,
     data.lux != null ? `Ambient light: ${Math.round(data.lux)} lx` : null,
     (data.roll || data.pitch || data.yaw) ? `Tilt: roll ${data.roll}°, pitch ${data.pitch}°, yaw ${data.yaw}°` : null,
   ].filter(Boolean).join("\n");

@@ -44,6 +44,7 @@ function processLine(raw) {
     pressure: parts.length > 10 ? parseFloat(parts[10]) : 0,
     routine: parts.length > 11 ? parts[11].trim() === "1" : false,
     lux: parts.length > 12 ? parseFloat(parts[12]) : null,
+    gas: parts.length > 13 ? parseFloat(parts[13]) : 0,
     timestamp: Date.now(),
   };
 
@@ -70,7 +71,7 @@ app.post("/api/mega/sensor", (req, res) => {
 function mockPacket() {
   const r = (lo, hi, d = 0) => +(lo + Math.random() * (hi - lo)).toFixed(d);
   const data = {
-    temp: r(20, 50, 1), humid: r(20, 90, 1), pressure: r(1011, 1015, 1), dist: r(10, 200), lux: r(0, 900),
+    temp: r(20, 50, 1), humid: r(20, 90, 1), pressure: r(1011, 1015, 1), dist: r(10, 200), lux: r(0, 900), gas: r(40, 100),
     smoke: r(0, 800), airq: r(50, 900), co: r(0, 600),
     co_alert: Math.random() > 0.7,
     roll: r(-8, 8, 1), pitch: r(-8, 8, 1), yaw: r(0, 30, 1),

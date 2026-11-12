@@ -68,6 +68,8 @@ const SENSORS = [
   { key: "dist",  unit: "cm",  d: 0, min: 0, max: 200,  invert: true, zeroOk: true, st: v => v < 10 ? ["st.tooClose", "warn"] : ["st.clear", "go"] },
   { key: "alt",   unit: "m",   d: 0, min: -25, max: 25, cm: true, zeroOk: true, st: () => ["st.normal", "go"] },
   { key: "pressure", unit: "hPa", d: 1, min: 950, max: 1050, st: () => ["st.normal", "go"] },
+  { key: "gas", unit: "/100", d: 0, min: 0, max: 100,
+    st: v => v < 40 ? ["st.gasBad", "abort"] : v < 70 ? ["st.gasFair", "warn"] : ["st.gasClean", "go"] },
   { key: "lux", unit: "lx", d: 0, min: 0, max: 1000, zeroOk: true,
     st: v => v < 1 ? ["st.dark", "go"] : v > 500 ? ["st.bright", "go"] : ["st.normal", "go"] },
 ];

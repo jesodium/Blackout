@@ -24,7 +24,8 @@ static const uint8_t RELAY_PINS[] = {RELAY_CAM_LED, RELAY_STRIP, RELAY_LED};
 
 #define LOOP_STALL_MS 150   // ~10 connection intervals at 7.5-15ms
 
-#define BUZZ_PIN 72
+#define BUZZ_PIN A2
+#define MQ_PIN A1         // MQ9 AO via the 10k/15k divider
 #define BUZZ_SOUND LOW
 #define BUZZ_IDLE  HIGH
 #define BUZZ_HZ 2400
@@ -86,6 +87,9 @@ unsigned long lastBmeTry = 0;
 const unsigned long BME_RETRY_MS = 5000;
 DHT11 dht(DHT_PIN);
 int temp = 0, humid = 0;
+// MQ9 relative gas index: 100 = cleanest raw ever seen, 50 = raw doubled. No ppm, no calibration.
+// IMPORTANT NOTE: baseline is the running minimum, leaking up 0.1%/sample so a cold-start dip heals; raw 0 = unwired = 0.
+float mqBase = 0, gasIdx = 0;
 float pressure = 0;
 float distCm = 999;
 
@@ -249,13 +253,25 @@ void loop() {
     blePump();       // the dht bit-bangs its one-wire protocol for ~30ms
     if (bmeOk) {
       float p = bme.readPressure() / 100.0F;
-      if (p > 300 && p < 1100) { pressure = p; bmeMiss = 0; }
+      if (p > 300 && p < 1100) {
+        pressure = p; bmeMiss = 0;
+        // bme beats the dht when sane; dht stays as fallback if the bme drops out
+        float bt = bme.readTemperature(), bh = bme.readHumidity();
+        if (bt > -40 && bt < 85) temp = (int)roundf(bt);
+        if (bh >= 0 && bh <= 100) humid = (int)roundf(bh);
+      }
       else if (++bmeMiss >= BME_MISS_MAX) { bmeOk = false; pressure = 0; }
     } else if (now - lastBmeTry >= BME_RETRY_MS) {
       lastBmeTry = now;
       bmeOk = bme.begin(0x76, &Wire1) || bme.begin(0x77, &Wire1);
       if (bmeOk) { bmeMiss = 0; Serial.println("BME280 back"); }
     }
+    int mq = analogRead(MQ_PIN);
+    if (mq > 5) {
+      mqBase = (mqBase == 0 || mq < mqBase) ? mq : mqBase * 1.001f;
+      if (mqBase > mq) mqBase = mq;
+      gasIdx = 100.0f * mqBase / mq;
+    } else gasIdx = 0;
     if (luxOk) {
       float l = readLux();
       if (l >= 0) lux = l;
@@ -274,6 +290,8 @@ void loop() {
   line += (routine || blkPc >= 0) ? ",1" : ",0";
   line += ",";
   line += lux;
+  line += ",";
+  line += (int)gasIdx;
 
   Serial.println(line);
   usbLog(line);

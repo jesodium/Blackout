@@ -12,7 +12,7 @@ Arduino_GFX *gfx = new Arduino_ILI9488_18bit(bus, 4 /*rst*/, 1 /*rotation*/);
 
 void setup() {
   Serial.begin(115200);
-  bool ok = gfx->begin(20000000); // drop to 10000000 if image glitches on long wires
+  bool ok = gfx->begin(4000000); // drop to 10000000 if image glitches on long wires
   Serial.println(ok ? "lcd begin ok" : "lcd begin failed");
 }
 

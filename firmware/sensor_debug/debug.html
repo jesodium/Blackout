@@ -1,0 +1,56 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>sensor debug</title>
+<style>
+  body { font: 15px ui-monospace, Menlo, monospace; background: #111; color: #eee; margin: 24px; }
+  button { font: inherit; padding: 8px 14px; margin-bottom: 16px; }
+  table { border-collapse: collapse; width: 100%; max-width: 640px; }
+  td, th { border-bottom: 1px solid #333; padding: 8px; text-align: left; }
+  .ok { color: #4ade80; } .bad { color: #f87171; } .na { color: #aaa; }
+  #raw { margin-top: 16px; color: #777; word-break: break-all; }
+</style>
+<button id="go">connect giga</button>
+<table>
+  <tr><th>sensor</th><th>pin / bus</th><th>status</th><th>reading</th></tr>
+  <tbody id="rows"></tbody>
+</table>
+<div id="raw"></div>
+<script>
+const sensors = [
+  ["sonar", "d52 trig / d50 echo", v => v.sonar > 0, v => v.sonar + " cm"],
+  ["dht11", "a5", v => v.dht_t > -1, v => v.dht_t + " C  " + v.dht_h + " %"],
+  ["bme280", "wire1 0x76/77", v => v.bme_p > 300, v => v.bme_t + " C  " + v.bme_p + " hPa"],
+  ["bh1750 lux", "wire2 0x23", v => v.lux >= 0, v => v.lux + " lx"],
+  ["mq (analog)", "a1", null, v => v.mq + " / 4095"],
+  ["gps", "serial2 d18/d19", v => v.gps > prev.gps, v => v.gps + " bytes"],
+  ["lidar", "serial3 d16/d17", v => v.lidar > prev.lidar, v => v.lidar + " bytes"],
+];
+let prev = { gps: 0, lidar: 0 };
+
+function render(v) {
+  rows.innerHTML = sensors.map(([name, pin, ok, show]) => {
+    const state = ok === null ? ["analog", "na"] : ok(v) ? ["connected", "ok"] : ["no signal", "bad"];
+    return `<tr><td>${name}</td><td>${pin}</td><td class="${state[1]}">${state[0]}</td><td>${show(v)}</td></tr>`;
+  }).join("");
+  prev = v;
+}
+
+go.onclick = async () => {
+  const port = await navigator.serial.requestPort();
+  await port.open({ baudRate: 115200 });
+  const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += value;
+    const lines = buf.split("\n");
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith("sonar=")) continue;
+      raw.textContent = line;
+      render(Object.fromEntries(line.trim().split(",").map(p => p.split("=")).map(([k, x]) => [k, parseFloat(x)])));
+    }
+  }
+};
+</script>
