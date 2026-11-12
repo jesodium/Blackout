@@ -1,6 +1,6 @@
-wro 2026 project. future innovators.
+wro 2026 FI [1st place in panama]
 
-single arduino giga r1 wifi (sensors, ble) + node.js dashboard.
+single arduino giga r1 wifi (sensors, ble) + node.js dashboard
 
 <p>
   <img src="docs/renders/rover-front.jpg" width="49%" alt="blackout v3 rover, front three-quarter render">
