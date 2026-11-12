@@ -10,7 +10,7 @@ on:
 
 jobs:
   compile-giga:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/compile-sketches@v1
