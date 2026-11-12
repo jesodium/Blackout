@@ -1,64 +1,35 @@
-WRO 2026 Project. Future Innovators.
+wro 2026 project. future innovators.
 
-Single Arduino Giga R1 WiFi (sensors, BLE) + Node.js dashboard.
+single arduino giga r1 wifi (sensors, ble) + node.js dashboard.
 
 <p>
-  <img src="docs/renders/rover-front.jpg" width="49%" alt="Blackout V3 rover, front three-quarter render">
-  <img src="docs/renders/rover-side.jpg" width="49%" alt="Blackout V3 rover, front render with MeArm">
-  <img src="docs/renders/shield-iso.jpg" width="49%" alt="Giga R1 sensor hub shield, angled render">
-  <img src="docs/renders/shield-top.jpg" width="49%" alt="Giga R1 sensor hub shield, top render">
+  <img src="docs/renders/rover-front.jpg" width="49%" alt="blackout v3 rover, front three-quarter render">
+  <img src="docs/renders/rover-side.jpg" width="49%" alt="blackout v3 rover, front render with mearm">
+  <img src="docs/renders/shield-iso.jpg" width="49%" alt="giga r1 sensor hub shield, angled render">
+  <img src="docs/renders/shield-top.jpg" width="49%" alt="giga r1 sensor hub shield, top render">
 </p>
 
-## Quick start
-
-### 1. Sensors (Giga R1 WiFi)
-
-```bash
-cd firmware/giga/main
-arduino-cli compile --fqbn arduino:mbed_giga:giga
-arduino-cli upload --port /dev/cu.usbmodem1101 --fqbn arduino:mbed_giga:giga
-```
-
-Sensors: DHT11, BME280, HSRC04
-
-### 2. Server (Node.js)
-
-```bash
-cd server
-cp .env.example .env    # add your Cerebras API key
-npm install
-npm start                # → http://localhost:3000
-```
-
-Dashboard, real-time telemetry, AI area analysis via Cerebras. Open the
-dashboard in Chrome/Edge (Web Bluetooth support required) and hit the BT
-toggle to pair.
-
-## Project layout
+## project layout
 
 ```
 ├── firmware/
-│   ├── giga/main/       Giga R1 WiFi — sensors, motors, arm, BLE (main.ino + one .h per section)
-│   ├── giga/i2c_scan/   I2C bus diagnostic
+│   ├── giga/main/       giga r1 wifi — sensors, motors, arm, ble (main.ino + one .h per section)
+│   ├── giga/i2c_scan/   i2c bus diagnostic
 │   ├── giga/motor_test/ bench motor check
-│   ├── esp32-cam/main/  ESP32-CAM — MJPEG streamer / USB frame server
+│   ├── esp32-cam/main/  esp32-cam — mjpeg streamer / usb frame server
 │   └── uno-r4/          bench sketches
 ├── server/
-│   ├── server.js        entry: loads src/ and listens (Electron forks this)
-│   ├── mcp.mjs          MCP stdio server for Claude Desktop / Code
-│   ├── src/             server modules (link, telemetry, cam, tts, …) + sage/ (the AI agent)
+│   ├── server.js        entry: loads src/ and listens (electron forks this)
+│   ├── mcp.mjs          mcp stdio server for claude desktop / code
+│   ├── src/             server modules (link, telemetry, cam, tts, …) + sage/ (the ai agent)
 │   ├── public/          dashboard: index.html, js/app.js + js/ui/ components, lib modules
-│   ├── prompts/         Sage's system prompts
-│   ├── data/            recorded arm takes, tapes, BLK workflows
+│   ├── prompts/         sage's system prompts
+│   ├── data/            recorded arm takes, tapes, blk workflows
 │   ├── test/            npm run test:<name>
 │   └── tools/           bench tools (armrec.py, …)
-├── electron/            desktop shell (custom BLE picker)
+├── electron/            desktop shell (custom ble picker)
 ├── scripts/             flash.sh, arm-configurator.sh, docs.sh
 ├── docs/
-├── archive/             retired Mega 2560 + Uno R3 setup (porting reference only)
+├── archive/             retired mega 2560 + uno r3 setup (porting reference only)
 └── hardware/            cad/ + step/ (local, not in git)
 ```
-
-## Docs
-
-- `CLAUDE.md` — architecture overview
