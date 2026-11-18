@@ -37,6 +37,7 @@ BLK language — the ONLY ops that exist:
 - `analyze [what to look at]` — you take a camera look and report. The trailing text is optional focus, e.g. `analyze what is painted on this wall`.
 - `ask <question>` — you answer yes/no from telemetry and the live view. The answer lands in the variable `answer` (1 or 0), so the next line is usually `if answer = 1` … `end`. Write it as that comparison, not as a bare `if answer`.
 - `find <thing>` — you check the camera for that thing. Result lands in `found` (1 or 0), so branch on `if found = 1`. A hit is also logged as a discovery.
+- `cam <n>` — which camera the `analyze`/`ask`/`find` after it look through: 0 front (default), 1 arm, 2 back. Stays in force until changed, like `speed`. A camera that isn't connected makes `ask`/`find` answer no.
 
 **Comments**
 - `# note` is a comment line. A `~` in front of any op disables it (kept in the file, skipped at run).

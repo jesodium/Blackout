@@ -447,8 +447,8 @@ function condInputs(node, key) {
   return frag;
 }
 
-const STEP = { ms: 50, pwm: 10, count: 1, led: 15 };
-const UNIT = { ms: "ms", pwm: "pwm", count: "times", led: "of 255" };
+const STEP = { ms: 50, pwm: 10, count: 1, led: 15, cam: 1 };
+const UNIT = { ms: "ms", pwm: "pwm", count: "times", led: "of 255", cam: "(0 front, 1 arm, 2 back)" };
 
 function argInput(node, kind) {
   const frag = document.createDocumentFragment();
@@ -711,6 +711,7 @@ const PALETTE = [
     () => ({ op: "comment", text: "note" }),
   ]],
   ["AI", "ai", [
+    () => ({ op: "cam", arg: 2 }),
     () => ({ op: "analyze", text: "" }),
     () => ({ op: "ask", text: "is it safe to keep going" }),
     () => ({ op: "find", text: "cave painting" }),
@@ -956,6 +957,7 @@ async function startSim() {
     drive: async (verb, pwm, ms) => { await simAdvance(verb, pwm, ms); },
     halt: () => {},
     led: (v) => { sim.led = v; drawSim(); simLog("headlamp " + v); },
+    cam: (n) => simLog("camera " + n),
     say: (t) => simLog(t, "say", "volume"),
     log: (t) => simLog("• " + t),
     analyze: async (p) => { simLog("analyze" + (p ? ": " + p : "") + " (no camera in sim)", "ai"); await realSleep(300); },

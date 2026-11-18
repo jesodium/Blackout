@@ -5,7 +5,12 @@ const { app, io, localReq } = require("../http");
 const { hasAI, chat } = require("../brain");
 const state = require("../state");
 const recorder = require("../recorder");
-const { eyeParts, grabFrames } = require("../vision");
+const { eyeParts, grabFrames, camCount } = require("../vision");
+
+// eyeParts() falls back to cam 0 for a camera that isn't in CAM_URL, so "is it clear
+// behind me" would get answered off the FRONT view. A blk call names its camera, so
+// a missing one is no view at all.
+const blkEyes = (cam) => (cam = +cam || 0) < camCount ? eyeParts(cam) : Promise.resolve([]);
 const { readingLines } = require("../status");
 const { parseSage } = require("./parse");
 const { askSage, agentLoop, askConfirm, recordFinding, lastImage, LAMP_ASKED } = require("./agent");
@@ -149,7 +154,9 @@ app.post("/api/blk-ask", async (req, res) => {
   try {
     const sim = !!req.body?.sim;
     const d = sim ? req.body.telemetry : state.freshData();
-    const images = sim ? [] : await eyeParts();
+    const images = sim ? [] : await blkEyes(req.body?.cam);
+    // a named camera with nothing on it is a "no", not a guess off telemetry
+    if (!sim && +req.body?.cam && !images.length) return res.json({ yes: false, text: `camera ${req.body.cam} has no view` });
     const out = await sageDecide(question, { images, extra: sim ? `Simulated readings:\n${JSON.stringify(d)}` : contextOrDark(d) });
     io.emit("blk-decision", { kind: "ask", question, ...out, sim, timestamp: Date.now() });
     recorder.mark("blk", `${question} → ${out.yes ? "yes" : "no"}`);
@@ -164,9 +171,9 @@ app.post("/api/blk-find", async (req, res) => {
   const thing = String(req.body?.thing || "").trim().slice(0, 200);
   if (!thing) return res.status(400).json({ error: "thing required" });
   try {
-    const images = await eyeParts();
+    const images = await blkEyes(req.body?.cam);
     if (!images.length) return res.json({ yes: false, text: "no camera view" });
-    const out = await sageDecide(`Look at your forward camera view. Is there ${thing} in it?`, { images });
+    const out = await sageDecide(`Look at your camera view. Is there ${thing} in it?`, { images });
     if (out.yes) recordFinding(`found: ${thing}${out.text ? " — " + out.text : ""}`, lastImage([{ content: images }]));
     io.emit("blk-decision", { kind: "find", question: thing, ...out, timestamp: Date.now() });
     recorder.mark("blk", `find ${thing} → ${out.yes ? "found" : "not found"}`);

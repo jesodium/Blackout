@@ -7,7 +7,7 @@ export const CMPS = ["<", ">", "<=", ">=", "=", "!="];
 
 export const FLAGS = ["answer", "found"];
 export const FUNCS = { random: 2, min: 2, max: 2, abs: 1, round: 1, clamp: 3 };
-export const LIMITS = { ms: [50, 10000], pwm: [60, 255], count: [1, 1000], led: [0, 255] };
+export const LIMITS = { ms: [50, 10000], pwm: [60, 255], count: [1, 1000], led: [0, 255], cam: [0, 3] };
 export const RESERVED = new Set([...SENSORS, ...BUILTINS, ...Object.keys(FUNCS), "and", "or", "not", "until", "while", "timeout", "end", "else"]);
 
 // one entry per block the editor can place. adding an op means touching this,
@@ -35,6 +35,7 @@ export const NODE_META = {
   say:          { cat: "looks",   text: true, label: "say" },
   log:          { cat: "looks",   text: true, label: "log" },
   led:          { cat: "looks",   arg: "led", label: "headlamp" },
+  cam:          { cat: "ai",      arg: "cam", label: "use camera" },
   analyze:      { cat: "ai",      text: true, optText: true, label: "AI analyze" },
   ask:          { cat: "ai",      text: true, label: "ask Sage" },
   find:         { cat: "ai",      text: true, label: "look for" },
@@ -250,6 +251,7 @@ export function parse(text) {
         }
         case "speed": return void push({ op: head, arg: argTail("pwm") });
         case "led": return void push({ op: head, arg: argTail("led") });
+        case "cam": return void push({ op: head, arg: argTail("cam") });
         case "wait": {
           if (r.eat("until")) {
             const n = { op: "wait_until", cond: condTail() };
@@ -570,6 +572,7 @@ async function runList(list, io, st, ctx) {
     switch (node.op) {
       case "speed": st.pwm = clampArg("pwm", argv(DEFAULT_PWM)); break;
       case "led": io.led?.(clampArg("led", argv(0))); break;
+      case "cam": io.cam?.(clampArg("cam", argv(0))); break;
       case "forward": case "back": case "left": case "right": {
         const verb = VERBS[node.op];
         if (!node.until) { await io.drive(verb, st.pwm, clampArg("ms", argv(500))); break; }
@@ -655,7 +658,7 @@ const VERB_ID = { forward: 0, back: 1, left: 2, right: 3 };
 const LHS_SPEED = 50, LHS_VAR = 100;
 const NEG = [3, 2, 1, 0, 5, 4];
 
-const EVT_KIND = { say: 0, log: 0, led: 0, analyze: 1, ask: 2, find: 2 };
+const EVT_KIND = { say: 0, log: 0, led: 0, cam: 0, analyze: 1, ask: 2, find: 2 };
 
 export class Unsupported extends Error {}
 
@@ -726,7 +729,7 @@ export function compile(program) {
         case "set": emit("set", { a: slot(n.name), rhs: konst(n.expr, 0) }); break;
         case "change": emit("add", { a: slot(n.name), rhs: konst(n.expr, 0) }); break;
         case "stop": emit("stop", {}); break;
-        case "say": case "log": case "led": case "analyze": case "ask": case "find": {
+        case "say": case "log": case "led": case "cam": case "analyze": case "ask": case "find": {
           const kind = EVT_KIND[n.op];
           nodes.push(n);
           emit("evt", { a: kind, b: nodes.length - 1, c: kind === 2 ? slot(n.op === "ask" ? "answer" : "found") : 0 });

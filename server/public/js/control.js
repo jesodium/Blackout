@@ -33,18 +33,20 @@ function blkIo(deps, stopped, sleep) {
       return !!d.yes;
     } catch { onNote?.("AI didn't answer — treating as no"); return false; }
   };
+  let cam = 0;   // blk `cam`: which camera analyze/ask/find look through
   return {
     stopped, sleep,
     drive: async (verb, pwm, ms) => { onCmd(`drv,${verb},${pwm},${ms}`); await sleep(ms + 150); },
     analyze: async (focus) => {
-      onAnalyze(null, focus);
+      onAnalyze(null, focus, cam);
       await sleep(500);
       const t0 = Date.now();
       while (!stopped() && busyRef.current && Date.now() - t0 < 30000) await sleep(300);
     },
-    ask: (q) => decide("/api/blk-ask", { question: q }),
-    find: (thing) => decide("/api/blk-find", { thing }),
+    ask: (q) => decide("/api/blk-ask", { question: q, cam }),
+    find: (thing) => decide("/api/blk-find", { thing, cam }),
     led: (v) => { fetch("/api/led", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: v }) }).catch(() => {}); },
+    cam: (n) => { cam = n; },
     log: (txt) => onNote?.(txt),
     say: (txt) => speak(txt),
     sensors: () => packetRef?.current,
@@ -84,6 +86,7 @@ async function blkOnBoard({ code, nodes, slots }, io, deps, stopped) {
         case "say": io.say(txt()); break;
         case "log": io.log(txt()); break;
         case "led": io.led(blkClamp("led", blkEval(node.arg, ctx) || 0)); break;
+        case "cam": io.cam(blkClamp("cam", blkEval(node.arg, ctx) || 0)); break;
         case "analyze": await io.analyze(txt()); break;
         case "ask": val = (await io.ask(txt())) ? 1 : 0; break;
         case "find": val = (await io.find(txt())) ? 1 : 0; break;

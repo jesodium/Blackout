@@ -132,6 +132,7 @@ async function exec(text, { sensors = {}, maxSteps = 200, ai = {} } = {}) {
     say: (t) => log.push("say:" + t),
     log: (t) => log.push("log:" + t),
     led: (v) => log.push("led:" + v),
+    cam: (v) => log.push("cam:" + v),
     ask: async (q) => { log.push("ask:" + q); return ai.ask ?? false; },
     find: async (t) => { log.push("find:" + t); return ai.find ?? false; },
     sensors: () => (typeof sensors === "function" ? sensors() : sensors),
@@ -181,6 +182,8 @@ assert.deepEqual(await exec("find bison\nif not found\n  say nothing\nend", { ai
   ["find:bison", "say:nothing"]);
 
 assert.deepEqual(await exec("led 999\nlog level {step}"), ["led:255", "log:level 2"]);
+assert.deepEqual(await exec("cam 9\nask is it clear behind"), ["cam:3", "ask:is it clear behind"]);
+assert.equal(serialize(parse("cam 2").program ?? parse("cam 2")), "cam 2");
 
 let dd = 100;
 const log3 = await exec("forward until dist < 30", { sensors: () => ({ dist: (dd -= 25) }) });
@@ -228,7 +231,7 @@ function simVm(text, { sensors = {}, ai = {}, maxTicks = 4000 } = {}) {
       case BOPS.jmpf: pc = test(i) ? pc + 1 : i.c; break;
       case BOPS.evt: {
         const n = nodes[i.b], c = ctx();
-        if (n.op === "led") log.push("led:" + clampArg("led", evalExpr(n.arg, c) || 0));
+        if (n.op === "led" || n.op === "cam") log.push(n.op + ":" + clampArg(n.op, evalExpr(n.arg, c) || 0));
         else log.push(n.op + ":" + interp(n.text, c));
 
         const slot = i.a === 2 ? i.c % 8 : 0xFF;
@@ -254,6 +257,7 @@ for (const [src, opts] of [
   ["def turn\n  right 400\nend\ncall turn\ncall turn", {}],
   ["forward 100\nstop\nforward 100", {}],
   ["led 999\nsay hi\n# nope\n~say skipped", {}],
+  ["cam 2\nask is it clear behind\nif answer = 1\n  back 100\nend", { ai: { ask: true } }],
   ["ask is it clear\nif answer\n  forward 100\nend", { ai: { ask: true } }],
   ["find bison\nif not found\n  say nothing\nend", { ai: { find: false } }],
   ["set n 5\nanalyze the wall\nsay {n}", {}],
