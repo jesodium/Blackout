@@ -86,19 +86,7 @@ void handleCmd(String c) {
   else if (c.startsWith("go,")) startRoutine(c.substring(3));
   else if (c.startsWith("drv,")) startDrive(c);
   else if (c.startsWith("blk,")) handleBlk(c);
-  else if (c.startsWith("armh,")) {                // bench trim: armh,<j>,<hold>[,<sag>]
-    int a = c.indexOf(',', 5);                     // sag is the same bias per 1000ms
-    int b = a > 0 ? c.indexOf(',', a + 1) : -1;    // of travel — one flat number
-    if (a > 0)                                     // cannot hold a joint at every pose
-      armSetHold(c.substring(5, a).toInt(),
-                 c.substring(a + 1, b > 0 ? b : c.length()).toInt(),
-                 b > 0 ? c.substring(b + 1).toInt() : 0);
-  }
-  else if (c.startsWith("armz,")) {               // "this is home" — the travel
-    String j = c.substring(5);                     // budget is dead reckoning and
-    armZero(j.length() ? j.toInt() : -1);          // drifts; bare armz, = all joints
-    Serial.println("arm travel zeroed");
-  }
+  else if (c.startsWith("armz,")) armHome();      // glide every joint to home
   else if (c.startsWith("arm,")) {
     int a = c.indexOf(',', 4);
     if (a < 0) armStopAll();                       // bare "arm," = all joints off
@@ -108,28 +96,15 @@ void handleCmd(String c) {
   else if (c.startsWith("hz,")) { tuneStep = PAIR_TUNE_N; buzzTone(c.substring(3).toInt()); }
 
   else if (c == "tune") { Serial.println("tune: replaying pairing tune"); startPairTune(); }
-  else if (c.startsWith("buz,")) {
-    buzzEnabled = c.substring(4).toInt() != 0;
-    if (!buzzEnabled) { buzzHz = 0; tuneStep = PAIR_TUNE_N; buzzPark(); }
-
-    else buzzLevel = "-";
-  }
-  else if (c.startsWith("cam,")) { camState = c.substring(4); if (!saver) updateOled(); }
+  else if (c.startsWith("buz,")) setBuzz(c.substring(4).toInt() != 0);
+  else if (c.startsWith("cam,")) camState = c.substring(4);
   else if (c.startsWith("hud,")) {
-    int sep = c.indexOf(',', 4);
+    int sep = c.indexOf(',', 4);                   // the metrics after it are the panel's own sensors
     hudLevel = (sep < 0) ? c.substring(4) : c.substring(4, sep);
-    hudMetrics = (sep < 0) ? "" : c.substring(sep + 1);
-    if (!saver) updateOled();
   }
 
   else if (c.startsWith("log")) {                   // "log," dumps, "log,clear" wipes
     if (c.endsWith("clear")) { logHead = 0; logCount = 0; logEvt(LOG_BOOT, resetBits); }
     dumpLog();
-  }
-  else if (c.startsWith("scr,")) { startSaver(c.substring(4).toInt()); updateOled(); }
-  else if (c.startsWith("oled,")) {
-    String msg = c.substring(5);
-    customMsg = (msg == "clear") ? "" : msg;
-    updateOled();
   }
 }

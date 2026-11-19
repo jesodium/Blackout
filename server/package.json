@@ -37,7 +37,8 @@
     "test:camusb": "node src/camserial.js --selftest",
     "test:lidar": "node src/lidar.js --selftest",
     "test:mcp": "node mcp.mjs --selftest",
-    "mcp": "node mcp.mjs"
+    "mcp": "node mcp.mjs",
+    "build:web": "esbuild web/sage.jsx --bundle --minify --format=esm --jsx=automatic --target=chrome120 --define:process.env.NODE_ENV='\"production\"' --outfile=public/js/sage.bundle.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
@@ -48,5 +49,13 @@
     "serialport": "^13.0.0",
     "sharp": "^0.35.4",
     "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@hugeicons/core-free-icons": "^4.4.0",
+    "@hugeicons/react": "^1.1.10",
+    "esbuild": "^0.28.2",
+    "motion": "^14.14.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   }
 }

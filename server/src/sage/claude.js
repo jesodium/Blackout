@@ -13,6 +13,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { app, io, localReq, PORT } = require("../http");
+const { folderLine } = require("./context");
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const CLAUDE_CWD = process.env.CLAUDE_CWD || os.homedir();
@@ -110,7 +111,11 @@ app.post("/api/claude", async (req, res) => {
   if (child) return res.status(409).json({ error: "Claude is still working on the last one" });
   const session = /^[\w-]{8,64}$/.test(req.body?.session || "") ? req.body.session : null;
   try {
-    const r = await runClaude({ text, session, lang: req.body?.lang, model: req.body?.model, effort: req.body?.effort });
+    // a chat inside a mission folder: Claude reads the same folder Sage does, fresh
+    // each turn (notes and other chats move on between turns, a resumed session doesn't)
+    const folder = folderLine(req.body?.mission, req.body?.chat)[0]?.content;
+    const ask = folder ? `${folder}\n\n---\nThe operator says:\n${text}` : text;
+    const r = await runClaude({ text: ask, session, lang: req.body?.lang, model: req.body?.model, effort: req.body?.effort });
     res.json({ text: r.stopped ? "Stopped." : r.text, session: r.session, cost: r.cost ?? null });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });

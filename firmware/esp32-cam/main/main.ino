@@ -100,7 +100,7 @@ static void camIdentify() {
 #define NET_HOTSPOT 2
 #define NET_ROUTER  3
 #define NET_NONE    4
-#define CAM_NETWORK NET_NONE
+#define CAM_NETWORK NET_HOTSPOT
 
 static const struct {
   const char *ssid, *pass;
@@ -205,6 +205,7 @@ static int camSet(const char* var, int v) {
   if (!s) return -1;
   int ok = -1;
   if      (!strcmp(var, "framesize"))    ok = s->set_framesize(s, (framesize_t)v);
+  else if (!strcmp(var, "quality"))      ok = s->set_quality(s, v);
   else if (!strcmp(var, "brightness"))   ok = s->set_brightness(s, v);
   else if (!strcmp(var, "contrast"))     ok = s->set_contrast(s, v);
   else if (!strcmp(var, "saturation"))   ok = s->set_saturation(s, v);

@@ -10,9 +10,8 @@ const PORT = process.env.PORT || 3000;
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*", methods: ["GET", "POST"] }
-});
+// no cors: every dashboard (laptop, electron, tablets) is served from this server
+const io = new Server(server);
 
 // a mission folder goes back whole (every chat's transcript), past the 100kb default
 app.use(express.json({ limit: "8mb" }));
@@ -36,7 +35,7 @@ const LOOPBACK = ["127.0.0.1", "::1", "::ffff:127.0.0.1"];
 // Driving is loopback only: a tunnel delivers remote clients FROM loopback, so a
 // request carrying a proxy header is never local.
 const localReq = (req) => !req.get("cf-connecting-ip") && !req.get("x-forwarded-for")
-  && LOOPBACK.includes(req.socket.remoteAddress);
+  && LOOPBACK.includes(req.socket.remoteAddress) && ownOrigin(req.get("origin"));
 
 // IMPORTANT NOTE: a tunnel (scripts/tunnel.sh) delivers every remote client FROM loopback,
 // so a request carrying a proxy header is never the host -- its ip is the header's.
@@ -44,6 +43,12 @@ const fwdIp = (s) => {
   const h = s.handshake.headers;
   return h["cf-connecting-ip"] || String(h["x-forwarded-for"] || "").split(",")[0].trim() || null;
 };
-const isHost = (s) => !fwdIp(s) && LOOPBACK.includes(s.handshake.address);
+// Loopback isn't enough: any site open in the operator's chrome can reach
+// localhost:3000 too. A browser always sends Origin cross-site, so a foreign one
+// fails; a missing one is a local node client (tools, tests), already on this PC.
+const OWN = new Set([`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`]);
+const ownOrigin = (o) => !o || OWN.has(o);
+const isHost = (s) => !fwdIp(s) && LOOPBACK.includes(s.handshake.address)
+  && ownOrigin(s.handshake.headers.origin);
 
 module.exports = { app, server, io, PORT, localReq, fwdIp, isHost };

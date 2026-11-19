@@ -30,7 +30,7 @@ from flask import Flask, request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MOVES_D = os.path.join(HERE, os.pardir, "data", "arm_moves")   # one file per take, name = filename
-JOINTS = ["base", "shoulder", "elbow", "wrist", "gripwrist", "gripper"]
+JOINTS = ["base", "shoulder", "elbow", "gripper"]   # MeArm, order = armSv[] in arm.h
 REPEAT_MS = 300      # under the board's 800ms ARM_JOG_MS deadman
 REC_MAX = 5000       # a recorder left on overnight must not eat the machine
 NUDGE_MS = 120       # bench knob: a tap of the small arrows is this long at the
@@ -44,7 +44,7 @@ SPEED_MIN = 20       # floor on the per-joint speed slider. Below roughly this t
                      # everything the joint has (lifting the shoulder); it scales
                      # the +/-100 the arrows send, so the speed rides into the
                      # recorded `arm,<j>,<speed>` and replays exactly as jogged.
-BOARD_NAME = "BLACKOUT-V3"    # what BLE pairing matches on, same as the dashboard
+BOARD_NAME = "BLACKOUT-V4"    # what BLE pairing matches on, same as the dashboard
 BLE_CMD = "19b10002-e8f2-537e-4f6c-d104768a1214"   # cmdChar in main.ino
 BLE_SVC = "19b10000-e8f2-537e-4f6c-d104768a1214"   # sensorService in main.ino
 
@@ -69,8 +69,12 @@ LOCK = threading.RLock()
 DRAIN = [False]
 
 
+ANGLES = {}   # joint name -> last angle the board printed on release (USB only)
+
+
 def _drain():
-    """Read the board's serial output and throw it away, forever.
+    """Read the board's serial output and throw it away, forever — except the
+    `arm <joint> @ <deg>` line armJog() prints on release, kept for the readout.
 
     IMPORTANT NOTE: nothing here wants the telemetry, but nothing may ignore it
     either. main.ino prints its CSV line at 10Hz; with no reader the tty input
@@ -79,11 +83,17 @@ def _drain():
     the command written a moment ago sits unread and every jog lags the button.
     Measured 2026-09-02: 60ms a command before this, ~1ms after.
     """
+    buf = b""
     while True:
         s = ser
         try:
             if s:
-                s.read(4096)                # returns on `timeout`, data or not
+                buf += s.read(4096)         # returns on `timeout`, data or not
+                *lines, buf = buf.split(b"\n")
+                for ln in lines:
+                    m = re.match(rb"arm (\w+) @ (-?\d+)", ln.strip())
+                    if m:
+                        ANGLES[m.group(1).decode()] = int(m.group(2))
                 continue
         except Exception:
             pass                            # closed under us; port() reopens
@@ -135,7 +145,7 @@ def is_board(d, ad):
 
     IMPORTANT NOTE: main.ino only calls BLE.setLocalName(), so the GAP device
     name stays ArduinoBLE's default "Arduino" and only the *advertisement's*
-    local name says BLACKOUT-V3. bleak's find_device_by_name() reads the former,
+    local name says BLACKOUT-V4. bleak's find_device_by_name() reads the former,
     so it never matched and the link read as "not advertising" with the board
     sitting right there advertising (2026-09-02). The name is the fallback.
     """
@@ -397,14 +407,11 @@ input.ren{width:100%;background:#0f0d0a;border:1px solid var(--acc);border-radiu
  <div id=joints></div>
  <p class=hint>&#9664;&#9654; jog while held &nbsp;·&nbsp; &#9666;&#9656; tap = %NUDGE%ms, then parked
   &nbsp;·&nbsp; the slider is that row's speed, and it is recorded with the take</p>
- <label class=hint><input type=checkbox id=parkchk checked> park on release (hold against gravity)</label>
 </div>
 
 <div class=pane>
- <div class=hd><span>travel</span></div>
- <div class=row><button class=wide onclick="send('armz,')">zero travel (this is home)</button>
-  <button onclick="send('arml,0')">limits off</button>
-  <button onclick="send('arml,1')">limits on</button></div>
+ <div class=hd><span>home</span></div>
+ <div class=row><button class=wide onclick="send('armz,')">all joints home (record takes from here)</button></div>
 </div>
 
 <div class=pane>
@@ -448,14 +455,10 @@ function setspd(i,v){SPD[i]=v;localStorage.armSpd=JSON.stringify(SPD);
  if(held&&held[0]===i)held[1]=Math.sign(held[1])*v}   // mid-hold: felt on the next repeat
 function hold(i,d){return e=>{e.preventDefault();d=Math.sign(d)*spd(i);
  held=[i,d];live(i,1);send('arm,'+i+','+d)}}
-// Park, never bare `arm,` — that one is armStopAll(), a kill of all 16. Parking
-// applies whatever hold bias armSv[]/armh, last set, and that pulse is the only
-// thing holding a gravity-loaded 360 up: released, it free-wheels either way.
-// Unchecked overrides the bias to 0 (limp) and there is no per-joint command to
-// put the table's number back — reset the board for that.
+// Park, never bare `arm,` — that one is armStopAll(), a kill of all 16 that
+// leaves the SG90s limp. arm,<j>,0 stops the joint where it is, still holding.
 function park(i){held=null;live(i,0);
- if(!parkchk.checked)send('armh,'+i+',0',1);
- send('arm,'+i+',0')}
+ send('arm,'+i+',0');setTimeout(refresh,300)}   // pick up the angle it printed
 function rel(i){return()=>{if(held&&held[0]===i)park(i)}}
 const live=(i,on)=>joints.children[i]&&joints.children[i].classList.toggle('live',!!on);
 // The small arrows are the big ones at full power for NUDGE ms and then parked,
@@ -466,7 +469,7 @@ const NUDGE=%NUDGE%; let nb=0;
 function nudge(i,d){return e=>{e.preventDefault();const n=++nb;d=Math.sign(d)*spd(i);
  live(i,1);send('arm,'+i+','+d);
  setTimeout(()=>{if(n===nb&&!held)park(i)},NUDGE)}}
-joints.innerHTML=J.map((n,i)=>`<div class=jrow><span>${n} <small>j${i}</small></span>
+joints.innerHTML=J.map((n,i)=>`<div class=jrow><span>${n} <small>j${i}</small> <b id=deg${i}>–</b></span>
  <label class=spd title="speed for this joint — recorded with the take"><input type=range
   data-s=${i} min=%SPDMIN% max=100 step=5 value=${spd(i)}><b>${spd(i)}%</b></label>
  <button data-j=${i} data-d=-100 title="jog while held">&#9664;</button>
@@ -493,6 +496,7 @@ function paint(j){
  linkst.textContent=j.link+(j.up?' ready':' down');
  usb.classList.toggle('on',j.link==='usb');ble.classList.toggle('on',j.link==='ble');
  jstate.textContent=j.play?'playing '+j.play:'';
+ J.forEach((n,i)=>{const d=j.deg&&j.deg[n];if(d!=null)document.getElementById('deg'+i).textContent=d+'\u00B0'});
  recbtn.textContent=j.rec?'\\u25CF stop recording':'\\u25CF record';
  recbtn.classList.toggle('on',j.rec);
  recmeta.textContent=j.steps?j.steps+' steps · '+secs(j.ms):'';
@@ -563,7 +567,7 @@ app = Flask(__name__)
 def state():
     return {"rec": REC["on"], "steps": len(REC["steps"]), "link": LINK["kind"],
             "ms": dur(REC["steps"]),
-            "play": PLAY["name"] if PLAY["on"] else "",
+            "play": PLAY["name"] if PLAY["on"] else "", "deg": ANGLES,
             "up": ble_up() if LINK["kind"] == "ble" else bool(find_port()),
             "moves": {k: dict(n=len(steps_of(v) or []), ms=dur(steps_of(v)),
                               **flags_of(v))
@@ -721,17 +725,12 @@ def selftest():
         == [(0, "arm,0,2"), (4, "arm,0,1")], "steps replay out of order"
     assert clean([{"ms": -3, "cmd": "stop"}])[0]["ms"] == 0
     assert clean([{"ms": 0, "cmd": "armh,1,8"}]), "a take must be able to carry its hold"
-    # the speed slider is only a knob if its floor still turns the servo: below
-    # roughly 100us off neutral the pulse is inside the deadband and the joint
-    # buzzes. spans live in arm.h, so check against the narrowest one there.
+    # joint index is the whole protocol: arm,<j>,... must mean the same joint
+    # here and in armSv[], or a recorded take moves the wrong servo.
     with io.open(os.path.join(HERE, os.pardir, os.pardir, "firmware", "giga", "main", "arm.h"),
                  encoding="utf-8") as f:
         h = f.read()
-    dflt = int(re.search(r"#define ARM_SPAN_US\s+(\d+)", h).group(1))
-    spans = [dflt if v.strip() == "ARM_SPAN_US" else int(v)
-             for v in re.findall(r"\{\s*\d+,\s*\w+,\s*\d+,\s*([^,]+),", h)]
-    assert spans and min(spans) * SPEED_MIN / 100 > 100, \
-        "SPEED_MIN is inside the servo deadband — a slow jog would only buzz"
+    assert re.findall(r'\{[^{}]*"(\w+)"\s*\}', h) == JOINTS, "JOINTS out of step with armSv[] in arm.h"
     with app.test_request_context("/"):
         page = index()
     assert "type=range" in page.split("joints.innerHTML")[1].split("`).join")[0], \

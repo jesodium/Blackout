@@ -1,38 +1,136 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="color-scheme" content="dark">
-  <title>BLACKOUT DASHBOARD</title>
-
-  <!-- everything below is self-hosted: no cdn on comp day -->
-  <link rel="stylesheet" href="vendor/fonts.css">
-
-  <link rel="stylesheet" href="css/style.css">
-  <link rel="icon" href="brand.svg">
-
-  <!-- globals used by react -->
-  <script src="vendor/three.min.js"></script>
-  <script src="vendor/GLTFLoader.js"></script>
-  <script src="/socket.io/socket.io.js"></script>
-
-  <script type="importmap">
-  {
-    "imports": {
-      "react": "/vendor/react.js",
-      "react-dom": "/vendor/react-dom.js",
-      "react-dom/client": "/vendor/react-dom.js",
-      "htm": "/vendor/htm.js",
-      "qrcode": "/vendor/qrcode.js"
-    }
-  }
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blackout</title>
+  <link rel="stylesheet" href="css/dash.css">
+  <link rel="stylesheet" href="js/sage.bundle.css">
+  <script>
+    if (window.blackout) document.documentElement.classList.add("desktop");
+    // theme before first paint so light mode doesn't flash dark; dash.js keeps it in sync
+    try {
+      var t = localStorage.getItem("theme") || "dark";
+      document.documentElement.dataset.theme = t === "system" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : t;
+    } catch (e) {}
   </script>
 </head>
 <body>
-  <a class="skip-link" href="#sensors">Skip to sensor readings</a>
-  <div id="root"></div>
-  <noscript>This console requires JavaScript.</noscript>
-  <script type="module" src="js/app.js"></script>
+<div class="half">
+  <header class="bar">
+    <span class="brand">blackout</span>
+
+    <button type="button" id="link" class="btn link" data-state="off">
+      <span class="dot" aria-hidden="true"></span>
+      <span id="link-label">Link robot</span>
+    </button>
+
+    <span class="stat" data-t-title="pingTitle">
+      <span class="k" data-t="ping">ping</span> <span id="ping">—</span>
+    </span>
+
+    <span class="stat" id="cams" data-t-title="camsTitle">
+      <span class="k" data-t="cams">cams</span>
+    </span>
+
+    <span class="grow"></span>
+
+    <button type="button" id="estop" class="btn estop" data-t-title="stopTitle" data-t="stop">Stop</button>
+
+    <button type="button" id="settings" class="btn icon" data-t-title="settings">
+      <i class="i-gear" aria-hidden="true"></i>
+    </button>
+  </header>
+
+  <main id="main">
+    <section id="feeds">
+      <figure class="feed" data-cam="0" data-state="loading"><img alt=""><figcaption><span class="k" data-t="camFront"></span> <span class="k st"></span><button type="button" class="btn icon rot" data-t-title="rotate">⟳</button><button type="button" class="btn icon set" data-t-title="camSettings" aria-expanded="false">⚙</button></figcaption></figure>
+      <figure class="feed" data-cam="1" data-state="loading"><img alt=""><figcaption><span class="k" data-t="camArm"></span> <span class="k st"></span><button type="button" class="btn icon rot" data-t-title="rotate">⟳</button><button type="button" class="btn icon set" data-t-title="camSettings" aria-expanded="false">⚙</button></figcaption></figure>
+      <figure class="feed lidar" id="lidar" data-state="none"><svg viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="48"/><circle cx="100" cy="100" r="96"/><path d="M100 4v7"/><circle class="dot" cx="100" cy="100" r="2"/></svg><canvas></canvas><figcaption><span class="k" data-t="lidar"></span> <span class="k st"></span></figcaption></figure>
+    </section>
+    <section id="sensors" aria-live="off" data-stale>
+      <div class="tile"><span class="k" data-t="temp"></span><i class="lvl"></i><b id="s-temp">—</b><span class="k">°C</span></div>
+      <div class="tile"><span class="k" data-t="humid"></span><i class="lvl"></i><b id="s-humid">—</b><span class="k">%</span></div>
+      <div class="tile"><span class="k" data-t="dist"></span><i class="lvl"></i><b id="s-dist">—</b><span class="k">cm</span></div>
+      <div class="tile"><span class="k" data-t="pressure"></span><i class="lvl"></i><b id="s-pressure">—</b><span class="k">hPa</span></div>
+      <div class="tile"><span class="k" data-t="alt"></span><i class="lvl"></i><b id="s-alt">—</b><span class="k">m</span></div>
+      <div class="tile"><span class="k" data-t="lux"></span><i class="lvl"></i><b id="s-lux">—</b><span class="k">lx</span></div>
+      <div class="tile"><span class="k" data-t="gas"></span><i class="lvl"></i><b id="s-gas">—</b><span class="k">/100</span></div>
+    </section>
+  </main>
+</div>
+
+<div class="split" id="split" role="separator" aria-orientation="vertical" aria-label="Resize Sage panel" tabindex="0"></div>
+
+<aside class="half sage" aria-label="Sage">
+  <header class="bar">
+    <span class="brand">sage</span>
+    <span class="grow"></span>
+    <span class="k" id="sage-state"></span>
+  </header>
+
+  <div id="sage-root"></div>
+</aside>
+
+  <!-- electron only: chromium has no ble chooser of its own there -->
+  <dialog id="ble" aria-label="Link robot">
+    <header class="dlg-head">
+      <span data-t="link">Link robot</span>
+      <button type="button" class="btn icon" data-cancel data-t-title="cancel">✕</button>
+    </header>
+    <div class="scan" aria-hidden="true"></div>
+    <ul id="ble-list"></ul>
+    <footer class="dlg-foot">
+      <span class="k" data-t="scanning">scanning…</span>
+      <button type="button" class="btn" data-cancel data-t="cancel">Cancel</button>
+    </footer>
+  </dialog>
+
+  <dialog id="prefs" aria-label="Settings">
+    <header class="dlg-head">
+      <span data-t="settings">Settings</span>
+      <button type="button" class="btn icon" data-close data-t-title="close">✕</button>
+    </header>
+    <form id="prefs-form" method="dialog">
+      <fieldset class="pref">
+        <legend data-t="theme">Theme</legend>
+        <div class="seg">
+          <label><input type="radio" name="theme" value="dark"><span data-t="dark">Dark</span></label>
+          <label><input type="radio" name="theme" value="light"><span data-t="light">Light</span></label>
+          <label><input type="radio" name="theme" value="system"><span data-t="system">Match system</span></label>
+        </div>
+      </fieldset>
+      <fieldset class="pref">
+        <legend data-t="language">Language</legend>
+        <div class="seg">
+          <label><input type="radio" name="lang" value="en"><span>English</span></label>
+          <label><input type="radio" name="lang" value="es"><span>Español</span></label>
+        </div>
+      </fieldset>
+      <label class="pref tog"><span data-t="spaceStop">Space bar stops the robot</span><input type="checkbox" name="spaceStop"></label>
+      <label class="pref tog"><span data-t="calm">Reduce animations</span><input type="checkbox" name="calm"></label>
+      <div class="pref tog"><span data-t="layout">Sage panel width</span><button type="button" class="btn" id="prefs-reset" data-t="reset">Reset</button></div>
+
+      <details id="prefs-adv">
+        <summary data-t="advanced">Advanced</summary>
+        <!-- electron only: keys live in userData; a plain browser reads server/.env -->
+        <p class="k" id="prefs-web" data-t="envNote">API keys live in server/.env. Edit it and restart the server.</p>
+        <div id="prefs-keys" hidden>
+          <label>Cerebras key <input name="CEREBRAS_API_KEY" type="password" autocomplete="off" spellcheck="false"></label>
+          <label>Cerebras model <input name="CEREBRAS_MODEL" placeholder="qwen-3.8-27b" spellcheck="false"></label>
+          <label>Deepgram key <input name="DEEPGRAM_API_KEY" type="password" autocomplete="off" spellcheck="false"></label>
+          <label>Voice <input name="TTS_VOICE" placeholder="en-US-AndrewNeural" spellcheck="false"></label>
+        </div>
+      </details>
+    </form>
+    <footer class="dlg-foot">
+      <span class="k" id="prefs-note"></span>
+      <button type="submit" form="prefs-form" class="btn primary" id="prefs-save" data-t="save" hidden>Save &amp; restart</button>
+    </footer>
+  </dialog>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="js/dash.js"></script>
+  <script type="module" src="js/sage.bundle.js"></script>
 </body>
 </html>

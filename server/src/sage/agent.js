@@ -83,15 +83,22 @@ function takeSnapshot(reason) {
   recorder.mark("finding", text);
 }
 
-async function askSage(messages, { maxTokens = 400, confirm = false, lamp = false } = {}) {
+// Qwen's thinking is off by default (brain.js); the dashboard's effort turns it on.
+// The thinking is billed against max_tokens, so each level gets room on top of the
+// reply's own budget or the json gets cut off mid-thought.
+const THINK_ROOM = { low: 1000, medium: 2000, high: 4000 };
+
+async function askSage(messages, { maxTokens = 400, confirm = false, lamp = false, effort = null } = {}) {
+  const think = THINK_ROOM[effort] ? { reasoning_effort: effort } : {};
   const resp = await chat({
+    ...think,
     // json_object because the language instruction costs her the envelope:
     // asked to answer in Spanish she answered in Spanish PROSE, and a reply
     // with no json is a reply with no status, no tool and no card -- 3 of 8
     // carried a status against 8 of 8 with the mode on. parseSage still takes
     // bare prose, so this is belt over braces, not a new contract.
     messages: langLast(messages),
-    max_tokens: maxTokens,
+    max_tokens: maxTokens + (THINK_ROOM[effort] || 0),
     response_format: { type: "json_object" },
   });
   // names the cause when parseSage has to salvage: "length" is her running out
@@ -182,7 +189,7 @@ async function runTool(name, arg) {
   return null;
 }
 
-async function agentLoop(messages, { maxTokens = 400, confirm = false, lamp = false } = {}) {
+async function agentLoop(messages, { maxTokens = 400, confirm = false, lamp = false, effort = null } = {}) {
   const msgs = messages.slice();
   const steps = [];
   let sage;
@@ -192,7 +199,7 @@ async function agentLoop(messages, { maxTokens = 400, confirm = false, lamp = fa
   // language line below it -- and below the image, which is the half that a note
   // pasted onto the text part here could never do.
   for (let i = 0; i < MAX_TOOL_STEPS; i++) {
-    sage = await askSage(msgs, { maxTokens, confirm, lamp });
+    sage = await askSage(msgs, { maxTokens, confirm, lamp, effort });
     if (!wantsTool(sage, i, MAX_TOOL_STEPS)) break;
     if (confirm && !(await askConfirm(sage.tool, sage.toolArg))) {
       const step = { kind: "tool", name: sage.tool, arg: sage.toolArg || null,

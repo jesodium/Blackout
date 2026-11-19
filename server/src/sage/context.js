@@ -63,6 +63,7 @@ function folderLine(missionId, chatId) {
   const finds = (m.chats || []).flatMap((c) => c.findings || []).slice(-15);
   const others = (m.chats || []).filter((c) => c.id !== chatId && c.messages?.length).slice(-6);
   const out = [`MISSION FOLDER "${clip(m.title, 60)}" — this chat is one of several in it. Use what follows as your memory; it's yours, never read it out as a list.`];
+  if (m.brief) out.push(`What the crew wrote this mission is for:\n${clip(m.brief, 1200)}`);
   if (notes.length) out.push(`Notes you kept in this mission:\n${notes.map((n) => `- ${clip(n, 200)}`).join("\n")}`);
   if (finds.length) out.push(`Found so far:\n${finds.map((f) => `- ${clip(f.text, 120)}`).join("\n")}`);
   if (others.length) out.push(`Other chats in this mission:\n${others.map((c) => {

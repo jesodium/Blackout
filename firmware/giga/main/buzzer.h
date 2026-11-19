@@ -65,12 +65,8 @@ void tickBuzz() {
   buzzSet(!buzzOn);
 }
 
-void tickPanel() {
-  unsigned long now = millis();
-  if (now - lastOledPhase >= OLED_PHASE_INTERVAL) { lastOledPhase = now; oledFrame++; }
-  if (now - lastOledDraw >= OLED_DRAW_INTERVAL) {
-    lastOledDraw = now;
-    stepSaver();
-    updateOled();
-  }
+void setBuzz(bool on) {
+  buzzEnabled = on;
+  if (!on) { buzzHz = 0; tuneStep = PAIR_TUNE_N; buzzPark(); }
+  else buzzLevel = "-";   // re-arm: the next tickBuzz re-applies the current hud level
 }

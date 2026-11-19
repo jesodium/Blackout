@@ -2,7 +2,8 @@
 #include <Wire.h>
 #include <Adafruit_BME280.h>
 #include <DHT11.h>
-#include <U8g2lib.h>
+#include <SPI.h>
+#include <Arduino_GFX_Library.h>
 #include "routines.h"
 #include "blkvm.h"
 #include "arm.h"
@@ -14,6 +15,7 @@
 #define ECHO_PIN 50
 
 #define DHT_PIN A5
+#define DHT_RETRY_MS 30000
 
 #define RELAY_CAM_LED 26
 #define RELAY_STRIP   28
@@ -32,30 +34,13 @@ static const uint8_t RELAY_PINS[] = {RELAY_CAM_LED, RELAY_STRIP, RELAY_LED};
 #define BUZZ_BEEP_MS 120
 #define BUZZ_GAP_MS 600
 
-#define OLED_ADDR   0x3C
-#define OLED_I2C_HZ 400000    // the specced clock. 1M is the usual overclock but the panel came
-                              // up dark on it here (2026-09-02) -- it acks at 0x3C either way,
-                              // so raise it again only with the panel in front of you.
-
-
-#define OLED_W 128
-#define OLED_H 64
-U8G2_SSD1306_128X64_NONAME_F_SW_I2C oled(U8G2_R0, U8X8_PIN_NONE, U8X8_PIN_NONE, U8X8_PIN_NONE);
-
-// u8g2's HW_I2C constructor only knows the `Wire` object, and `Wire` is the arm's PCA9685
-// bus and nothing else on purpose (a stalled servo browns the chip out and it clamps SDA).
-// so the panel gets its own byte callback on Wire1 (sda1 d102 / scl1 d101), next to the bme280.
-// the SW_I2C constructor above is only there for its gpio/delay callback -- byte_cb is
-// replaced in setup(), so no pin is ever bit-banged.
-// Wire1's txBuffer is 256B and a tile row is 1 control byte + 128 data, so it fits.
-
 // ---- ble pump ----
 // ArduinoBLE on mbed runs the HCI transport in its own thread, parking received
 // packets in a fixed buffer that the SKETCH thread has to drain by calling
 // BLE.poll(). When that buffer fills the controller's packets are DROPPED, not
 // queued (HCICordioTransport.cpp) — so a command never arrives and the link goes
 // quiet for no visible reason, then comes back. Polling once a loop() pass is not
-// enough here: an oled frame is ~23ms of i2c and pulseIn() can sit for
+// enough here: a panel redraw is several ms of spi and pulseIn() can sit for
 // SONAR_TIMEOUT_US, both longer than the 30-50ms connection interval.
 // This is why the stall showed up in the dashboard and the Electron app too — it
 // was never the host, and no host-side fix could have touched it.
@@ -89,6 +74,9 @@ DHT11 dht(DHT_PIN);
 int temp = 0, humid = 0;
 // MQ9 relative gas index: 100 = cleanest raw ever seen, 50 = raw doubled. No ppm, no calibration.
 // IMPORTANT NOTE: baseline is the running minimum, leaking up 0.1%/sample so a cold-start dip heals; raw 0 = unwired = 0.
+// Sensor heater needs time before raw means anything: gasIdx = -(seconds left) (dash shows a countdown) until GAS_WARM_MS after boot, baseline starts after.
+// IMPORTANT NOTE: fixed 3 min preheat; a brand-new MQ wants ~24h burn-in once, raise it if the index still drifts.
+const unsigned long GAS_WARM_MS = 180000UL;
 float mqBase = 0, gasIdx = 0;
 float pressure = 0;
 float distCm = 999;
@@ -111,11 +99,9 @@ float sonarRing[SONAR_ITER];
 uint8_t sonarIdx = 0;
 
 
-#include "panel.h"
-
-#include "savers.h"
-
 #include "buzzer.h"
+
+#include "panel.h"
 
 // ---- setup ----
 void setup() {
@@ -150,17 +136,9 @@ void setup() {
   luxOk = (Wire2.endTransmission() == 0);
   Serial.println(luxOk ? "BH1750 ok" : "BH1750 not found");
 
-  oled.getU8x8()->byte_cb = oledI2c1;
-  oled.setI2CAddress(OLED_ADDR << 1);
-  oled.setBusClock(OLED_I2C_HZ);
-
-  delay(100);   // panel's charge pump rail comes up slower than the h747; begin() into an
-                // unsettled rail is half the dark-at-boot cases.
-  oled.begin();
-  oled.setContrast(255);
-  updateOled();
 
   for (uint8_t p : RELAY_PINS) { digitalWrite(p, RELAY_OFF); pinMode(p, OUTPUT); }
+  panelBegin();   // boot screen, ~0.6s of spi before ble so nobody waits on it
   buzzPark();
   for (uint8_t p : MOTOR_PINS) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
   pinMode(ENA, OUTPUT); pinMode(ENB, OUTPUT);
@@ -220,8 +198,7 @@ void loop() {
     logEvt(bleConnected ? LOG_BLE_UP : LOG_BLE_DOWN, connectAt - was);
     Serial.println(bleConnected ? "BLE central connected" : "BLE central gone");
 
-    if (!bleConnected) { hudLevel = ""; hudMetrics = ""; saver = SCR_OFF; startPairTune(); }
-    updateOled();
+    if (!bleConnected) { hudLevel = ""; startPairTune(); }
   }
 
   if (cmdChar.written()) handleCmd(cmdChar.value());
@@ -236,21 +213,26 @@ void loop() {
   armTick();
 
   unsigned long now = millis();
-  bool busy = routine || blkPc >= 0 || blkLoading || drvEnd;
 
-  if (now - lastSend < (saver && !busy ? SAVER_SEND_INTERVAL : SEND_INTERVAL)) return;
+  if (now - lastSend < SEND_INTERVAL) return;
   lastSend = now;
 
   distF = medianPingCm();
   float dist = (distF < 0) ? 999 : distF;
   distCm = dist;
 
-  if (now - lastEnv >= (saver && !busy ? SAVER_ENV_INTERVAL : ENV_INTERVAL)) {
+  if (now - lastEnv >= ENV_INTERVAL) {
     lastEnv = now;
     int t = 0, h = 0;
 
-    if (dht.readTemperatureHumidity(t, h) == 0) { temp = t; humid = h; }
-    blePump();       // the dht bit-bangs its one-wire protocol for ~30ms
+    // the dht is only the bme's fallback, and an absent one blocks ~1s per read (the lib's
+    // timeout) -- that was a 1s loop stall every ENV_INTERVAL, felt as lag everywhere.
+    static unsigned long dhtRetryAt = 0;
+    if (!bmeOk && now >= dhtRetryAt) {
+      if (dht.readTemperatureHumidity(t, h) == 0) { temp = t; humid = h; }
+      else dhtRetryAt = now + DHT_RETRY_MS;
+      blePump();     // the dht bit-bangs its one-wire protocol for ~30ms
+    }
     if (bmeOk) {
       float p = bme.readPressure() / 100.0F;
       if (p > 300 && p < 1100) {
@@ -267,7 +249,8 @@ void loop() {
       if (bmeOk) { bmeMiss = 0; Serial.println("BME280 back"); }
     }
     int mq = analogRead(MQ_PIN);
-    if (mq > 5) {
+    if (mq > 5 && now < GAS_WARM_MS) gasIdx = -(float)((GAS_WARM_MS - now + 999) / 1000);
+    else if (mq > 5) {
       mqBase = (mqBase == 0 || mq < mqBase) ? mq : mqBase * 1.001f;
       if (mqBase > mq) mqBase = mq;
       gasIdx = 100.0f * mqBase / mq;

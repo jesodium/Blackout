@@ -3,7 +3,7 @@
 // stills are borrowed from, the mount angle, and the board's cam-connected icon.
 const { app, io, isHost } = require("./http");
 const { usbWrite } = require("./link");
-const { setFrameSource, setCamRot, pingCam } = require("./vision");
+const { setFrameSource, setCamRot, pingCam, camCount } = require("./vision");
 const camusb = require("./camserial");
 
 // ---- the cam over usb ----
@@ -99,6 +99,10 @@ app.post("/api/cam-rot", (req, res) => {
   setCamRot(v, cam);
   res.json({ ok: true, value: v, cam });
 });
+
+// the dashboard's cam dots, one bool per camera
+app.get("/api/cams", async (_req, res) =>
+  res.json(await Promise.all(Array.from({ length: camCount }, (_, i) => pingCam(1500, i)))));
 
 // the board's panel shows whether the cam answers
 let camConnected = null;

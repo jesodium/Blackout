@@ -52,7 +52,7 @@ app.post("/api/chat", async (req, res) => {
       ...camLine(),
       ...(handoff ? jobLine() : [{ role: "system", content: "CLAUDE LOCK: jobs can't be handed to Claude from this device. Set \"claude\" null; if asked for one, say it has to be asked from the crew's PC." }]),
       ...mapped,
-    ], { maxTokens: 400, confirm: req.body?.confirm === true, lamp });
+    ], { maxTokens: 400, confirm: req.body?.confirm === true, lamp, effort: req.body?.effort });
     if (!moves && reply) { reply.move = null; reply.arm = null; reply.tape = null; }
     // The hand-off always asks, in BYPASS too: it is a shell on the crew's PC and
     // she suggests, never drives. Asked off the main path like the lamp, so her
