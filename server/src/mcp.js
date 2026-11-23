@@ -5,6 +5,7 @@ const path = require("path");
 const { pathToFileURL } = require("url");
 const { app, io, localReq } = require("./http");
 const link = require("./link");
+const { stopTake } = require("./armplay");
 const state = require("./state");
 const { grabFrame, camCount } = require("./vision");
 const { setMission } = require("./sage/analysis");
@@ -18,6 +19,7 @@ app.post("/api/cmd", (req, res) => {
   if (!localReq(req)) return res.status(403).json({ error: "loopback only" });
   const w = String(req.body?.cmd || "").trim();
   if (!w || /[\r\n]/.test(w)) return res.status(400).json({ error: "one command line required" });
+  if (w === "stop") stopTake();
   link.usbWrite(w);     // the cable, if one is open
   io.emit("cmd", w);    // and the host browser, which relays over BLE
   res.json({ ok: true, sent: w, link: link.linked() });

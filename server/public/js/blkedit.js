@@ -1255,7 +1255,7 @@ $("save-run").onclick = async () => {
   closeSheets();
   if (window.parent === window) return setStatus("open the editor from the console to run on the rover", "is-err");
   window.parent.postMessage({ type: "blk:run", name }, "*");
-  setStatus(`handed "${name}" to the console — watch the rover`, "is-ok");
+  setStatus(`handed "${name}" to the dash — watch the rover`, "is-ok");
 };
 $("new").onclick = () => {
   setName("");

@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld("blackout", {
   saveFile: (opts) => ipcRenderer.invoke("dialog:save", opts),
   openFile: (opts) => ipcRenderer.invoke("dialog:open", opts),
   onSettingsOpen: sub("settings:open"),
+  onDebugToggle: sub("debug:toggle"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSettings: (values) => ipcRenderer.invoke("settings:save", values),
   relaunch: () => ipcRenderer.invoke("app:relaunch"),
@@ -22,4 +23,11 @@ contextBridge.exposeInMainWorld("blackout", {
   getTunnel: () => ipcRenderer.invoke("tunnel:get"),
   onTunnel: sub("tunnel:state"),
   mcp: { get: () => ipcRenderer.invoke("mcp:get"), install: () => ipcRenderer.invoke("mcp:install") },
+  voice: process.platform === "darwin" ? {
+    available: () => ipcRenderer.invoke("voice:available"),
+    start: (lang) => ipcRenderer.invoke("voice:start", lang),
+    stop: () => ipcRenderer.invoke("voice:stop"),
+    cancel: () => ipcRenderer.invoke("voice:cancel"),
+    onEvent: sub("voice:event"),
+  } : null,
 });

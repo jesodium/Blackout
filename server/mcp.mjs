@@ -52,7 +52,7 @@ export const TOOLS = {
       "Send one raw command line to the board, exactly what the dashboard sends.",
       "Drive (time-limited on the board, 50-10000ms, default 800): drv,fwd|back|left|right,<pwm 0-255>[,<ms>] or drv,tank,<l -255..255>,<r>[,<ms>]. Below ~90 pwm the motors only buzz. left/right spins only work at pwm 255.",
       "stop = halt everything. go,<routine> runs an on-board routine (test, mission, test2, run).",
-      "Arm: arm,<joint 0-5>,<speed -100..100> (0 base,1 shoulder,2 elbow,3 wrist,4 gripwrist,5 gripper); every joint is a 360 with no end stop and a 3s deadman, so re-send within 3s to keep moving and send arm,<j>,0 or arm, to stop.",
+      "Arm (MeArm, 4 positional SG90s, firmware clamps each to its lo/hi): arm,<joint 0-3>,<speed -100..100> jogs (0 base,1 shoulder,2 elbow,3 gripper) with a 1s deadman, re-send to keep moving, arm,<j>,0 parks holding; armto,<j>,<deg>[,1] glides to an angle (,1 = go limp on arrival); armz, homes all; bare arm, kills every pulse. Gripper: armto,3,110 open, armto,3,60 close and hold, armto,3,60,1 close then let go.",
       "Screensaver: scr,<n>, 0 off. Buzzer mute: buz,<0|1>.",
       "Check robot_status / robot_camera before and after moving -- there is no other feedback.",
     ].join(" "),

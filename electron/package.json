@@ -6,7 +6,8 @@
   "main": "main.js",
   "scripts": {
     "app": "electron .",
-    "dist": "electron-builder --mac"
+    "build:voice": "swiftc -O native/SpeechHelper.swift -o build/speech-helper -framework Speech -framework AVFoundation -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker native/SpeechHelper-Info.plist",
+    "dist": "npm run build:voice && electron-builder --mac"
   },
   "build": {
     "appId": "org.blackout.dashboard",
@@ -37,6 +38,10 @@
           "**/*",
           "!.cache/**"
         ]
+      },
+      {
+        "from": "build/speech-helper",
+        "to": "speech-helper"
       }
     ],
     "mac": {
@@ -49,7 +54,9 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSBluetoothAlwaysUsageDescription": "Blackout pairs with the recon rover over Bluetooth LE."
+        "NSBluetoothAlwaysUsageDescription": "Blackout pairs with the recon rover over Bluetooth LE.",
+        "NSMicrophoneUsageDescription": "Blackout uses the microphone for voice messages to Sage.",
+        "NSSpeechRecognitionUsageDescription": "Blackout uses speech recognition to turn your voice into messages for Sage."
       }
     }
   },

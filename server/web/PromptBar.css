@@ -6,6 +6,7 @@
   --pb-radius: 16px;
   --pb-press: 0.96;
   --pb-spark: #ff8a3d;
+  --pb-rec: #e5484d;
   --pb-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --pb-muted: color-mix(in srgb, var(--pb-ink) 55%, transparent);
   --pb-hover: color-mix(in srgb, var(--pb-ink) 8%, transparent);
@@ -487,6 +488,22 @@
   transform: scale(var(--pb-press));
 }
 
+.prompt-bar__send[data-recording] {
+  background: var(--pb-rec);
+  color: #fff;
+  animation: prompt-bar-rec 1.1s ease-in-out infinite;
+}
+
+@keyframes prompt-bar-rec {
+  50% { opacity: 0.7; }
+}
+
+.prompt-bar__voice-note {
+  color: color-mix(in srgb, var(--pb-rec) 65%, var(--pb-ink));
+  font-size: 11px;
+  line-height: 16px;
+}
+
 .prompt-bar__glyph {
   display: block;
   width: 16px;
@@ -579,5 +596,13 @@
   .prompt-bar__tool:active,
   .prompt-bar__send[data-pressed] {
     transform: none;
+  }
+
+  .prompt-bar__send[data-recording] {
+    animation: none;
+  }
+
+  .prompt-bar__eq i {
+    animation: none;
   }
 }

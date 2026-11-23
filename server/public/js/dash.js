@@ -1,4 +1,6 @@
 import { mjpegSplit } from "./mjpeg.mjs";
+import { parse as blkParse, run as blkRun, compile as blkCompile, insLine as blkInsLine,
+         interp as blkInterp, evalExpr as blkEval, clampArg as blkClamp } from "./blk.mjs";
 
 const $ = (id) => document.getElementById(id);
 const socket = io();
@@ -24,7 +26,10 @@ const T = {
     temp: "temperature", humid: "humidity", dist: "distance", pressure: "pressure", alt: "altitude", lux: "light", gas: "gas index",
     warm: "warm", calibrating: "CALIBRATING", safe: "safe", caution: "caution", danger: "danger",
     camFront: "front cam", camArm: "arm cam", rotate: "Rotate", camSettings: "Camera settings", live: "live", noSignal: "no signal",
-    lidar: "lidar", lidarNone: "no lidar", lidarProbing: "checking usb", lidarSilent: "usb · no reply",
+    lidar: "lidar", lidarNone: "no lidar", lidarProbing: "checking usb", lidarSilent: "usb · no reply", clear: "CLEAR",
+    arm: "arm", raise: "▲ raise", lower: "▼ lower", left: "◀ left", right: "right ▶",
+    open: "open", regClose: "reg close", closeLock: "close lock", home: "home", noTakes: "no recorded takes",
+    armOff: "disable arm", armOn: "enable arm",
   },
   es: {
     link: "Conectar robot", linking: "Conectando…", linked: "Conectado", stop: "Parar", stopTitle: "Parada de emergencia (Espacio)",
@@ -38,7 +43,10 @@ const T = {
     temp: "temperatura", humid: "humedad", dist: "distancia", pressure: "presión", alt: "altitud", lux: "luz", gas: "índice de gas",
     warm: "warm", calibrating: "CALIBRANDO", safe: "seguro", caution: "precaución", danger: "peligro",
     camFront: "cámara frontal", camArm: "cámara del brazo", rotate: "Girar", camSettings: "Ajustes de cámara", live: "en vivo", noSignal: "sin señal",
-    lidar: "lidar", lidarNone: "sin lidar", lidarProbing: "revisando usb", lidarSilent: "usb · sin respuesta",
+    lidar: "lidar", lidarNone: "sin lidar", lidarProbing: "revisando usb", lidarSilent: "usb · sin respuesta", clear: "LIBRE",
+    arm: "brazo", raise: "▲ subir", lower: "▼ bajar", left: "◀ izquierda", right: "derecha ▶",
+    open: "abrir", regClose: "cerrar suave", closeLock: "cerrar fijo", home: "inicio", noTakes: "sin movimientos grabados",
+    armOff: "desactivar brazo", armOn: "activar brazo",
   },
 };
 const t = (k) => (T[get("lang", "en")] || T.en)[k] ?? T.en[k];
@@ -78,11 +86,13 @@ const forward = (e) => fetch("/api/mega/sensor", {
   body: new TextDecoder().decode(e.target.value),
 }).catch(() => {});
 
-// `stop` waits for the ack so it can't be dropped; everything else is fire-and-forget
+// `stop` waits for the ack so it can't be dropped; so does the blk upload, the ack is
+// what paces `blk,i,` lines so they can't outrun the board's parser. Everything else
+// is fire-and-forget
 const bleWrite = (w) => {
   if (!cmdChar) return;
   const buf = new TextEncoder().encode(w);
-  (w === "stop" || !cmdChar.writeValueWithoutResponse ? cmdChar.writeValue(buf) : cmdChar.writeValueWithoutResponse(buf))
+  return (w === "stop" || w.startsWith("blk,") || !cmdChar.writeValueWithoutResponse ? cmdChar.writeValue(buf) : cmdChar.writeValueWithoutResponse(buf))
     .catch((e) => console.error("ble write", w, e));
 };
 
@@ -166,8 +176,10 @@ socket.on("sensor-data", (d) => {
   delete $("ping").dataset.stale;
   delete $("sensors").dataset.stale;
   for (const [k, v] of Object.entries(readings(d))) {
-    const el = $("s-" + k), tile = el.parentElement, warm = k === "gas" && d.gas < 0, lvl = warm ? "warm" : v == null ? "" : level(k, +v);
-    if (k === "dist" && v != null) roll(v);
+    const el = $("s-" + k), tile = el.parentElement, warm = k === "gas" && d.gas < 0, clear = k === "dist" && d.dist >= 999;
+    const lvl = warm ? "warm" : clear ? "safe" : v == null ? "" : level(k, +v);
+    tile.toggleAttribute("data-clear", clear);
+    if (k === "dist" && !clear && v != null) roll(v);
     else el.textContent = v ?? "—";
     tile.dataset.level = lvl;
     tile.querySelector(".lvl").textContent = lvl && t(lvl);
@@ -182,11 +194,13 @@ setInterval(() => {
 
 // ---- sensors ----
 // only what the giga actually fills; smoke/airq/imu/co ride the packet as 0s.
-// the board's "nothing there" values (999 no echo, 0 no bme/mq, null no lux) show as —
+// the board's "nothing there" values (0 no bme/mq, null no lux) show as —
+// dist 999 = no echo inside range: shows CLEAR, not —, since nothing nearby isn't a fault
+// IMPORTANT NOTE: an unplugged sonar (INPUT_PULLDOWN) also times out to 999, so CLEAR can't prove it's wired
 // gas: 100 = the cleanest air the mq9 has seen since boot, lower = more gas
 const readings = (d) => ({
   temp: d.temp, humid: d.humid,
-  dist: d.dist >= 999 ? null : Math.round(d.dist),
+  dist: d.dist >= 999 ? t("clear") : Math.round(d.dist),
   pressure: d.pressure > 0 ? d.pressure.toFixed(1) : null,
   alt: d.pressure > 0 ? d.alt.toFixed(1) : null,
   lux: d.lux >= 0 ? Math.round(d.lux) : null,
@@ -364,27 +378,123 @@ socket.on("lidar", (s) => {
   lid.dataset.state = s.state;
   lid.title = s.port || "";
   lid.querySelector(".st").textContent = lidText();
-  if (s.state !== "live") lcv.getContext("2d").clearRect(0, 0, lcv.width, lcv.height);
+  if (s.state !== "live") lidStop();
 });
+// scans land at 20 Hz (lidar.js SCAN_MS); a rAF loop eases each degree toward its latest
+// reading so walls glide at 60 fps instead of jumping. new hits fade in, lost ones fade out.
+// draw: faint fill of the seen area, wall outline between neighbouring returns, dots tinted by
+// distance, and a line to the nearest hit (also in the caption)
+// IMPORTANT NOTE: [danger, caution] mm guesses for the rover's footprint, tune on the course
+const LIDAR_NEAR = [300, 600];
+const LIDAR_MIN = 50;    // IMPORTANT NOTE: closer than this is the rover's own chassis/cables, not an obstacle
+const LIDAR_EASE_MS = 45; // time constant: lower snaps harder, higher smooths more but lags
+const lidLevel = (mm) => mm < LIDAR_NEAR[0] ? "danger" : mm < LIDAR_NEAR[1] ? "caution" : "";
+const want = new Float32Array(360), shown = new Float32Array(360), vis = new Float32Array(360);
+let lidRaf = 0, lidLast = 0, lidNear = -1, lidCol = null;
+function lidStop() {
+  cancelAnimationFrame(lidRaf); lidRaf = 0; want.fill(0); vis.fill(0);
+  lcv.getContext("2d").clearRect(0, 0, lcv.width, lcv.height);
+  lid.querySelector(".near").textContent = "";
+}
 socket.on("lidar-scan", (scan) => {
+  lidNear = -1;
+  scan.forEach((mm, deg) => {
+    want[deg] = mm >= LIDAR_MIN && mm <= LIDAR_M * 1000 ? mm : 0;
+    if (want[deg] && (lidNear < 0 || want[deg] < want[lidNear])) lidNear = deg;
+  });
+  const nearEl = lid.querySelector(".near");
+  nearEl.textContent = lidNear < 0 ? "" : (want[lidNear] / 1000).toFixed(2) + " m";
+  nearEl.dataset.level = lidNear < 0 ? "" : lidLevel(want[lidNear]);
+  const css = getComputedStyle(lid), v = (n) => css.getPropertyValue(n);   // here, not per frame: theme can change
+  lidCol = { "": v("--ink"), caution: v("--warn"), danger: v("--stop") };
+  if (!lidRaf) { lidLast = performance.now(); lidRaf = requestAnimationFrame(lidFrame); }
+});
+function lidFrame(now) {
+  lidRaf = requestAnimationFrame(lidFrame);
+  const k = document.documentElement.classList.contains("calm") ? 1 : 1 - Math.exp(-(now - lidLast) / LIDAR_EASE_MS);
+  lidLast = now;
   const dpr = window.devicePixelRatio || 1, w = lcv.clientWidth * dpr, h = lcv.clientHeight * dpr;
   if (lcv.width !== w || lcv.height !== h) { lcv.width = w; lcv.height = h; }
-  const ctx = lcv.getContext("2d"), dot = 1.5 * dpr;
+  const ctx = lcv.getContext("2d"), col = lidCol;
   // 0.48: the svg's outer ring is r96 of 200, same circle or a wall reads at the wrong distance
-  const px = (Math.min(w, h) * 0.48) / (LIDAR_M * 1000);
+  const px = (Math.min(w, h) * 0.48) / (LIDAR_M * 1000), cx = w / 2, cy = h / 2;
+  const pts = [];   // [deg, mm, x, y, alpha], 0 is straight up, clockwise, on both lidars
+  for (let deg = 0; deg < 360; deg++) {
+    if (want[deg]) { shown[deg] = vis[deg] < 0.05 ? want[deg] : shown[deg] + (want[deg] - shown[deg]) * k; vis[deg] += (1 - vis[deg]) * k; }
+    else vis[deg] -= vis[deg] * k;
+    if (vis[deg] < 0.05) continue;
+    const a = (deg * Math.PI) / 180, mm = shown[deg];
+    pts.push([deg, mm, cx + Math.sin(a) * mm * px, cy - Math.cos(a) * mm * px, vis[deg]]);
+  }
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = getComputedStyle(lcv).color;
-  scan.forEach((mm, deg) => {
-    if (!mm || mm > LIDAR_M * 1000) return;
-    const a = (deg * Math.PI) / 180;   // 0 is straight up, clockwise, on both lidars
-    ctx.fillRect(w / 2 + Math.sin(a) * mm * px - dot / 2, h / 2 - Math.cos(a) * mm * px - dot / 2, dot, dot);
+  if (!pts.length) return;
+
+  ctx.globalAlpha = 0.07; ctx.fillStyle = col[""];
+  ctx.beginPath(); pts.forEach(([, , x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.fill();
+
+  ctx.globalAlpha = 0.35; ctx.strokeStyle = col[""]; ctx.lineWidth = dpr; ctx.beginPath();
+  pts.forEach((p, i) => {
+    const q = pts[(i + 1) % pts.length], gap = (q[0] - p[0] + 360) % 360;
+    if (gap > 0 && gap <= 3 && Math.abs(q[1] - p[1]) < 250 && p[4] > 0.5 && q[4] > 0.5) { ctx.moveTo(p[2], p[3]); ctx.lineTo(q[2], q[3]); }
   });
+  ctx.stroke();
+
+  const n = lidNear >= 0 && pts.find((p) => p[0] === lidNear);
+  if (n) {
+    ctx.globalAlpha = 0.8; ctx.strokeStyle = col[lidLevel(n[1])]; ctx.setLineDash([3 * dpr, 3 * dpr]);
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(n[2], n[3]); ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  for (const [, mm, x, y, al] of pts) {
+    ctx.globalAlpha = al; ctx.fillStyle = col[lidLevel(mm)];
+    ctx.beginPath(); ctx.arc(x, y, (mm < LIDAR_NEAR[1] ? 2 : 1.4) * dpr, 0, 7); ctx.fill();
+  }
+}
+
+// ---- arm ----
+// Same commands armrec.py sends. Held buttons repeat under the board's 1s deadman
+// (ARM_JOG_MS) and park on release; joints 0 base, 1 shoulder, 2 elbow, 3 gripper.
+// Raise/lower drive shoulder + elbow together, directions checked on the rig.
+// Takes are played by the server (armplay.js), same player Sage uses.
+const armSend = (w) => { bleWrite(w); socket.emit("cmd", w); };   // server won't echo ours back
+const ARM_HOLD = { raise: [[1, -100], [2, 100]], lower: [[1, 100], [2, -100]], left: [[0, -100]], right: [[0, 100]] };
+let armHeld = null;
+setInterval(() => armHeld?.forEach(([j, d]) => armSend(`arm,${j},${d}`)), 300);
+document.querySelectorAll("[data-hold]").forEach((b) => {
+  const off = () => { if (!armHeld) return; armHeld.forEach(([j]) => armSend(`arm,${j},0`)); armHeld = null; };
+  b.onpointerdown = (e) => { e.preventDefault(); if (armHeld) return; armHeld = ARM_HOLD[b.dataset.hold]; armHeld.forEach(([j, d]) => armSend(`arm,${j},${d}`)); };
+  b.onpointerup = b.onpointerleave = b.onpointercancel = off;
+  b.oncontextmenu = (e) => e.preventDefault();
 });
+document.querySelectorAll("[data-cmd]").forEach((b) => { b.onclick = () => armSend(b.dataset.cmd); });
+// OE high + a lock on the board, so nothing powers the servos while they cool.
+// IMPORTANT NOTE: the board forgets on reboot (comes back enabled); this button only
+// knows what it last sent, so a reflash shows "enable" over a live arm until clicked.
+$("arm-en").onclick = () => {
+  const off = $("arm-en").dataset.t === "armOff";
+  armHeld = null;
+  armSend(`armen,${off ? 0 : 1}`);
+  $("arm-en").dataset.t = off ? "armOn" : "armOff";
+  $("arm-en").textContent = t($("arm-en").dataset.t);
+  $("armpad").toggleAttribute("data-off", off);
+};
+fetch("/api/arm-moves").then((r) => r.json()).then((moves) => {
+  const names = Object.keys(moves);
+  $("arm-takes").replaceChildren(...(names.length ? names.map((n) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn"; b.textContent = n.toLowerCase().replace(/_/g, " ");
+    b.onclick = () => fetch("/api/arm-play", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: n }) }).catch(() => {});
+    return b;
+  }) : [Object.assign(document.createElement("span"), { className: "k", textContent: t("noTakes") })]));
+}).catch(() => {});
 
 // ---- e-stop ----
 // straight to BLE (the server won't echo our own cmd back), the server for the usb
 // cable, and Sage's runner. Space works anywhere a key isn't already taken.
 function estop() {
+  armHeld = null;
+  drvHeld = null;
+  blkCancel();
   bleWrite("stop");
   socket.emit("cmd", "stop");
   fetch("/api/claude/stop", { method: "POST" }).catch(() => {});
@@ -481,3 +591,203 @@ let sageOn = false;
 const sageState = () => { $("sage-state").textContent = t(sageOn ? "online" : "offline"); };
 fetch("/api/cloud").then((r) => r.json())
   .then((d) => { sageOn = !!d.sage; }).catch(() => {}).finally(sageState);
+
+// ---- blk runner ----
+// compiled to the board when it fits (the vm in vm.h plays it; this tab only services the
+// say/log/ask events it sends back as E:blk lines), the browser interpreter otherwise.
+// Board lines come back as serial-line from either link: BLE posts them, usb is read server-side.
+// Runs from the editor's Save & run and from Sage's robot_blk (mcp.js).
+let blkEvt = null, blkTok = 0, pkt = null, voice = null;
+const blkCancel = () => { blkTok++; };
+socket.on("serial-line", (d) => { if (d?.line?.startsWith("E:blk")) blkEvt?.(d.line); });
+socket.on("sensor-data", (d) => { pkt = d; });
+const boardCmd = (w) => cmdChar ? bleWrite(w) : socket.emit("cmd", w);   // no BLE here: the server has the cable or relays to the tab that does
+
+const blkWaitFor = (pred, ms, kick) => new Promise((res) => {
+  const to = setTimeout(() => { blkEvt = null; res(null); }, ms);
+  blkEvt = (line) => { if (!pred(line)) return; clearTimeout(to); blkEvt = null; res(line); };
+  kick();
+});
+
+const blkNote = (txt) => { const el = $("blk-run"); el.hidden = false; el.textContent = txt; };
+const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+function blkIo(stopped, sleep) {
+  let cam = 0;   // blk `cam`: which camera analyze/ask/find look through
+  const decide = async (path, body) => {
+    try {
+      const d = await (await post(path, { ...body, cam })).json();
+      blkNote(`${d.yes ? "yes" : "no"}${d.text ? " · " + d.text : ""}`);
+      return !!d.yes;
+    } catch { blkNote("AI didn't answer, treating as no"); return false; }
+  };
+  return {
+    stopped, sleep,
+    drive: async (verb, pwm, ms) => { boardCmd(`drv,${verb},${pwm},${ms}`); await sleep(ms + 150); },
+    // IMPORTANT NOTE: any ai-analysis counts as ours; one landing from another request ends the wait early
+    analyze: async (focus) => {
+      const done = new Promise((r) => socket.once("ai-analysis", r));
+      socket.emit("request-analysis", { prompt: focus, cam });
+      await Promise.race([done, sleep(30000)]);
+    },
+    ask: (question) => decide("/api/blk-ask", { question }),
+    find: (thing) => decide("/api/blk-find", { thing }),
+    led: (value) => { post("/api/led", { value }).catch(() => {}); },
+    cam: (n) => { cam = n; },
+    log: blkNote,
+    // Sage's voice pick (sage.jsx); a new line cuts the last one off
+    say: (text) => {
+      voice?.pause();
+      const p = get("sageVoice", "");
+      voice = new Audio("/api/tts?" + new URLSearchParams({ text, ...(p ? { provider: p } : {}) }));
+      voice.play().catch(() => {});
+    },
+    sensors: () => pkt,
+    halt: () => boardCmd("stop"),
+    onStep: (node, n) => blkNote(`blk ${n} · ${node.op.replace("_", " ")}`),
+  };
+}
+
+async function blkOnBoard({ code, nodes, slots }, io, stopped) {
+  if (!await blkWaitFor((l) => l.startsWith("E:blkrdy"), 2000, () => boardCmd(`blk,n,${code.length}`))) return false;
+  for (let i = 0; i < code.length; i++) {
+    if (stopped()) return true;
+    await boardCmd(blkInsLine(i, code[i]));
+  }
+  let n = 0;
+  return new Promise((res) => {
+    const finish = (v) => { clearInterval(poll); blkEvt = null; res(v); };
+    const poll = setInterval(() => { if (stopped()) finish(true); }, 200);
+    blkEvt = async (line) => {
+      if (line.startsWith("E:blkend")) return finish(true);
+      if (line.startsWith("E:blkerr")) return finish(false);
+      if (!line.startsWith("E:blk,")) return;
+      const f = line.slice(6).split(",");
+      const node = nodes[+f[0]], kind = +f[1];
+      if (!node) return void boardCmd("blk,res,0");
+      const vars = {};
+      for (const [name, i] of Object.entries(slots)) vars[name] = +f[2 + i] || 0;
+      blkNote(`blk ${++n} · ${node.op.replace("_", " ")} · on board`);
+      const ctx = { st: { vars }, sensors: io.sensors };
+      const txt = () => blkInterp(node.text, ctx);
+      let val = 0;
+      switch (node.op) {
+        case "say": io.say(txt()); break;
+        case "log": io.log(txt()); break;
+        case "led": io.led(blkClamp("led", blkEval(node.arg, ctx) || 0)); break;
+        case "cam": io.cam(blkClamp("cam", blkEval(node.arg, ctx) || 0)); break;
+        case "analyze": await io.analyze(txt()); break;
+        case "ask": val = (await io.ask(txt())) ? 1 : 0; break;
+        case "find": val = (await io.find(txt())) ? 1 : 0; break;
+      }
+      if (kind) await boardCmd(`blk,res,${val}`);
+    };
+    boardCmd("blk,go");
+  });
+}
+
+async function playBlk(text) {
+  const { program, errors } = blkParse(text);
+  if (errors.length || !program.length) { blkNote("blk: " + (errors[0] || "empty program")); return { error: errors[0] || "empty program" }; }
+  const my = ++blkTok;
+  const stopped = () => blkTok !== my;
+  const sleep = async (ms) => {
+    const t0 = Date.now();
+    while (!stopped() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 50));
+  };
+  const io = blkIo(stopped, sleep);
+  let built = null, where = "board";
+  try { built = blkCompile(program); } catch (e) { blkNote(`blk: in browser, ${e.message}`); }
+  if (!built || !await blkOnBoard(built, io, stopped)) { where = "browser"; await blkRun(program, io); }
+  const cancelled = stopped();
+  blkNote(cancelled ? "blk stopped" : "blk done");
+  setTimeout(() => { if (blkTok === my) $("blk-run").hidden = true; }, 3000);
+  return { where, cancelled };
+}
+
+// robot_blk from mcp.js: only the tab that can actually drive takes it
+socket.on("blk-run", async ({ text, usb }, ack) => {
+  if (!usb && !cmdChar) return ack({ skip: true });
+  ack(await playBlk(text));
+});
+
+// ---- tabs ----
+// blk.html is the old standalone editor, framed as-is; src set on first open so the
+// dash doesn't pay for it until someone wants it. Esc in the editor posts blk:close.
+const blk = $("blk");
+const swap = (name) => {
+  if (name === "blk" && !blk.src) blk.src = "blk.html";
+  $("main").hidden = name === "blk";
+  blk.hidden = name !== "blk";
+  delete blk.dataset.preload;   // same frame as unhiding: dropped any earlier, the editor sees a 0-wide resize and folds its panels
+  document.body.dataset.tab = name;   // dash.css drops the sage half on blk
+  document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === name));
+  put("tab", name);
+};
+// animated with a view transition (dash.css): blk comes in from the right, dash from the left.
+// not on boot, a repeat click, calm mode or reduced motion
+const still = matchMedia("(prefers-reduced-motion: reduce)");
+// first open loads the editor before animating, so it doesn't slide in blank. Loaded
+// full-size but invisible (data-preload): at display:none it boots at 0 wide and folds its panels
+const tab = async (name) => {
+  const was = document.body.dataset.tab, root = document.documentElement;
+  if (!was || was === name || !document.startViewTransition || root.classList.contains("calm") || still.matches) return swap(name);
+  if (name === "blk" && !blk.src) {
+    blk.dataset.preload = "";
+    blk.src = "blk.html";
+    await new Promise((r) => { blk.onload = r; setTimeout(r, 1500); });
+  }
+  root.dataset.dir = name === "blk" ? "fwd" : "back";
+  document.startViewTransition(() => swap(name));
+};
+document.querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => tab(b.dataset.tab));
+window.addEventListener("message", (e) => {
+  if (e.source !== blk.contentWindow) return;
+  if (e.data === "blk:close") tab("dash");
+  if (e.data?.type === "blk:run" && e.data.name) {
+    if (linkBtn.dataset.state !== "on") return blkNote("blk: link the robot first");
+    tab("dash");   // watch it on the cams
+    fetch("/api/blk/" + encodeURIComponent(e.data.name)).then((r) => r.ok ? r.text() : Promise.reject())
+      .then(playBlk).catch(() => blkNote("blk: couldn't load " + e.data.name));
+  }
+});
+tab(get("tab", "dash"));
+
+// ---- debug ----
+// test only: WASD drive. Same drv command as blk, re-sent under its own short timeout
+// (DRV_MS) while held so a dropped link or lost keyup coasts to a halt by itself.
+// Unknown drv verb = halt() on the board, that's the release.
+const DRV_KEYS = { w: "fwd", a: "left", s: "back", d: "right" }, DRV_MS = 400;
+let drvHeld = null;
+const drvSend = () => drvHeld && boardCmd(`drv,${drvHeld},${$("dbg-pwm").value},${DRV_MS}`);
+setInterval(drvSend, 250);
+const drvShow = () => document.querySelectorAll("[data-drv]").forEach((b) => b.toggleAttribute("data-on", b.dataset.drv === drvHeld));
+const drv = (verb) => {
+  if (verb === drvHeld) return;
+  if (!verb) boardCmd("drv,halt,0");
+  drvHeld = verb; drvSend(); drvShow();
+};
+document.querySelectorAll("[data-drv]").forEach((b) => {
+  b.onpointerdown = (e) => { e.preventDefault(); drv(b.dataset.drv); };
+  b.onpointerup = b.onpointerleave = b.onpointercancel = () => drv(null);
+  b.oncontextmenu = (e) => e.preventDefault();
+});
+$("dbg-pwm").oninput = (e) => { $("dbg-pwm-v").value = e.target.value; };
+window.addEventListener("keydown", (e) => {
+  const v = DRV_KEYS[e.key.toLowerCase()];
+  if (!v || $("debug").hidden || $("main").hidden || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  e.preventDefault();
+  drv(v);
+});
+window.addEventListener("keyup", (e) => { if (DRV_KEYS[e.key.toLowerCase()] === drvHeld) drv(null); });
+window.addEventListener("blur", () => drvHeld && drv(null));
+const debugShow = (on) => { $("debug").hidden = !on; put("debug", on ? "1" : "0"); if (!on && drvHeld) drv(null); };
+debugShow(get("debug", "0") === "1");
+// menu: Debug › Show debug area. It's the last grid row, under the fold, so scroll to it
+window.blackout?.onDebugToggle?.(() => {
+  debugShow($("debug").hidden);
+  if ($("debug").hidden) return;
+  if ($("main").hidden) tab("dash");
+  requestAnimationFrame(() => $("debug").scrollIntoView({ behavior: "smooth", block: "nearest" }));
+});

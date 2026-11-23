@@ -26,6 +26,8 @@ const SQUARE = [12, 6, 18, 6, 18, 12, 18, 18, 6, 18, 6, 12, 6, 6];
 const EASE_IN_OUT = [0.77, 0, 0.175, 1];
 const LINE = 22;
 const EDGE = 11;
+const VOICE_SILENCE_MS = 1000;   // stop and send after this much quiet
+const VOICE_MAX_MS = 30000;      // hard cap so a stuck mic can't listen forever
 
 const DEFAULT_SOURCES = [
   {
@@ -182,6 +184,8 @@ export default function PromptBar({
   onStop,
   onAttach,
   onDictate,
+  voiceSend = false,
+  lang = 'en',
   background = '#27272a',
   color = '#f5f5f5',
   menuBackground = '#323236',
@@ -208,6 +212,13 @@ export default function PromptBar({
   const rowRefs = useRef([]);
   const lastOpen = useRef(null);
   const dictation = useRef(0);
+  const nativeRef = useRef(null);   // Apple Speech session (Electron on macOS)
+  const voiceRec = useRef(null);
+  const voiceStream = useRef(null);
+  const voiceTimer = useRef(null);
+  const noteTimer = useRef(null);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
   const latest = useRef({});
   latest.current = { onSend, onStop, onAttach, onDictate, onEffortChange, onModelChange };
 
@@ -234,6 +245,9 @@ export default function PromptBar({
   const [active, setActive] = useState(0);
   const [listening, setListening] = useState(false);
   const [pressed, setPressed] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [voiceNote, setVoiceNote] = useState('');
 
   const model = models.find(m => m.key === modelKey) ?? models[0];
   const token = dismissed ? null : parseToken(draft);
@@ -261,7 +275,8 @@ export default function PromptBar({
     return () => clearTimeout(t);
   }, [open]);
   const canSend = draft.trim().length > 0 || attachments.length > 0;
-  const armed = busy || canSend;
+  const armed = busy || canSend || voiceSend;
+  const voiceMode = voiceSend && !busy && (recording || transcribing || !canSend);
   const level = efforts[effortIndex] ?? '';
   const maxed = efforts.length > 1 && effortIndex === efforts.length - 1;
   // blackout: particles start at sparkFrom and ramp to full at max (0.35 → 1)
@@ -317,12 +332,14 @@ export default function PromptBar({
     el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden';
   }, [draft, maxRows]);
 
-  useEffect(
-    () => () => {
-      dictation.current += 1;
-    },
-    []
-  );
+  useEffect(() => () => {
+    dictation.current += 1;
+    clearTimeout(voiceTimer.current);
+    clearTimeout(noteTimer.current);
+    if (nativeRef.current) window.blackout?.voice?.cancel?.();
+    try { if (voiceRec.current && voiceRec.current.state !== 'inactive') voiceRec.current.stop(); } catch {}
+    try { voiceStream.current?.getTracks().forEach((t) => t.stop()); } catch {}
+  }, []);
 
   useEffect(() => {
     const canvas = sparkRef.current;
@@ -479,14 +496,153 @@ export default function PromptBar({
     focusInput();
   };
 
-  const send = () => {
-    if (!canSend || busy) return;
-    latest.current.onSend?.(draft.trim(), { attachments, model, effort: level });
+  const note = (msg) => {
+    setVoiceNote(msg);
+    clearTimeout(noteTimer.current);
+    noteTimer.current = setTimeout(() => setVoiceNote(''), 4000);
+  };
+
+  const deliver = (text) => {
+    if (!text || busyRef.current) return;
+    latest.current.onSend?.(text, { attachments, model, effort: level });
     setDraft('');
     setAttachments([]);
     setDismissed(false);
     closeMenus();
     focusInput();
+  };
+  const send = () => { if (canSend) { if (recording) cancelVoice(); deliver(draft.trim()); } };
+
+  // ---- voice: Apple Speech in Electron, Deepgram recorder elsewhere ----
+  const finishNative = (sendIt) => {
+    const s = nativeRef.current;
+    if (!s || s.done) return;
+    s.done = true;
+    clearTimeout(s.timer);
+    s.unsub?.();
+    nativeRef.current = null;
+    setRecording(false);
+    const full = `${s.prefix}${s.prefix && s.text ? ' ' : ''}${s.text}`.trim();
+    if (sendIt && full) {
+      setTranscribing(true);
+      deliver(full);
+      setTranscribing(false);
+    } else {
+      setDraft(s.prefix);
+      if (sendIt) note('Heard nothing — try again');
+    }
+  };
+  const startNativeVoice = async () => {
+    const v = window.blackout?.voice;
+    if (!v || nativeRef.current || recording || transcribing || busyRef.current) return;
+    const s = { prefix: draft.trimEnd(), text: '', done: false, timer: null, unsub: null };
+    nativeRef.current = s;
+    setRecording(true);
+    s.unsub = v.onEvent((e) => {
+      if (s.done) return;
+      if (e.type === 'ready') return;
+      if (e.type === 'error') { note(e.message || 'Voice failed'); finishNative(false); return; }
+      const text = String(e.text || '').trim();
+      if (text !== s.text) {
+        s.text = text;
+        setDraft(`${s.prefix}${s.prefix && text ? ' ' : ''}${text}`);
+        clearTimeout(s.timer);
+        s.timer = setTimeout(() => v.stop(), VOICE_SILENCE_MS);
+      }
+      if (e.type === 'final') finishNative(true);
+    });
+    try {
+      await v.start(lang);
+      clearTimeout(s.timer);
+      s.timer = setTimeout(() => v.stop(), VOICE_MAX_MS);
+    } catch (e) {
+      note(e?.message || 'Voice unavailable');
+      finishNative(false);
+    }
+  };
+  const cancelVoice = () => {
+    if (nativeRef.current) {
+      window.blackout?.voice?.cancel?.();
+      finishNative(false);
+      return;
+    }
+    clearTimeout(voiceTimer.current);
+    const rec = voiceRec.current;
+    voiceRec.current = null;
+    if (rec && rec.state !== 'inactive') { rec.onstop = null; rec.stop(); }
+    stopStream();
+    setRecording(false);
+    setTranscribing(false);
+  };
+  const stopStream = () => {
+    try { voiceStream.current?.getTracks().forEach((t) => t.stop()); } catch {}
+    voiceStream.current = null;
+  };
+  const finishVoice = async (blob, mime) => {
+    setTranscribing(true);
+    try {
+      const r = await fetch(`/api/stt?lang=${encodeURIComponent(lang)}`, {
+        method: 'POST', headers: { 'Content-Type': mime || blob.type || 'audio/webm' }, body: blob
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || `Voice failed (${r.status})`);
+      const text = String(d.text || '').trim();
+      if (!text) { note('Heard nothing — try again'); return; }
+      deliver(text);
+    } catch (e) {
+      note(e.message === 'Failed to fetch' ? 'Voice needs the server' : e.message);
+    } finally {
+      setTranscribing(false);
+    }
+  };
+  const stopVoice = () => {
+    clearTimeout(voiceTimer.current);
+    setRecording(false);
+    setTranscribing(true);
+    const rec = voiceRec.current;
+    voiceRec.current = null;
+    if (rec && rec.state !== 'inactive') rec.stop();
+    else { stopStream(); setTranscribing(false); }
+  };
+  const startVoice = async () => {
+    if (voiceRec.current || recording || transcribing || busyRef.current) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      note('Voice input needs a mic and a modern browser');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      voiceStream.current = stream;
+      const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+      const mime = types.find((t) => MediaRecorder.isTypeSupported?.(t)) || '';
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const chunks = [];
+      rec.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+      rec.onerror = () => {
+        clearTimeout(voiceTimer.current);
+        voiceRec.current = null;
+        setRecording(false);
+        setTranscribing(false);
+        stopStream();
+        note('Mic failed');
+      };
+      rec.onstop = () => {
+        clearTimeout(voiceTimer.current);
+        setRecording(false);
+        stopStream();
+        if (chunks.length) finishVoice(new Blob(chunks, { type: mime || chunks[0].type || 'audio/webm' }), mime);
+        else { setTranscribing(false); note('Heard nothing — try again'); }
+      };
+      voiceRec.current = rec;
+      rec.start();
+      setRecording(true);
+      voiceTimer.current = setTimeout(() => { if (voiceRec.current === rec) stopVoice(); }, 30000);
+    } catch (e) {
+      voiceRec.current = null;
+      setRecording(false);
+      stopStream();
+      note(e.name === 'NotAllowedError' ? 'Mic permission denied' : (e.message || 'Mic unavailable'));
+    }
   };
 
   const toggleListen = () => {
@@ -680,14 +836,19 @@ export default function PromptBar({
           </div>
         ) : null}
 
+        {voiceNote ? (
+          <div className="prompt-bar__voice-note" role="status">{voiceNote}</div>
+        ) : null}
+
         <textarea
           ref={inputRef}
           className="prompt-bar__input"
           rows={1}
           value={draft}
-          placeholder={listening ? 'Listening…' : placeholder}
+          placeholder={listening || recording ? 'Listening…' : transcribing ? 'Transcribing…' : placeholder}
           aria-label="Prompt"
           onChange={e => {
+            if (recording) cancelVoice();
             setDraft(e.target.value);
             typing.current.energy = Math.min(1.6, typing.current.energy + 0.22);
             typing.current.strokes = Math.min(4, typing.current.strokes + 1);
@@ -788,9 +949,12 @@ export default function PromptBar({
           <button
             type="button"
             className="prompt-bar__send"
-            disabled={!armed}
-            aria-label={busy ? 'Stop' : 'Send'}
+            disabled={!armed || transcribing}
+            aria-label={busy ? 'Stop' : transcribing ? 'Transcribing voice message'
+              : recording ? 'Stop and send voice message' : voiceMode ? 'Record voice message' : 'Send'}
             data-armed={armed ? '' : undefined}
+            data-voice={voiceMode ? '' : undefined}
+            data-recording={recording ? '' : undefined}
             data-pressed={pressed ? '' : undefined}
             onMouseDown={e => e.preventDefault()}
             onPointerDown={down}
@@ -798,11 +962,27 @@ export default function PromptBar({
             onPointerCancel={up}
             onPointerLeave={up}
             onClick={() => {
-              if (busy) latest.current.onStop?.();
-              else send();
+              if (busy) { latest.current.onStop?.(); return; }
+              if (voiceMode) {
+                if (recording) {
+                  if (nativeRef.current) window.blackout?.voice?.stop?.();
+                  else stopVoice();
+                } else if (window.blackout?.voice) startNativeVoice();
+                else startVoice();
+                return;
+              }
+              send();
             }}
           >
-            <SendGlyph busy={busy} morphDuration={morphDuration} squash={squash} tilt={tilt} />
+            {voiceMode ? (
+              recording || transcribing ? (
+                <span className="prompt-bar__eq" aria-hidden="true"><i /><i /><i /></span>
+              ) : (
+                <HugeiconsIcon icon={Mic01Icon} size={16} strokeWidth={2} />
+              )
+            ) : (
+              <SendGlyph busy={busy} morphDuration={morphDuration} squash={squash} tilt={tilt} />
+            )}
           </button>
         </div>
       </div>

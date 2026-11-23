@@ -1,21 +1,4 @@
-@font-face {
-  font-family: "IBM Plex Mono";
-  font-weight: 400;
-  font-display: swap;
-  src: url(../vendor/fonts/IBMPlexMono-latin-400.woff2) format("woff2");
-}
-@font-face {
-  font-family: "IBM Plex Mono";
-  font-weight: 500;
-  font-display: swap;
-  src: url(../vendor/fonts/IBMPlexMono-latin-500.woff2) format("woff2");
-}
-@font-face {
-  font-family: "IBM Plex Mono";
-  font-weight: 600;
-  font-display: swap;
-  src: url(../vendor/fonts/IBMPlexMono-latin-600.woff2) format("woff2");
-}
+@import url(../vendor/fonts.css);
 
 :root {
   --bg:    #0b0b0c;
@@ -101,6 +84,7 @@ body {
 .half:first-child { container-type: inline-size; }
 @container (max-width: 640px) { .stat .k { display: none; } }
 @container (max-width: 520px) { .brand { display: none; } }
+@container (max-width: 440px) { .stat:has(#ping) { display: none; } }
 
 .btn.estop {
   border-color: var(--stop);
@@ -127,6 +111,39 @@ body {
 .btn:hover { background: var(--raise); }
 .btn:disabled { cursor: progress; opacity: 0.6; }
 .btn.icon { width: 32px; padding: 0; justify-content: center; }
+
+/* dash | blk: joined pair, the open one filled */
+.tabs { display: flex; }
+.tabs .btn + .btn { margin-left: -1px; }
+.tabs .btn[aria-selected="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+#blk { flex: 1; min-height: 0; width: 100%; border: 0; background: var(--bg); }
+#main[hidden], #blk[hidden] { display: none; }
+/* viewport units, not inset: .half is a size container, so it, not the window, holds fixed children */
+#blk[hidden][data-preload] { display: block; position: fixed; top: 0; left: 0; width: 100vw; height: 100dvh; visibility: hidden; view-transition-name: none; }
+/* blk tab: the editor gets the whole window, it has its own Ask Sage */
+body[data-tab="blk"] { grid-template-columns: 1fr; }
+body[data-tab="blk"] :is(.split, .sage) { display: none; }
+#blk-run { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
+#blk-run[hidden] { display: none; }
+
+/* dash <-> blk (dash.js tab): the pane slides a step toward where it's going and
+   crossfades, sage slides off/on the right edge. --d is the direction, set per switch.
+   no scaling: both pane snapshots stay their real size, pinned top-left */
+#main, #blk { view-transition-name: pane; }
+.sage { view-transition-name: sage; }
+.split { view-transition-name: split; }
+:root { --d: 1; }
+:root[data-dir="back"] { --d: -1; }
+::view-transition-group(*) { animation-duration: 0.34s; animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1); }
+::view-transition-old(pane), ::view-transition-new(pane) { height: 100%; object-fit: none; object-position: left top; }
+::view-transition-old(pane) { animation: 0.34s cubic-bezier(0.23, 1, 0.32, 1) both pane-out; }
+::view-transition-new(pane) { animation: 0.34s cubic-bezier(0.23, 1, 0.32, 1) both pane-in; }
+::view-transition-old(sage), ::view-transition-old(split) { animation: 0.34s cubic-bezier(0.23, 1, 0.32, 1) both side-out; }
+::view-transition-new(sage), ::view-transition-new(split) { animation: 0.34s cubic-bezier(0.23, 1, 0.32, 1) both side-in; }
+@keyframes pane-out { to   { opacity: 0; transform: translateX(calc(var(--d) * -32px)); } }
+@keyframes pane-in  { from { opacity: 0; transform: translateX(calc(var(--d) * 32px)); } }
+@keyframes side-out { to   { transform: translateX(100%); } }
+@keyframes side-in  { from { transform: translateX(100%); } }
 
 /* link state lives on data-state: off | busy | on */
 .dot { width: 8px; height: 8px; background: var(--off); transition: background 0.2s; }
@@ -158,17 +175,43 @@ body:has(.split[data-drag]) { cursor: col-resize; user-select: none; }
    max-content rows: in a scrolling grid, auto rows ignore the cams' aspect-ratio height and they overlap row 2 */
 #main {
   flex: 1; overflow: auto; display: grid; gap: 17px; padding: 17px; align-content: start;
-  grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, max-content);
-  grid-template-areas: "front arm" "lidar sensors";
+  grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, max-content);
+  grid-template-areas: "front arm" "lidar sensors" "lidar armpad";
 }
 @container (max-width: 560px) {
-  #main { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(4, max-content); grid-template-areas: "front" "lidar" "arm" "sensors"; }
+  #main { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(5, max-content); grid-template-areas: "front" "lidar" "arm" "sensors" "armpad"; }
 }
 #feeds { display: contents; }
 .feed[data-cam="0"] { grid-area: front; }
 .feed[data-cam="1"] { grid-area: arm; }
 .lidar { grid-area: lidar; }
 #sensors { grid-area: sensors; align-self: start; }
+#armpad { grid-area: armpad; }
+
+/* ---- arm ---- */
+/* wrapping rows of buttons: nothing shrinks, a narrow panel just stacks more rows */
+#armpad { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; box-shadow: 0 0 0 1px var(--line); }
+#armpad h2 { margin: 0; font: inherit; font-size: 11px; font-weight: 400; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.08em; }
+.arm-grp { display: flex; flex-wrap: wrap; gap: 6px; }
+#arm-en { align-self: flex-start; }
+#armpad[data-off] #arm-en { border-color: var(--warn); color: var(--warn); }
+#armpad[data-off] .arm-grp { opacity: 0.4; pointer-events: none; transition: opacity 0.2s; }
+.arm-grp .btn { touch-action: none; user-select: none; }
+.arm-grp .btn:active { background: var(--raise); border-color: var(--ink-2); }
+
+/* ---- debug ---- */
+#main:has(#debug:not([hidden])) { grid-template-rows: repeat(4, max-content); grid-template-areas: "front arm" "lidar sensors" "lidar armpad" "debug debug"; }
+@container (max-width: 560px) {
+  #main:has(#debug:not([hidden])) { grid-template-rows: repeat(6, max-content); grid-template-areas: "front" "lidar" "arm" "sensors" "armpad" "debug"; }
+}
+#debug { grid-area: debug; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; padding: 10px 12px; box-shadow: 0 0 0 1px var(--line); }
+#debug[hidden] { display: none; }
+#debug h2 { flex-basis: 100%; margin: 0; font: inherit; font-size: 11px; font-weight: 400; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.08em; }
+.wasd { display: grid; grid-template-areas: ". w ." "a s d"; grid-template-columns: repeat(3, 44px); gap: 6px; }
+.wasd .btn { justify-content: center; touch-action: none; user-select: none; }
+.wasd .btn:active, .wasd .btn[data-on] { background: var(--raise); border-color: var(--ink-2); }
+#debug label { display: flex; align-items: center; gap: 8px; }
+#arm-takes .k { color: var(--ink-2); }
 
 /* ---- camera feeds ---- */
 /* the cams are mounted on their sides: a sideways --rot swaps the box to portrait and
@@ -196,8 +239,14 @@ body:has(.split[data-drag]) { cursor: col-resize; user-select: none; }
 .lidar svg, .lidar canvas { position: absolute; left: 12px; top: 36px; width: calc(100% - 24px); height: calc(100% - 48px); }
 .lidar svg { fill: none; stroke: var(--line); }
 .lidar svg * { vector-effect: non-scaling-stroke; }
+.lidar svg .x { stroke-dasharray: 2 4; opacity: 0.6; }
+.lidar svg .m { fill: var(--ink-2); stroke: none; font: 7px var(--font); }
 .lidar svg .dot { fill: var(--ink-2); stroke: none; }
-.lidar:not([data-state="live"]) svg path { display: none; }
+.lidar[data-state="live"] svg .dot { fill: var(--ink); }
+.lidar:not([data-state="live"]) svg :is(.fwd, .m) { display: none; }
+.lidar .near { font-variant-numeric: tabular-nums; transition: color 0.3s; }
+.lidar .near[data-level="caution"] { color: var(--warn); }
+.lidar .near[data-level="danger"] { color: var(--stop); }
 .lidar canvas { color: var(--ink); }
 .lidar[data-state="silent"] .st { color: var(--stop); }
 .lidar[data-state="probing"] .st { animation: blink 1s infinite; }
@@ -218,6 +267,8 @@ body:has(.split[data-drag]) { cursor: col-resize; user-select: none; }
 .tile[data-level="caution"] { --c: var(--warn); }
 .tile[data-level="danger"]  { --c: var(--stop); }
 .tile[data-level="warm"]    { --c: var(--warn); }
+.tile[data-clear] b { font-size: 15px; letter-spacing: 0.08em; color: var(--go); }
+.tile[data-clear] b + .k { visibility: hidden; }
 .tile[data-level="warm"] b { font-size: 15px; letter-spacing: 0.08em; color: var(--warn); animation: blink 2s infinite; }
 .tile > .k:first-child, .lvl { align-self: start; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lvl { font-style: normal; margin: -2px -4px 0 0; padding: 2px 6px; background: var(--c); color: var(--bg); font-weight: 600; transition: background 0.3s; }
@@ -338,7 +389,9 @@ body:has(.split[data-drag]) { cursor: col-resize; user-select: none; }
 .home .start { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 32px 0 16px; }
 .home .start .k { max-width: 280px; font-size: 12px; }
 #chat .start .k { max-width: 280px; font-size: 12px; }
-.ascii-face.big { font-size: 28px; margin-bottom: 8px; }
+.sage-face.big { font-size: 28px; margin-bottom: 8px; }
+.sage-face.mid { font-size: 18px; margin: 4px 0 2px; }
+.sage-face.reply { font-size: 11px; float: right; margin: -15px 0 0 8px; color: var(--ink-2); }
 #chat:empty::before { content: none; }
 
 /* ---- session folders ---- */

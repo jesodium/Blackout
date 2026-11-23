@@ -4,6 +4,7 @@
 // confirms, language, the mirrored feed.
 const { io, fwdIp, isHost } = require("./http");
 const { usbWrite } = require("./link");
+const { stopTake } = require("./armplay");
 const state = require("./state");
 const { camCount } = require("./vision");
 const { getLed } = require("./lights");
@@ -60,6 +61,7 @@ io.on("connection", (socket) => {
 
   socket.on("cmd", (w) => {
     if (w !== "stop" && !clients.get(socket.id)?.granted) return;
+    if (w === "stop") stopTake();     // a take still playing would undo the stop
     usbWrite(w);                      // the cable, if one is open
     socket.broadcast.emit("cmd", w);  // and the host browser, which relays over BLE
   });

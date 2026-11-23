@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Camera01Icon, Camera02Icon, ClaudeIcon } from '@hugeicons/core-free-icons';
 import PromptBar from './PromptBar';
+import SageFace from './SageFace';
 
 // @ rows just put the camera's name in the message; Sage picks her own eye from it
 const SOURCES = [
@@ -46,6 +47,15 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const newChat = (title, messages = []) => ({ id: `c${Date.now()}`, title, messages, findings: [], created: Date.now() });
 
 // title + description: blank to create a session, prefilled to edit one
+// the face on Sage's latest reply, read off her own words. IMPORTANT NOTE: keyword match,
+// same lists the old dashboard used; a reply that says "no danger" still reads as alert.
+const moodOf = (t = '') => {
+  t = t.toLowerCase();
+  if (/\b(danger|abort|critical|hazard|emergency|evacuat|fire|toxic|peligro|abortar|cr[ií]tico|emergencia|evacua|fuego|t[óo]xico)\b/.test(t)) return 'alert';
+  if (/\b(caution|warning|careful|slow|obstacle|collision|bump|elevated|moderate|watch|precauci[óo]n|advertencia|cuidado|lento|obst[áa]cul|colisi[óo]n|moderad|vigila)\b/.test(t)) return 'caution';
+  return 'clear';
+};
+
 function SessionForm({ session, onSubmit, onCancel }) {
   const [title, setTitle] = useState(session?.title || '');
   const [desc, setDesc] = useState(session?.brief || '');
@@ -103,13 +113,17 @@ function More({ items }) {
   );
 }
 
-// Sage's spoken replies: off, Edge neural voices (always there) or Deepgram (when the server has a key)
-const VOICES = [['off', 'Voice off'], ['edge', 'Edge voice'], ['deepgram', 'Deepgram voice']];
-function VoiceSel({ voice, deepgram, onChange }) {
+// Sage's spoken replies: off, Edge neural voices (always there), and Siri in the desktop
+// app on a Mac or Deepgram (when the server has a key) everywhere else
+const DESKTOP = !!window.blackout?.desktop;
+const VOICES = [['off', 'Voice off'], ['edge', 'Edge voice'], ['deepgram', 'Deepgram voice'], ['apple', 'Siri voice']];
+function VoiceSel({ voice, providers, onChange }) {
+  const siri = DESKTOP && providers.apple;
+  const shown = (k) => k === voice || (k === 'apple' ? siri : k === 'deepgram' ? providers.deepgram && !siri : true);
   return (
     <select className="voice-sel" value={voice} aria-label="Sage's voice" title="Read Sage's replies aloud"
       onChange={(e) => onChange(e.target.value)}>
-      {VOICES.filter(([k]) => k !== 'deepgram' || deepgram || voice === k).map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+      {VOICES.filter(([k]) => shown(k)).map(([k, n]) => <option key={k} value={k}>{n}</option>)}
     </select>
   );
 }
@@ -117,7 +131,7 @@ function VoiceSel({ voice, deepgram, onChange }) {
 function Sage() {
   const [missions, setMissions] = useState([]);
   const [voice, setVoice] = useState(() => kept('sageVoice') || 'off');
-  const [deepgram, setDeepgram] = useState(false);
+  const [providers, setProviders] = useState({});
   const audio = useRef(null);
   // view: 'home' | 'temp' (temporary chat) | 'new' (session form) | 'session' (its folder) | 'chat' (a session's chat)
   // only 'temp' and 'chat' are chats, and only they get the prompt bar
@@ -179,7 +193,10 @@ function Sage() {
 
   // ---- voice ----
   useEffect(() => {
-    fetch('/api/tts/providers').then((r) => r.json()).then((p) => setDeepgram(!!p.deepgram)).catch(() => {});
+    fetch('/api/tts/providers').then((r) => r.json()).then((p) => {
+      setProviders(p);
+      if (DESKTOP && p.apple) setVoice((v) => (v === 'deepgram' ? 'apple' : v));   // Siri replaces Deepgram in the desktop app
+    }).catch(() => {});
   }, []);
   const hush = () => { audio.current?.pause(); audio.current = null; };
   const pickVoice = (v) => { hush(); setVoice(v); keep('sageVoice', v === 'off' ? '' : v); };
@@ -241,11 +258,11 @@ function Sage() {
       const session = t.key === TEMP ? tempSession.current : chat.claudeSession || null;
       return ask('/api/claude', { text, session, lang: kept('lang') || 'en', model: model.key, effort: level.toLowerCase(), ...folder }, 'claude', t);
     }
-    // moves:false -- nothing in this dashboard runs her drive/arm/tape cards yet, so
-    // the server tells her she's parked instead of her promising moves that never happen
+    // moves:false -- nothing in this dashboard runs her drive/tape cards yet, so the
+    // server tells her she's parked; arm:true -- her recorded arm takes the server plays itself
     return ask('/api/chat', {
       messages: next.filter((x) => x.by !== 'claude').map(({ role, content }) => ({ role, content })),
-      lang: kept('lang') || 'en', moves: false, effort: level === 'Standard' ? null : level.toLowerCase(), ...folder
+      lang: kept('lang') || 'en', moves: false, arm: true, effort: level === 'Standard' ? null : level.toLowerCase(), ...folder
     }, 'sage', t);
   };
 
@@ -305,14 +322,14 @@ function Sage() {
             <span className="crumb-title">{nav[0]}</span>
             {nav[1] ? <span className="crumb-sub">{nav[1]}</span> : null}
           </span>
-          {inChat ? <VoiceSel voice={voice} deepgram={deepgram} onChange={pickVoice} /> : null}
+          {inChat ? <VoiceSel voice={voice} providers={providers} onChange={pickVoice} /> : null}
         </nav>
       ) : null}
 
       {at === 'home' ? (
         <div className="folder home" key="home">
           <div className="start">
-            <span className="ascii-face big">^_^</span>
+            <SageFace mood="clear" className="big" />
             <button type="button" className="btn primary" onClick={() => go('new', '')}>New session</button>
             <button type="button" className="btn" onClick={openTemp}>Temporary chat</button>
             <span className="k">A temporary chat isn't saved. A session keeps its chats, notes and findings, and every chat in it can see the rest.</span>
@@ -393,17 +410,23 @@ function Sage() {
         <ol id="chat" ref={list} aria-live="polite" key={chatKey}>
           {messages.length === 0 && busy?.key !== chatKey ? (
             <li className="start">
-              <span className="ascii-face big">^_^</span>
+              <SageFace mood="scanning" className="big" />
               <span className="k">
                 {at === 'temp' ? "Temporary chat. Nothing here is saved." : `New chat in ${mission.title}. Sage and Claude can see the whole session.`}
               </span>
             </li>
           ) : null}
           {messages.map((x, i) => (
-            <li key={i} className={x.role === 'user' ? 'user' : x.err ? 'sage err' : 'sage'} data-by={x.by || 'sage'}>{x.content}</li>
+            <li key={i} className={x.role === 'user' ? 'user' : x.err ? 'sage err' : 'sage'} data-by={x.by || 'sage'}>
+              {i === messages.length - 1 && x.role !== 'user' && (x.by || 'sage') === 'sage' && busy?.key !== chatKey
+                ? <SageFace mood={x.err ? 'alert' : moodOf(x.content)} className="reply" gaze={false} /> : null}
+              {x.content}
+            </li>
           ))}
           {busy?.key === chatKey ? (
-            <li className="sage thinking" data-by={busy.by}>{busy.by === 'claude' ? 'working — Claude can take a while…' : '…'}</li>
+            busy.by === 'claude'
+              ? <li className="sage thinking" data-by="claude">working — Claude can take a while…</li>
+              : <li className="sage pondering" data-by="sage"><SageFace mood="thinking" className="mid" /></li>
           ) : null}
         </ol>
       )}
@@ -432,6 +455,8 @@ function Sage() {
               ? 'Standard answers in about a second. Low to High let Sage think first: better on hard questions, a few seconds slower each step.'
               : 'How long Claude thinks before answering. Higher is smarter on hard jobs but slower and uses more of the plan.'}
             busy={!!busy}
+            voiceSend
+            lang={kept('lang') || 'en'}
             onSend={send}
             onStop={() => {
               ctl.current?.abort();

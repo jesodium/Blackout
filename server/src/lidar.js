@@ -22,8 +22,8 @@ const SKIP_VIDS = new Set(["2341", "1a86"]);   // arduino, wch ch34x
 const PROBE_TRIES = 3;    // it may still be booting the first time round
 const TICK_MS = 2000;
 const SILENT_MS = 3000;   // no samples for this long and it counts as gone
-const BIN_STALE_MS = 600; // a bin the beam hasn't refreshed is not a wall any more
-const SCAN_MS = 200;
+const BIN_STALE_MS = 300; // a bin the beam hasn't refreshed is not a wall any more (~3 turns at 10 Hz)
+const SCAN_MS = 50;       // 20 Hz out, ~1.8 KB each; the dash eases between them at 60 fps
 
 function crc8(buf) {
   let c = 0;

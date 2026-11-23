@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>Blackout Voice</string>
+  <key>CFBundleIdentifier</key>
+  <string>org.blackout.voice</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Blackout uses speech recognition to turn your voice into messages for Sage.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Blackout uses the microphone for voice messages to Sage.</string>
+</dict>
+</plist>

@@ -3,6 +3,7 @@
 #include <Adafruit_BME280.h>
 #include <DHT11.h>
 #include <SPI.h>
+#include <U8g2lib.h>   // only for its fonts: Arduino_GFX enables u8g2 font support when it sees this
 #include <Arduino_GFX_Library.h>
 #include "routines.h"
 #include "blkvm.h"

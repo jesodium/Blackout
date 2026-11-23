@@ -3,7 +3,7 @@
 A serial pipe to the Giga, not to the Uno bench rig: main.ino reads the same
 command strings off USB that it reads off BLE (`Serial.readStringUntil` in
 loop()), so every line here is exactly what the dashboard would have written
-over the link — `arm,<joint>,<speed>`, `armz,`, `arml,`, `stop`.
+over the link — `arm,<joint>,<speed>`, `armto,<joint>,<deg>`, `armz,`, `arml,`, `stop`.
 
 Why this exists at all: the dashboard's arrows and hold sliders are a live
 control surface, and a live control surface is how a joint gets overdriven. The
@@ -215,7 +215,7 @@ PLAY = {"on": False, "name": ""}
 
 
 def _record(cmd):
-    if REC["on"] and len(REC["steps"]) < REC_MAX:
+    if REC["on"] and len(REC["steps"]) < REC_MAX and not cmd.startswith("lcd,"):
         REC["steps"].append({"ms": int((time.time() - REC["t0"]) * 1000), "cmd": cmd})
 
 
@@ -292,7 +292,7 @@ def clean(steps):
     for st in steps or []:
         cmd = st.get("cmd")
         cmd = "" if cmd is None else str(cmd).strip()
-        if not cmd or not cmd.startswith(("arm,", "armh,", "armz,", "stop")):
+        if not cmd or not cmd.startswith(("arm,", "armh,", "armz,", "armto,", "stop")):
             continue                        # a take drives the arm and nothing else
         try:
             ms = max(0, int(st.get("ms", 0)))
@@ -377,6 +377,14 @@ button[disabled]{opacity:.35;cursor:not-allowed}
 .spd{display:flex;gap:5px;align-items:center;color:var(--dim);font-size:11px}
 .spd input{width:88px;accent-color:var(--acc);touch-action:none}
 .spd b{font-weight:400;min-width:26px;text-align:right;color:var(--fg)}
+.mv2{display:grid;gap:6px;grid-template-columns:repeat(3,1fr);
+ grid-template-areas:". up ." "lt dn rt" "op rc cl"}
+.mv2 button.live{background:#2f2a13;border-color:var(--acc);color:var(--acc)}
+.goto{padding-top:8px;border-top:1px solid var(--line);margin-top:4px}
+.goto select,.goto input{min-height:44px;min-width:0;background:#0f0d0a;border:1px solid var(--line);
+ border-radius:8px;color:var(--fg);font:inherit;padding:0 8px}
+.goto input{width:88px}
+.goto select:focus-visible,.goto input:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .hint{color:var(--dim);font-size:11px;margin:8px 0 0}
 .rec{border-color:var(--red);color:#e9b6b0}
 .rec.on{background:var(--red);border-color:var(--red);color:#fff}
@@ -403,8 +411,29 @@ input.ren{width:100%;background:#0f0d0a;border:1px solid var(--acc);border-radiu
   <button id=ble onclick="link('ble')">ble</button></div></div>
 
 <div class=pane>
+ <div class=hd><span>move</span><span class=meta>hold</span></div>
+ <div class=mv2>
+  <button data-c=raise style="grid-area:up">&#9650; raise</button>
+  <button data-c=left style="grid-area:lt">&#9664; left</button>
+  <button data-c=lower style="grid-area:dn">&#9660; lower</button>
+  <button data-c=right style="grid-area:rt">right &#9654;</button>
+  <button onclick="send('armto,3,110')" style="grid-area:op">open</button>
+  <button onclick="send('armto,3,60,1')" style="grid-area:rc">reg close</button>
+  <button onclick="send('armto,3,60')" style="grid-area:cl">close lock</button></div>
+ <div class=row style="margin-top:8px"><span class=meta>raise turns</span>
+  <button type=button class=chip id=flip1 onclick="flip('shoulder')"></button>
+  <button type=button class=chip id=flip2 onclick="flip('elbow')"></button></div>
+ <p class=hint>raise/lower drive shoulder + elbow together, each at its own slider speed below,
+  so the sliders set the mix &nbsp;·&nbsp; open = 110&deg; &nbsp;·&nbsp; close lock = 60&deg; held &nbsp;·&nbsp; reg close = 60&deg; then let go &nbsp;·&nbsp; a chip flips which way that joint turns</p>
+</div>
+
+<div class=pane>
  <div class=hd><span>joints</span><span id=jstate></span></div>
  <div id=joints></div>
+ <form class="row goto" onsubmit="event.preventDefault();goTo()">
+  <select id=tojoint aria-label="joint"></select>
+  <input id=todeg type=number min=0 max=180 step=1 inputmode=numeric placeholder="angle&deg;" aria-label="angle in degrees" required>
+  <button class=wide>go to angle</button></form>
  <p class=hint>&#9664;&#9654; jog while held &nbsp;·&nbsp; &#9666;&#9656; tap = %NUDGE%ms, then parked
   &nbsp;·&nbsp; the slider is that row's speed, and it is recorded with the take</p>
 </div>
@@ -412,6 +441,18 @@ input.ren{width:100%;background:#0f0d0a;border:1px solid var(--acc);border-radiu
 <div class=pane>
  <div class=hd><span>home</span></div>
  <div class=row><button class=wide onclick="send('armz,')">all joints home (record takes from here)</button></div>
+</div>
+
+<div class=pane>
+ <div class=hd><span>screen</span><span id=lcdst></span></div>
+ <div class=row><button onclick="shift(-1,0)" aria-label="left">&#9664;</button>
+  <button onclick="shift(1,0)" aria-label="right">&#9654;</button>
+  <button onclick="shift(0,-1)" aria-label="up">&#9650;</button>
+  <button onclick="shift(0,1)" aria-label="down">&#9660;</button>
+  <button class=wide id=lcdfr onclick="LCD.f=!LCD.f;shift(0,0)">test pattern</button>
+  <button onclick="LCD.x=6;LCD.y=0;shift(0,0)">reset</button></div>
+ <p class=hint>slides the robot's picture %STEP%px a tap &nbsp;·&nbsp; test pattern = outline + a mark
+  every 10px from each edge; first mark you can see is how much the case hides &nbsp;·&nbsp; kept on the board</p>
 </div>
 
 <div class=pane>
@@ -426,9 +467,18 @@ input.ren{width:100%;background:#0f0d0a;border:1px solid var(--acc);border-radiu
 </div>
 
 <div class=bar><span id=log>ready</span>
- <button class=panic onclick="send('stop')">&#9632; PANIC STOP &nbsp;<small>space</small></button></div>
+ <button class=panic onclick="held=combo=null;send('stop')">&#9632; PANIC STOP &nbsp;<small>space</small></button></div>
 <script>
 const J=%JOINTS%;
+// Mirror of what was last sent; the board's flash is the real copy. A fresh
+// browser starts at 0,0, so its first tap overwrites whatever the board held.
+let LCD={x:0,y:0,f:false};try{LCD=JSON.parse(localStorage.lcd)||LCD}catch(e){}
+function shift(dx,dy){LCD.x=Math.max(-40,Math.min(40,LCD.x+dx*%STEP%));
+ LCD.y=Math.max(-40,Math.min(40,LCD.y+dy*%STEP%));
+ try{localStorage.lcd=JSON.stringify(LCD)}catch(e){}
+ lcdst.textContent='x '+LCD.x+'  y '+LCD.y;lcdfr.classList.toggle('on',LCD.f);
+ send('lcd,'+LCD.x+','+LCD.y+','+(LCD.f?1:0))}
+addEventListener('load',()=>{lcdst.textContent='x '+LCD.x+'  y '+LCD.y;lcdfr.classList.toggle('on',LCD.f)});
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const say=(t,err)=>{log.textContent=t;log.classList.toggle('err',!!err)};
 let held=null;
@@ -476,6 +526,35 @@ joints.innerHTML=J.map((n,i)=>`<div class=jrow><span>${n} <small>j${i}</small> <
  <button data-j=${i} data-d=100 title="jog while held">&#9654;</button>
  <button class=nudge data-n=${i} data-d=-100 title="nudge">&#9666;</button>
  <button class=nudge data-n=${i} data-d=100 title="nudge">&#9656;</button></div>`).join('');
+// The combined pad. One hold drives a set of joints, each at its own slider speed,
+// as plain arm,<j>,<speed> steps, so a take records it like any jog. IMPORTANT NOTE:
+// which way "raise" turns each servo depends on how the horns went on, and nobody
+// has checked: FLIP is that per-rig knob, kept in localStorage like the sliders.
+const FLIP=(()=>{try{return JSON.parse(localStorage.armFlip)||{}}catch(e){return {}}})();
+const ji=n=>J.indexOf(n), sg=n=>FLIP[n]?-1:1;
+const COMBO={
+ raise:()=>[['shoulder',-1],['elbow',1]], lower:()=>[['shoulder',1],['elbow',-1]],   // checked on the rig 2026-11-23
+ left:()=>[['base',-1]], right:()=>[['base',1]]};
+let combo=null;
+setInterval(()=>{if(combo)for(const [i,d] of combo)send('arm,'+i+','+d,1)},%REP%);
+function comboOn(k,b){return e=>{e.preventDefault();if(combo)return;
+ combo=COMBO[k]().map(([n,d])=>[ji(n),d*sg(n)*spd(ji(n))]);b.classList.add('live');
+ for(const [i,d] of combo){live(i,1);send('arm,'+i+','+d)}}}
+function comboOff(b){return()=>{if(!combo)return;const c=combo;combo=null;b.classList.remove('live');
+ for(const [i] of c){live(i,0);send('arm,'+i+',0')}setTimeout(refresh,300)}}
+for(const b of document.querySelectorAll('[data-c]')){const off=comboOff(b);
+ b.onpointerdown=comboOn(b.dataset.c,b);b.onpointerup=off;b.onpointerleave=off;b.onpointercancel=off;
+ b.oncontextmenu=e=>e.preventDefault()}
+function paintFlip(){[['flip1','shoulder'],['flip2','elbow']].forEach(([id,n])=>{
+ const el=document.getElementById(id);el.textContent=n+(FLIP[n]?' \u21C5 flipped':' normal');
+ el.classList.toggle('on',!!FLIP[n])})}
+function flip(n){FLIP[n]=!FLIP[n];try{localStorage.armFlip=JSON.stringify(FLIP)}catch(e){}paintFlip()}
+paintFlip();
+tojoint.innerHTML=J.map((n,i)=>`<option value=${i}>${n}</option>`).join('');
+// Glides at the board's full jog rate and is recorded like any other step. The board
+// clamps to that joint's lo/hi, so the readout is where it actually stopped.
+function goTo(){const d=Math.round(+todeg.value);if(!(d>=0&&d<=180))return say('angle is 0-180',1);
+ send('armto,'+tojoint.value+','+d)}   // the /rec poll picks up where it landed
 for(const b of joints.querySelectorAll('[data-j]')){
  const i=+b.dataset.j,d=+b.dataset.d;
  b.onpointerdown=hold(i,d);b.onpointerup=rel(i);b.onpointerleave=rel(i);b.onpointercancel=rel(i);
@@ -558,7 +637,7 @@ refresh();
 // box is open, or the repaint eats what is being typed.
 setInterval(()=>{if(document.activeElement.tagName!=='INPUT'&&!armed)refresh()},1500);
 addEventListener('keydown',e=>{if(e.code==='Space'&&e.target.tagName!=='INPUT'){
- e.preventDefault();held=null;send('stop')}});
+ e.preventDefault();held=combo=null;send('stop')}});
 </script>"""
 
 app = Flask(__name__)
@@ -585,7 +664,8 @@ def dur(steps):
 def index():
     return (PAGE.replace("%SPDMIN%", str(SPEED_MIN))
                 .replace("%JOINTS%", json.dumps(JOINTS))
-                .replace("%REP%", str(REPEAT_MS)).replace("%NUDGE%", str(NUDGE_MS)))
+                .replace("%REP%", str(REPEAT_MS)).replace("%NUDGE%", str(NUDGE_MS))
+                .replace("%STEP%", "2"))
 
 
 @app.post("/cmd")
@@ -737,6 +817,8 @@ def selftest():
         "the speed slider has to be in the per-joint row template"
     assert "min=%d" % SPEED_MIN in page and "%SPDMIN%" not in page
 
+    assert clean([{"ms": 0, "cmd": "armto,2,40"}]) == [{"ms": 0, "cmd": "armto,2,40"}], \
+        "a typed angle has to survive into a saved take"
     REC.update(on=True, t0=time.time(), steps=[])
     _record("arm,0,100")
     assert len(REC["steps"]) == 1 and REC["steps"][0]["cmd"] == "arm,0,100"

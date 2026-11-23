@@ -5,6 +5,7 @@ const { app, BrowserWindow, utilityProcess, dialog, ipcMain, Menu, screen } = re
 const path = require("path");
 const http = require("http");
 const fs = require("fs");
+const { spawn, spawnSync } = require("child_process");
 
 // ---- server child ----
 const TUNING = {
@@ -266,6 +267,93 @@ function mcpInstall() {
 ipcMain.handle("mcp:get", () => mcpInfo());
 ipcMain.handle("mcp:install", () => mcpInstall());
 
+// ---- voice ----
+// Apple Speech runs in a tiny Swift helper so Electron's Chromium (which has no
+// vendor speech service) never sees the audio. The helper prints JSON lines:
+// ready / partial / final / error. The renderer shows partials live and calls
+// stop once the operator goes quiet; the helper then emits the final transcript.
+let voice = null;
+const VOICE_BIN = () => app.isPackaged
+  ? path.join(process.resourcesPath, "speech-helper")
+  : path.join(__dirname, "build", "speech-helper");
+
+function voiceBuild() {
+  const out = VOICE_BIN();
+  if (fs.existsSync(out)) return out;
+  if (process.platform !== "darwin") throw new Error("Apple voice needs macOS");
+  const src = path.join(__dirname, "native", "SpeechHelper.swift");
+  const plist = path.join(__dirname, "native", "SpeechHelper-Info.plist");
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  const r = spawnSync("/usr/bin/swiftc", [
+    "-O", src, "-o", out, "-framework", "Speech", "-framework", "AVFoundation",
+    "-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", plist,
+  ], { encoding: "utf8", timeout: 180000 });
+  if (r.status !== 0) throw new Error(`Voice helper build failed: ${(r.stderr || r.stdout || "").slice(-400)}`);
+  return out;
+}
+
+const voiceEmit = (msg) => win?.webContents.send("voice:event", msg);
+
+ipcMain.handle("voice:available", () => process.platform === "darwin");
+
+ipcMain.handle("voice:start", async (_e, lang) => {
+  if (voice) return true;
+  const bin = voiceBuild();                         // throws to renderer on failure
+  const code = String(lang || "en").slice(0, 2);
+  const locale = code === "es" ? "es-ES" : "en-US";
+  const proc = spawn(bin, [locale], { stdio: ["pipe", "pipe", "pipe"] });
+  voice = { proc, done: false, lastText: "", locale };
+  const v = voice;
+  let buf = "";
+  proc.stdout.on("data", (d) => {
+    buf += d.toString();
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line) continue;
+      let msg;
+      try { msg = JSON.parse(line); } catch { continue; }
+      if (msg.text) v.lastText = msg.text;
+      if (msg.type === "final" || msg.type === "error") v.done = true;
+      voiceEmit(msg);
+      if (v.done) setTimeout(() => { if (voice?.proc === proc) { voice = null; proc.kill(); } }, 80);
+    }
+  });
+  proc.stderr.on("data", (d) => console.error(`[voice] ${d}`.trimEnd()));
+  proc.on("error", (e) => {
+    if (voice?.proc !== proc) return;
+    voice = null;
+    voiceEmit({ type: "error", message: e.message });
+  });
+  proc.on("exit", () => {
+    if (voice?.proc !== proc) return;
+    voice = null;
+    if (!v.done) voiceEmit(v.lastText ? { type: "final", text: v.lastText } : { type: "error", message: "Voice ended" });
+  });
+  try { proc.stdin.write("start\n"); }
+  catch (e) { voice = null; proc.kill(); throw e; }
+  return true;
+});
+
+ipcMain.handle("voice:stop", () => {
+  if (!voice || voice.done) return false;
+  const p = voice.proc;
+  try { p.stdin.write("stop\n"); } catch {}
+  setTimeout(() => { if (voice?.proc === p && !voice.done) p.kill(); }, 3000);
+  return true;
+});
+
+ipcMain.handle("voice:cancel", () => {
+  if (!voice) return false;
+  const v = voice;
+  voice = null;                                     // exit handler sees a different proc
+  v.done = true;
+  try { v.proc.stdin.write("quit\n"); } catch {}
+  setTimeout(() => v.proc.kill(), 100);
+  return true;
+});
+
 ipcMain.handle("settings:get", () => readSettings());
 ipcMain.handle("settings:save", (_e, values) => { writeSettings(values); return true; });
 ipcMain.handle("app:relaunch", () => { app.relaunch(); app.exit(0); });
@@ -311,6 +399,10 @@ function buildMenu() {
         label: "View",
         submenu: [{ role: "reload" }, { role: "toggleDevTools" }, { type: "separator" }, { role: "togglefullscreen" }],
       },
+      {
+        label: "Debug",
+        submenu: [{ label: "Show debug area", accelerator: "CmdOrCtrl+Shift+D", click: () => win?.webContents.send("debug:toggle") }],
+      },
       { role: "windowMenu" },
     ])
   );
@@ -338,6 +430,6 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on("before-quit", () => { quitting = true; });
-  app.on("will-quit", () => { serverProc?.kill(); tunnel?.proc.kill(); });
+  app.on("will-quit", () => { serverProc?.kill(); tunnel?.proc.kill(); try { voice?.proc.kill(); } catch {} });
   app.on("window-all-closed", () => app.quit());
 }

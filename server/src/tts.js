@@ -1,8 +1,10 @@
-// Sage's voice and ears: TTS (Deepgram if keyed, Edge neural voices otherwise),
+// Sage's voice and ears: TTS (Siri via macOS `say` on request, Deepgram if keyed, Edge otherwise),
 // STT (Deepgram), and the onboarding lines pre-rendered to disk at boot.
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { Readable } = require("stream");
+const { execFile } = require("child_process");
 const express = require("express");
 const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
 const { app, PORT } = require("./http");
@@ -51,6 +53,21 @@ async function speakEdge(text, voice, res) {
     .audioStream.on("error", () => res.destroy()).pipe(res);
 }
 
+// macOS `say` with no -v speaks in the system voice (System Settings > Accessibility >
+// Spoken Content), which is where the Siri voices live; AVSpeechSynthesizer can't reach them.
+// IMPORTANT NOTE: `say` can't write to stdout, so it renders a whole temp file first (no streaming).
+function speakApple(text, res) {
+  const file = path.join(os.tmpdir(), `sage-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.m4a`);
+  return new Promise((ok, fail) => {
+    execFile("/usr/bin/say", ["-o", file, "--file-format=m4af", "--data-format=aac", "--", text], { timeout: 30000 }, (err) => {
+      if (err) { fs.rm(file, { force: true }, () => {}); return fail(err); }
+      res.setHeader("Content-Type", "audio/mp4");
+      res.sendFile(file, () => fs.rm(file, { force: true }, () => {}));
+      ok();
+    });
+  });
+}
+
 async function ttsHandler(req, res) {
   const src = req.method === "GET" ? req.query : req.body;
   const voice = src?.voice || process.env.TTS_VOICE || "en-US-AndrewNeural";
@@ -58,6 +75,11 @@ async function ttsHandler(req, res) {
   const provider = src?.provider || "auto";
   if (!text) return res.status(400).json({ error: "text required" });
   try {
+    // the Siri voice only speaks the system language, so Spanish stays on Edge
+    if (provider === "apple" && process.platform === "darwin" && !voice.toLowerCase().startsWith("es")) {
+      try { return await speakApple(text, res); }
+      catch (e) { console.error("Apple TTS failed, falling back to Edge:", e.message); }
+    }
     const wantDeep = provider === "deepgram" || (provider === "auto" && process.env.DEEPGRAM_API_KEY && (voice.startsWith("en") || voice.startsWith("es")));
     if (wantDeep && process.env.DEEPGRAM_API_KEY) {
       try { return await speakDeepgram(text, res, voice); }
@@ -88,7 +110,7 @@ app.post("/api/stt", express.raw({ type: "audio/*", limit: "10mb" }), async (req
 });
 
 app.get("/api/tts/providers", (req, res) => {
-  res.json({ edge: true, deepgram: !!process.env.DEEPGRAM_API_KEY });
+  res.json({ edge: true, deepgram: !!process.env.DEEPGRAM_API_KEY, apple: process.platform === "darwin" });
 });
 
 // ---- onboarding ----

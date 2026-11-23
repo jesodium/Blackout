@@ -48,15 +48,17 @@
 struct ArmJoint { uint8_t ch; int lo, hi, home, trim, dir; const char *name; };
 ArmJoint armSv[] = {
   { 4,  10, 170, 90, 0, -1, "base"     },   // untrimmed; arrows were backwards
-  { 6,   0, 180, 90, 0,  1, "shoulder" },   // untrimmed; reach forward/back; full travel, unmeasured
-  { 8,  45, 135, 90, 0,  1, "elbow"    },   // untrimmed; lift up/down
-  { 10, 60, 120, 90, 0,  1, "gripper"  },   // untrimmed; open/close
+  { 6,   5, 175, 90, 0,  1, "shoulder" },   // untrimmed; reach forward/back; 5deg off each end, unmeasured
+  { 8,   5, 175, 90, 0,  1, "elbow"    },   // untrimmed; lift up/down; 5deg off each end, unmeasured -- 45/135 stopped a real lift
+  { 10, 60, 110, 90, 0,  1, "gripper"  },   // untrimmed; 110 = open, 60 = closed (2026-11-23). Full 0-180 opened it past centre
+                                            // and the jaws locked open until tapped (2026-11-23)
 };
 const uint8_t ARM_N = sizeof(armSv) / sizeof(armSv[0]);
 
 bool armOk = false;                  // false = chip never answered, all no-ops
 bool armLive = false;                // pulses on. false after boot and any stop
-bool armHoming = false;              // gliding every joint to home (armz,)
+float armGoal[ARM_N];                // glide target, deg (armz, / armto,); NAN = none
+bool armLimp[ARM_N];                 // go limp on arriving at armGoal (armto,<j>,<deg>,1)
 float armPos[ARM_N];                 // commanded angle, deg
 int armSpeed[ARM_N];                 // -100..100, 0 = holding
 unsigned long armLastCmd[ARM_N];     // 0 = that joint is not being jogged
@@ -106,8 +108,10 @@ static void armWrite(uint8_t i) {
 // where it is believed to be. IMPORTANT NOTE: after boot nothing knows where
 // the arm really is, so the first move snaps every joint to home at the
 // servo's full speed — park the arm near home before powering up.
+bool armEnabled = true;              // armen,0 locks the arm off (OE high) until armen,1: no move powers it
+
 static void armLiveOn() {
-  if (armLive) return;
+  if (armLive || !armEnabled) return;
   for (uint8_t i = 0; i < ARM_N; i++) armWrite(i);
   armOutputs(true);
   armLive = true;
@@ -116,25 +120,44 @@ static void armLiveOn() {
 void armStopAll() {
   armOutputs(false);                 // first: works even with the bus dead
   for (uint8_t c = 0; c < 16; c++) armOff(c);
-  for (uint8_t i = 0; i < ARM_N; i++) { armSpeed[i] = 0; armLastCmd[i] = 0; }
+  for (uint8_t i = 0; i < ARM_N; i++) { armSpeed[i] = 0; armLastCmd[i] = 0; armGoal[i] = NAN; armLimp[i] = false; }
   armLive = false;
-  armHoming = false;
+}
+
+// The dashboard's ENABLE/DISABLE ARM: off is armStopAll plus a lock, so a take,
+// a jog or Sage can't power the servos back up while they cool down.
+void armEnable(bool on) {
+  armEnabled = on;
+  armStopAll();                      // both ways: moves sent while locked are dropped, not replayed
+  Serial.println(on ? "arm enabled" : "arm disabled");
 }
 
 // Glide every joint to its home angle at ARM_DEG_S. A take recorded from home
 // replays the same from home, which is the point.
 void armHome() {
   if (!armOk) return;
-  for (uint8_t i = 0; i < ARM_N; i++) { armSpeed[i] = 0; armLastCmd[i] = 0; }
+  for (uint8_t i = 0; i < ARM_N; i++) { armSpeed[i] = 0; armLastCmd[i] = 0; armGoal[i] = armSv[i].home; armLimp[i] = false; }
   armLiveOn();
-  armHoming = true;
+}
+
+// Glide one joint to an angle the operator typed, same ARM_DEG_S as a full-speed
+// jog, clamped to lo/hi. The others keep doing whatever they were doing.
+// limp = cut that joint's pulse on arrival: it gets there, then stops pushing
+// (the gripper's "reg close" — closed, not squeezing). The next write powers it again.
+void armTo(uint8_t i, int deg, bool limp = false) {
+  if (!armOk || i >= ARM_N) return;
+  armLiveOn();
+  armSpeed[i] = 0; armLastCmd[i] = 0; armLimp[i] = limp;
+  armGoal[i] = constrain(deg, armSv[i].lo, armSv[i].hi);
 }
 
 // -100..100. Repeat to keep moving; silence stops the joint in ARM_JOG_MS.
 void armJog(uint8_t i, int speed) {
   if (!armOk || i >= ARM_N) return;
   armLiveOn();
-  armHoming = false;
+  if (speed) { armGoal[i] = NAN; armLimp[i] = false; }  // a jog takes the joint off its glide. A park
+                                     // (speed 0) doesn't: a take ends by parking
+                                     // every joint, and that mustn't cut an armto short
   armSpeed[i] = constrain(speed, -100, 100) * armSv[i].dir;
   armLastCmd[i] = armSpeed[i] ? millis() : 0;
   if (!armSpeed[i]) {                // released: say where, for trimming lo/hi
@@ -149,7 +172,7 @@ void armBegin() {
   digitalWrite(ARM_OE_PIN, HIGH);    // level before pinMode, or the pin's
   pinMode(ARM_OE_PIN, OUTPUT);       // default low enables every channel
   armOutputs(false);
-  for (uint8_t i = 0; i < ARM_N; i++) armPos[i] = armSv[i].home;
+  for (uint8_t i = 0; i < ARM_N; i++) { armPos[i] = armSv[i].home; armGoal[i] = NAN; }
   armT = millis();
 
   Wire.begin();
@@ -173,23 +196,19 @@ void armTick() {
   float lim = ARM_DEG_S * (now - armT) / 1000.0f;
   armT = now;
   if (!armOk || !armLive) return;
-  bool away = false;                 // any homing joint not there yet
   for (uint8_t i = 0; i < ARM_N; i++) {
     if (armLastCmd[i] && now - armLastCmd[i] > ARM_JOG_MS) { armSpeed[i] = 0; armLastCmd[i] = 0; }
     float step;
     if (armSpeed[i]) step = lim * armSpeed[i] / 100;
-    else if (armHoming) step = constrain(armSv[i].home - armPos[i], -lim, lim);
+    else if (!isnan(armGoal[i])) step = constrain(armGoal[i] - armPos[i], -lim, lim);
     else continue;
     long was = lround(armPos[i]);
     armPos[i] = constrain(armPos[i] + step, (float)armSv[i].lo, (float)armSv[i].hi);
     if (lround(armPos[i]) != was) armWrite(i);
-    if (armHoming && !armSpeed[i] && fabsf(armPos[i] - armSv[i].home) > 0.01f) away = true;
-  }
-  // Arrived: say where, same line a jog release prints, so the recorder's
-  // readout follows a home too. Clearing armHoming makes it print once.
-  if (armHoming && !away) {
-    armHoming = false;
-    for (uint8_t i = 0; i < ARM_N; i++) {
+    // Arrived: say where, same line a jog release prints, so the recorder's readout follows
+    if (!armSpeed[i] && !isnan(armGoal[i]) && fabsf(armPos[i] - armGoal[i]) < 0.01f) {
+      armGoal[i] = NAN;
+      if (armLimp[i]) { armLimp[i] = false; armOff(armSv[i].ch); }
       Serial.print("arm "); Serial.print(armSv[i].name);
       Serial.print(" @ "); Serial.println(lround(armPos[i]));
     }

@@ -86,11 +86,22 @@ void handleCmd(String c) {
   else if (c.startsWith("go,")) startRoutine(c.substring(3));
   else if (c.startsWith("drv,")) startDrive(c);
   else if (c.startsWith("blk,")) handleBlk(c);
+  else if (c.startsWith("armen,")) armEnable(c.substring(6).toInt());   // armen,0 = lock off, armen,1 = allow
   else if (c.startsWith("armz,")) armHome();      // glide every joint to home
+  else if (c.startsWith("armto,")) {               // armto,<joint>,<deg>[,1 = limp on arrival]: glide there
+    int a = c.indexOf(',', 6), b = c.indexOf(',', a + 1);
+    if (a > 0) armTo(c.substring(6, a).toInt(), c.substring(a + 1).toInt(), b > 0 && c.substring(b + 1).toInt());
+  }
   else if (c.startsWith("arm,")) {
     int a = c.indexOf(',', 4);
     if (a < 0) armStopAll();                       // bare "arm," = all joints off
     else armJog(c.substring(4, a).toInt(), c.substring(a + 1).toInt());
+  }
+
+  else if (c.startsWith("lcd,")) {               // lcd,<x>,<y>[,1 = test pattern]
+    int a = c.indexOf(',', 4), b = c.indexOf(',', a + 1);
+    if (a > 0) lcdAdjust(c.substring(4, a).toInt(), c.substring(a + 1, b < 0 ? c.length() : b).toInt(),
+              b > 0 && c.substring(b + 1).toInt());
   }
 
   else if (c.startsWith("hz,")) { tuneStep = PAIR_TUNE_N; buzzTone(c.substring(3).toInt()); }

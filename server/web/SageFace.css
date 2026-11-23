@@ -1,0 +1,66 @@
+
+/* ---- sage face ---- */
+/* each eye is an open glyph with a shut one stacked on it, swapped on a step timer */
+.sage-face {
+  --sf-gx: 0em; --sf-gy: 0em;
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  color: currentColor;
+  font: 700 1em/1 var(--font, ui-monospace, monospace);
+  letter-spacing: 0.12em; white-space: pre; user-select: none;
+  text-shadow: 0 0 0.35em color-mix(in srgb, currentColor 45%, transparent);
+  animation: sf-bob 3.4s ease-in-out infinite;
+}
+.sf-scan {
+  display: inline-flex; align-items: baseline;
+  translate: var(--sf-gx) var(--sf-gy);
+  transition: translate 0.28s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.sf-eye {
+  position: relative; display: inline-block;
+  transition: scale 0.3s cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+.sf-eye b { font-weight: inherit; }
+.sf-shut { position: absolute; left: 0; top: 0; opacity: 0; }
+
+.sf-open, .sf-shut { animation: sf-open 4.6s steps(1, end) infinite; }
+.sf-shut { animation-name: sf-close; }
+.sf-r .sf-open, .sf-r .sf-shut { animation-delay: 0.06s; }
+.sf-mouth { display: inline-block; transition: scale 0.3s ease; }
+.sf-z { position: absolute; right: -0.35em; top: -0.1em; font-size: 0.5em; opacity: 0; }
+
+@keyframes sf-open  { 0%, 89%, 93%, 100% { opacity: 1; } 90%, 92% { opacity: 0; } }
+@keyframes sf-close { 0%, 89%, 93%, 100% { opacity: 0; } 90%, 92% { opacity: 1; } }
+@keyframes sf-bob    { 0%, 100% { translate: 0 0; } 50% { translate: 0 -0.08em; } }
+@keyframes sf-sweep  { 0%, 10% { translate: -0.16em var(--sf-gy); } 45%, 55% { translate: 0.16em var(--sf-gy); } 92%, 100% { translate: 0 var(--sf-gy); } }
+@keyframes sf-shake  { 0%, 100% { translate: 0 0; } 25% { translate: -0.07em 0; } 75% { translate: 0.07em 0; } }
+@keyframes sf-pulse  { 0%, 100% { scale: 1; } 50% { scale: 1.25; } }
+@keyframes sf-breath { 0%, 100% { scale: 1 1; } 50% { scale: 1.06 0.85; } }
+@keyframes sf-ponder { 0%, 100% { rotate: -4deg; } 50% { rotate: 4deg; } }
+@keyframes sf-hop    { 0%, 60%, 100% { translate: 0 0; } 25% { translate: 0 -0.16em; } 40% { translate: 0 -0.04em; } }
+@keyframes sf-snooze { 0% { opacity: 0; translate: 0 0; scale: 0.7; } 25% { opacity: 0.8; } 100% { opacity: 0; translate: 0.25em -0.7em; scale: 1.2; } }
+
+.sage-face.is-idle .sf-open, .sage-face.is-idle .sf-shut { animation: none; }
+.sage-face.is-idle .sf-scan { animation: sf-breath 4s ease-in-out infinite; }
+.sage-face.is-idle .sf-z { animation: sf-snooze 3.4s ease-in-out infinite; }
+
+.sage-face.is-scanning .sf-scan, .sage-face.is-work .sf-scan { animation: sf-sweep 3.2s ease-in-out infinite; }
+.sage-face.is-work .sf-open, .sage-face.is-work .sf-shut { animation-duration: 1.6s; }
+
+.sage-face.is-thinking { animation: sf-ponder 3.6s ease-in-out infinite; }
+.sage-face.is-thinking .sf-open, .sage-face.is-thinking .sf-shut { animation: none; }
+.sage-face.is-thinking .sf-mouth { animation: sf-pulse 2.2s ease-in-out infinite; }
+
+.sage-face.is-clear .sf-open, .sage-face.is-clear .sf-shut { animation: none; }
+.sage-face.is-clear { animation: sf-hop 2.4s ease-in-out infinite; }
+
+.sage-face.is-caution .sf-r { display: none; }
+.sage-face.is-caution .sf-open, .sage-face.is-caution .sf-shut { animation-duration: 2.4s; }
+
+.sage-face.is-alert .sf-open, .sage-face.is-alert .sf-shut { animation: none; }
+.sage-face.is-alert .sf-scan { animation: sf-shake 0.32s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sage-face, .sage-face * { animation: none !important; transition: opacity 0.2s ease; }
+  .sage-face .sf-shut, .sage-face .sf-z { opacity: 0; }
+  .sage-face .sf-open { opacity: 1; }
+}

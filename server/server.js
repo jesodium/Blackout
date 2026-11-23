@@ -7,6 +7,7 @@ const { server, PORT } = require("./src/http");
 require("./src/link");        // robot link: usb serial + the BLE flag
 require("./src/telemetry");   // board CSV -> packets
 require("./src/data");        // data/: arm takes, tapes, workflows
+require("./src/armplay");     // plays an arm take: dashboard buttons + Sage
 require("./src/tts");
 require("./src/cam");
 require("./src/lights");

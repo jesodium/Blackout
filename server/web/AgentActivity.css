@@ -1,0 +1,179 @@
+/* Claude activity console. Sits in Sage's flex column, above the prompt bar.
+   Palette comes from dash.css so dark/light/themed dashboards all work. */
+.aa {
+  --aa-claude: #d97757;
+  flex: none;
+  height: min(42vh, 320px);
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  animation: aa-in 0.2s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+:root[data-theme='light'] .aa { --aa-claude: #b4531f; }
+
+/* header toggle, portaled into the Sage bar's #sage-activity-slot */
+.aa-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.aa-toggle:hover, .aa-toggle[aria-expanded='true'] { color: var(--ink); border-color: var(--ink-2); background: var(--raise); }
+.aa-toggle-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--off); }
+.aa-toggle.is-live { color: var(--ink); border-color: var(--warn); }
+.aa-toggle.is-live .aa-toggle-dot { background: var(--warn); animation: aa-pulse 1.1s ease-in-out infinite; }
+
+.aa-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--raise);
+}
+.aa-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.aa-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.aa-state .aa-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--off); }
+.aa-state.is-running .aa-dot, .aa-state.is-busy .aa-dot { background: var(--warn); animation: aa-pulse 1.1s ease-in-out infinite; }
+.aa-state.is-done .aa-dot { background: var(--go); }
+.aa-state.is-failed .aa-dot, .aa-state.is-stopped .aa-dot { background: var(--stop); }
+.aa-clock { color: var(--ink-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+.aa-grow { flex: 1; }
+.aa-btn {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.aa-btn:hover { color: var(--ink); border-color: var(--ink-2); }
+.aa-stop { border-color: var(--stop); color: var(--stop); }
+.aa-stop:hover { background: var(--stop); color: var(--bg); border-color: var(--stop); }
+.aa-close { width: 24px; padding: 0; font-size: 12px; }
+
+.aa-task {
+  flex: none;
+  margin: 0;
+  padding: 8px 12px 0;
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aa-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 10px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.aa-empty { margin: auto; color: var(--ink-2); font-size: 12px; text-align: center; }
+
+.aa-row {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  animation: rise 0.18s ease both;
+}
+/* the rail that threads the dots together */
+.aa-row::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 17px;
+  bottom: -13px;
+  width: 1px;
+  background: var(--line);
+}
+.aa-row:last-child::before { display: none; }
+.aa-mark {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 11px;
+  height: 11px;
+  margin-top: 3px;
+  border: 1px solid var(--ink-2);
+  border-radius: 50%;
+  background: var(--bg);
+}
+.aa-mark::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: var(--ink-2);
+}
+.aa-row[data-kind='tool'] .aa-mark { border-color: var(--go); }
+.aa-row[data-kind='tool'] .aa-mark::after { background: var(--go); }
+.aa-row.is-current .aa-mark { border-color: var(--warn); animation: aa-pulse 1.1s ease-in-out infinite; }
+.aa-row.is-current .aa-mark::after { background: var(--warn); }
+
+.aa-body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.aa-say { margin: 0; color: var(--ink); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.aa-call { display: flex; flex-direction: column; gap: 2px; }
+.aa-call code { color: var(--aa-claude); font-size: 12px; overflow-wrap: anywhere; }
+.aa-arg { color: var(--ink-2); font-size: 11px; overflow-wrap: anywhere; }
+.aa-at { color: var(--off); font-size: 10px; font-variant-numeric: tabular-nums; }
+
+.aa-result {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--go);
+  background: var(--raise);
+  animation: rise 0.18s ease both;
+}
+.aa-result-k {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--go);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.aa-result p { margin: 0; color: var(--ink); font-size: 12px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.aa-cost { display: block; margin-top: 6px; color: var(--ink-2); font-size: 10px; }
+
+@keyframes aa-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes aa-pulse { 50% { opacity: 0.35; } }
+.calm .aa, .calm .aa-row, .calm .aa-result { animation: none; }
+.calm .aa-mark, .calm .aa-toggle-dot, .calm .aa-state .aa-dot { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .aa, .aa-row, .aa-result, .aa-mark, .aa-toggle-dot, .aa-state .aa-dot { animation: none; }
+}

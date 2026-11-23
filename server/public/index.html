@@ -20,6 +20,11 @@
   <header class="bar">
     <span class="brand">blackout</span>
 
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" class="btn" data-tab="dash" aria-selected="true">dash</button>
+      <button type="button" role="tab" class="btn" data-tab="blk" aria-selected="false">blk</button>
+    </div>
+
     <button type="button" id="link" class="btn link" data-state="off">
       <span class="dot" aria-hidden="true"></span>
       <span id="link-label">Link robot</span>
@@ -32,6 +37,8 @@
     <span class="stat" id="cams" data-t-title="camsTitle">
       <span class="k" data-t="cams">cams</span>
     </span>
+
+    <span class="stat" id="blk-run" aria-live="polite" hidden></span>
 
     <span class="grow"></span>
 
@@ -46,7 +53,7 @@
     <section id="feeds">
       <figure class="feed" data-cam="0" data-state="loading"><img alt=""><figcaption><span class="k" data-t="camFront"></span> <span class="k st"></span><button type="button" class="btn icon rot" data-t-title="rotate">⟳</button><button type="button" class="btn icon set" data-t-title="camSettings" aria-expanded="false">⚙</button></figcaption></figure>
       <figure class="feed" data-cam="1" data-state="loading"><img alt=""><figcaption><span class="k" data-t="camArm"></span> <span class="k st"></span><button type="button" class="btn icon rot" data-t-title="rotate">⟳</button><button type="button" class="btn icon set" data-t-title="camSettings" aria-expanded="false">⚙</button></figcaption></figure>
-      <figure class="feed lidar" id="lidar" data-state="none"><svg viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="48"/><circle cx="100" cy="100" r="96"/><path d="M100 4v7"/><circle class="dot" cx="100" cy="100" r="2"/></svg><canvas></canvas><figcaption><span class="k" data-t="lidar"></span> <span class="k st"></span></figcaption></figure>
+      <figure class="feed lidar" id="lidar" data-state="none"><svg viewBox="0 0 200 200" aria-hidden="true"><path class="x" d="M100 4V196M4 100H196M32 32L168 168M168 32L32 168"/><circle cx="100" cy="100" r="24"/><circle cx="100" cy="100" r="48"/><circle cx="100" cy="100" r="72"/><circle cx="100" cy="100" r="96"/><path class="fwd" d="M100 4v7"/><g class="m"><text x="103" y="84">1</text><text x="103" y="60">2</text><text x="103" y="36">3</text><text x="103" y="12">4 m</text></g><path class="dot" d="M100 94l4 9-4-2-4 2z"/></svg><canvas></canvas><figcaption><span class="k" data-t="lidar"></span> <span class="k st"></span> <span class="k near"></span></figcaption></figure>
     </section>
     <section id="sensors" aria-live="off" data-stale>
       <div class="tile"><span class="k" data-t="temp"></span><i class="lvl"></i><b id="s-temp">—</b><span class="k">°C</span></div>
@@ -57,7 +64,36 @@
       <div class="tile"><span class="k" data-t="lux"></span><i class="lvl"></i><b id="s-lux">—</b><span class="k">lx</span></div>
       <div class="tile"><span class="k" data-t="gas"></span><i class="lvl"></i><b id="s-gas">—</b><span class="k">/100</span></div>
     </section>
+    <section id="armpad" aria-labelledby="arm-h">
+      <h2 class="k" id="arm-h" data-t="arm"></h2>
+      <button type="button" class="btn" id="arm-en" data-t="armOff"></button>
+      <div class="arm-grp">
+        <button type="button" class="btn" data-hold="raise" data-t="raise"></button>
+        <button type="button" class="btn" data-hold="lower" data-t="lower"></button>
+        <button type="button" class="btn" data-hold="left" data-t="left"></button>
+        <button type="button" class="btn" data-hold="right" data-t="right"></button>
+      </div>
+      <div class="arm-grp">
+        <button type="button" class="btn" data-cmd="armto,3,110" data-t="open"></button>
+        <button type="button" class="btn" data-cmd="armto,3,60,1" data-t="regClose"></button>
+        <button type="button" class="btn" data-cmd="armto,3,60" data-t="closeLock"></button>
+        <button type="button" class="btn" data-cmd="armz," data-t="home"></button>
+      </div>
+      <div class="arm-grp" id="arm-takes"></div>
+    </section>
+    <!-- test only: Debug menu (electron) shows it -->
+    <section id="debug" aria-labelledby="dbg-h" hidden>
+      <h2 class="k" id="dbg-h">debug</h2>
+      <div class="wasd">
+        <button type="button" class="btn" data-drv="fwd" style="grid-area:w">W</button>
+        <button type="button" class="btn" data-drv="left" style="grid-area:a">A</button>
+        <button type="button" class="btn" data-drv="back" style="grid-area:s">S</button>
+        <button type="button" class="btn" data-drv="right" style="grid-area:d">D</button>
+      </div>
+      <label class="k">pwm <input type="range" id="dbg-pwm" min="60" max="255" value="160"> <output id="dbg-pwm-v">160</output></label>
+    </section>
   </main>
+  <iframe id="blk" title="BLK editor" hidden></iframe>
 </div>
 
 <div class="split" id="split" role="separator" aria-orientation="vertical" aria-label="Resize Sage panel" tabindex="0"></div>
@@ -66,6 +102,7 @@
   <header class="bar">
     <span class="brand">sage</span>
     <span class="grow"></span>
+    <span id="sage-activity-slot"></span>
     <span class="k" id="sage-state"></span>
   </header>
 

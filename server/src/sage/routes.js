@@ -5,6 +5,7 @@ const { app, io, localReq } = require("../http");
 const { hasAI, chat } = require("../brain");
 const state = require("../state");
 const recorder = require("../recorder");
+const { linked } = require("../link");
 const { eyeParts, grabFrames, camCount } = require("../vision");
 
 // eyeParts() falls back to cam 0 for a camera that isn't in CAM_URL, so "is it clear
@@ -13,7 +14,8 @@ const { eyeParts, grabFrames, camCount } = require("../vision");
 const blkEyes = (cam) => (cam = +cam || 0) < camCount ? eyeParts(cam) : Promise.resolve([]);
 const { readingLines } = require("../status");
 const { parseSage } = require("./parse");
-const { askSage, agentLoop, askConfirm, recordFinding, lastImage, LAMP_ASKED } = require("./agent");
+const { askSage, agentLoop, askConfirm, recordFinding, lastImage, emitStep, LAMP_ASKED } = require("./agent");
+const { playTake } = require("../armplay");
 const { delegate, jobLine } = require("./claude");
 const { contextOrDark, armLine, tapeLine, camLine, folderLine } = require("./context");
 const { CHAT_SYSTEM, BLK_SYSTEM, demoLine, LANG_INSTRUCT, langMsg } = require("./prompts");
@@ -25,6 +27,11 @@ app.post("/api/chat", async (req, res) => {
   const lang = LANG_INSTRUCT[req.body?.lang] ? req.body.lang : "en";
 
   const moves = req.body?.moves !== false;
+  // `arm: true` unlocks only the arm under a move lock: the dashboard plays her
+  // recorded takes (armplay.js) but nothing there runs her drive or tape cards yet.
+  // No YES card either — the dashboard has none, and she only names a take when the
+  // operator asked for the arm in words, so the ask IS the permission.
+  const armOn = moves || req.body?.arm === true;
   // CONSOLE -> SAGE LAMP. Off, she can talk about the light but never writes it:
   // she reached for it every other turn and the operator lost the level they set.
   // The word check is the "SAGE, brighten the lamp" escape hatch, so the toggle
@@ -36,6 +43,10 @@ app.post("/api/chat", async (req, res) => {
   // Claude runs with a shell, so only the PC's own dashboard can hand it work —
   // same loopback rule as /api/claude. A tablet's Sage is told she can't.
   const handoff = localReq(req);
+  // No BLE or usb link: every move/arm/tape she names would go nowhere, and she'd
+  // still say "lowering the arm". Told up front, and stripped below in case she forgets.
+  // IMPORTANT NOTE: BLE "linked" is the browser's flag -- a tab closed mid-link leaves it on.
+  const online = linked();
   try {
     const mapped = msgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }));
 
@@ -45,15 +56,25 @@ app.post("/api/chat", async (req, res) => {
       ...langMsg(lang),
       { role: "system", content: contextOrDark(state.freshData()) },
       ...folderLine(req.body?.mission, req.body?.chat),
-      ...(moves ? armLine() : []),
+      ...(armOn ? armLine() : []),
       ...(moves ? tapeLine() : []),
-      ...(moves ? [] : [{ role: "system", content: "MOVE LOCK: your drive, your arm and the runs the crew recorded are all locked out right now — say so in your own words as a scout would (\"I'm parked until the crew unlocks me\"), never by naming these fields. Never offer to move, and never set \"move\", \"arm\" or \"tape\" this turn." }]),
+      ...(moves ? [] : armOn
+        ? [{ role: "system", content: "MOVE LOCK: your drive and the runs the crew recorded are locked out right now — say so in your own words as a scout would (\"I can't drive until the crew unlocks me\"), never by naming these fields. Never offer to drive, and never set \"move\" or \"tape\" this turn. Your ARM is free: there is no card for it, the move you name in \"arm\" runs the instant you answer. So \"text\" says what you are doing, short and present tense (\"Lowering the arm.\", \"Opening the gripper.\"), never asks permission for it and never claims it already finished." }]
+        : [{ role: "system", content: "MOVE LOCK: your drive, your arm and the runs the crew recorded are all locked out right now — say so in your own words as a scout would (\"I'm parked until the crew unlocks me\"), never by naming these fields. Never offer to move, and never set \"move\", \"arm\" or \"tape\" this turn." }]),
       ...(lamp ? [] : [{ role: "system", content: "LAMP LOCK: your headlamp is held where the crew left it this turn. Set \"led\" to null whatever you think of the light, and don't mention the lamp unless they bring it up." }]),
       ...camLine(),
+      ...(online ? [] : [{ role: "system", content: "ROBOT OFFLINE: the rover is not connected to you right now — no Bluetooth, no cable. Nothing you ask for can reach it. If the operator asks you to drive, move the arm, the gripper or play a run, say plainly that you're not connected to the robot right now (e.g. \"I'm not connected to the rover right now — link me up first.\"), never pretend you're doing it, and never set \"move\", \"arm\" or \"tape\" this turn." }]),
       ...(handoff ? jobLine() : [{ role: "system", content: "CLAUDE LOCK: jobs can't be handed to Claude from this device. Set \"claude\" null; if asked for one, say it has to be asked from the crew's PC." }]),
       ...mapped,
     ], { maxTokens: 400, confirm: req.body?.confirm === true, lamp, effort: req.body?.effort });
-    if (!moves && reply) { reply.move = null; reply.arm = null; reply.tape = null; }
+    if (!moves && reply) { reply.move = null; reply.tape = null; if (!armOn) reply.arm = null; }
+    if (!online && reply) reply.move = reply.tape = reply.arm = null;
+    if (!moves && reply?.arm) {
+      playTake(reply.arm.tape);
+      const step = { kind: "tool", name: "arm", detail: reply.arm.text.replace(/\n/g, " → ") };
+      steps.push(step);
+      emitStep(step);
+    }
     // The hand-off always asks, in BYPASS too: it is a shell on the crew's PC and
     // she suggests, never drives. Asked off the main path like the lamp, so her
     // "handing that to Claude" is spoken now and the card waits on its own.
