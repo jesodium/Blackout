@@ -171,38 +171,82 @@ body { display: grid; grid-template-columns: 1fr 1px minmax(min-content, var(--s
 .split::after { content: ""; position: absolute; inset: 0 -4px; z-index: 1; }   /* 9px grab zone */
 .split:hover, .split:focus-visible, .split[data-drag] { background: var(--ink-2); outline: none; }
 body:has(.split[data-drag]) { cursor: col-resize; user-select: none; }
-/* 2x2: cams on top, lidar under the front cam, sensors beside it. #feeds is just markup.
-   max-content rows: in a scrolling grid, auto rows ignore the cams' aspect-ratio height and they overlap row 2 */
+/* front cam over lidar on the left; #right stacks sensors over the arm. #feeds is just markup */
 #main {
   flex: 1; overflow: auto; display: grid; gap: 17px; padding: 17px; align-content: start;
-  grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, max-content);
-  grid-template-areas: "front arm" "lidar sensors" "lidar armpad";
+  grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
+  grid-template-areas: "front right" "lidar right";
 }
+#right { grid-area: right; display: flex; flex-direction: column; gap: 17px; min-height: 0; }
+/* wide: the grid is the window, so panels fill their cells instead of growing by aspect-ratio.
+   the arm keeps its content height; sensors take whatever is left */
+@container (min-width: 561px) {
+  #main .feed { aspect-ratio: auto; max-height: none; min-height: 0; }
+  #sensors { flex: 1 0 auto; grid-auto-rows: minmax(84px, 1fr); }
+  #sensors .tile { height: auto; }
+  #armpad { flex: 0 1 auto; min-height: 0; overflow-y: auto; }   /* last resort on short windows: the panel scrolls, never the page */
+}
+/* narrow: one scrolling column; #right dissolves so its panels stack like the rest */
 @container (max-width: 560px) {
-  #main { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(5, max-content); grid-template-areas: "front" "lidar" "arm" "sensors" "armpad"; }
+  #main { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(4, max-content); grid-template-areas: "front" "lidar" "sensors" "armpad"; }
+  #right { display: contents; }
 }
 #feeds { display: contents; }
 .feed[data-cam="0"] { grid-area: front; }
 .feed[data-cam="1"] { grid-area: arm; }
 .lidar { grid-area: lidar; }
-#sensors { grid-area: sensors; align-self: start; }
+#sensors { grid-area: sensors; }
 #armpad { grid-area: armpad; }
 
 /* ---- arm ---- */
-/* wrapping rows of buttons: nothing shrinks, a narrow panel just stacks more rows */
-#armpad { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; box-shadow: 0 0 0 1px var(--line); }
+/* 3D view on top, a row per joint, then the one-shot moves. Rows are a fixed grid
+   with a minmax(0) slider, so a narrow panel shrinks the slider, never the text */
+#armpad { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; box-shadow: 0 0 0 1px var(--line); min-width: 0; container-type: inline-size; }
+.arm-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.arm-head .grow { flex: 1; }
 #armpad h2 { margin: 0; font: inherit; font-size: 11px; font-weight: 400; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.08em; }
+#arm-st { font-size: 11px; color: var(--ink-2); }
+#arm-st[data-t="armLive"] { color: var(--go); }
+#arm-st[data-t="armLocked"] { color: var(--warn); }
+#arm3d { display: block; width: 100%; height: clamp(140px, 28vh, 300px); flex: 0 1 auto; min-height: 120px; background: var(--raise); cursor: grab; touch-action: none; }
+#arm3d:active { cursor: grabbing; }
+/* armrec's d-pad beside the joints + moves; wraps under them when the panel is narrow */
+.arm-ctl { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.arm-side { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.arm-dpad { display: grid; grid-template-areas: ". up ." "lt . rt" ". dn ."; grid-template-columns: repeat(3, minmax(64px, max-content)); gap: 4px; align-self: center; }
+.arm-dpad .btn { justify-content: center; min-height: 40px; touch-action: none; user-select: none; }
+.arm-dpad .btn:active { background: var(--raise); border-color: var(--ink-2); }
+#armpad[data-off] .arm-dpad { opacity: 0.4; pointer-events: none; }
+#arm-joints { display: grid; grid-template-columns: max-content 32px minmax(0, 1fr) 32px 4.5ch; gap: 6px 8px; align-items: center; }
+.arm-j { display: contents; }
+#arm-fine summary { cursor: pointer; padding: 6px 0; list-style: none; display: flex; gap: 10px; align-items: baseline; }
+#arm-fine summary::-webkit-details-marker { display: none; }
+#arm-fine summary::before { content: "▸"; color: var(--ink-2); transition: transform 0.15s; }
+#arm-fine[open] summary::before { transform: rotate(90deg); }
+#arm-fine summary .k { font-size: 11px; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.06em; }
+#arm-sum { font-variant-numeric: tabular-nums; text-transform: none; }
+#arm-fine[open] #arm-sum { display: none; }
+#arm-fine #arm-joints { margin-top: 6px; }
+#armpad[data-off] #arm-fine #arm-joints { opacity: 0.4; pointer-events: none; }
+/* narrow: name on its own line over its slider */
+@container (max-width: 320px) {
+  #arm-joints { grid-template-columns: 32px minmax(0, 1fr) 32px 4.5ch; }
+  .arm-j > span { grid-column: 1 / -1; margin-top: 4px; }
+}
+.arm-j > span { font-size: 11px; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.06em; }
+.arm-j input { width: 100%; min-width: 0; margin: 0; accent-color: var(--ink); }
+.arm-j output { text-align: right; font-variant-numeric: tabular-nums; }
+.arm-j[data-limp] output { color: var(--ink-2); }
+.arm-j .btn, .arm-grp .btn { touch-action: none; user-select: none; }
+.arm-j .btn:active, .arm-grp .btn:active { background: var(--raise); border-color: var(--ink-2); }
 .arm-grp { display: flex; flex-wrap: wrap; gap: 6px; }
-#arm-en { align-self: flex-start; }
 #armpad[data-off] #arm-en { border-color: var(--warn); color: var(--warn); }
-#armpad[data-off] .arm-grp { opacity: 0.4; pointer-events: none; transition: opacity 0.2s; }
-.arm-grp .btn { touch-action: none; user-select: none; }
-.arm-grp .btn:active { background: var(--raise); border-color: var(--ink-2); }
+#armpad[data-off] :is(#arm-joints, .arm-grp) { opacity: 0.4; pointer-events: none; transition: opacity 0.2s; }
 
 /* ---- debug ---- */
-#main:has(#debug:not([hidden])) { grid-template-rows: repeat(4, max-content); grid-template-areas: "front arm" "lidar sensors" "lidar armpad" "debug debug"; }
+#main:has(#debug:not([hidden])) { grid-template-rows: minmax(0, 3fr) minmax(0, 2fr) max-content; grid-template-areas: "front right" "lidar right" "debug debug"; }
 @container (max-width: 560px) {
-  #main:has(#debug:not([hidden])) { grid-template-rows: repeat(6, max-content); grid-template-areas: "front" "lidar" "arm" "sensors" "armpad" "debug"; }
+  #main:has(#debug:not([hidden])) { grid-template-rows: repeat(5, max-content); grid-template-areas: "front" "lidar" "sensors" "armpad" "debug"; }
 }
 #debug { grid-area: debug; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; padding: 10px 12px; box-shadow: 0 0 0 1px var(--line); }
 #debug[hidden] { display: none; }
@@ -233,9 +277,9 @@ body:has(.split[data-drag]) { cursor: col-resize; user-select: none; }
 .feed .st { flex: 1; color: var(--ink-2); }
 .feed[data-state="down"] .st { color: var(--stop); }
 .feed[data-state="loading"] .st { animation: blink 1s infinite; }
-/* lidar: no aspect of its own, it stretches to the sensors beside it.
+/* lidar: square, so the rings fill it instead of floating in a wide strip.
    svg rings and the dot canvas share one box, so their centres and scale agree */
-.lidar { aspect-ratio: auto; min-height: 240px; max-height: none; }
+.lidar { aspect-ratio: 1; max-height: none; }
 .lidar svg, .lidar canvas { position: absolute; left: 12px; top: 36px; width: calc(100% - 24px); height: calc(100% - 48px); }
 .lidar svg { fill: none; stroke: var(--line); }
 .lidar svg * { vector-effect: non-scaling-stroke; }
@@ -254,7 +298,7 @@ body:has(.split[data-drag]) { cursor: col-resize; user-select: none; }
 /* ---- sensors ---- */
 /* auto-fill grid: tiles wrap instead of shrinking, fixed height so nothing jumps.
    lines are per-tile shadows, not a grid background, so empty cells stay empty */
-#sensors { display: grid; grid-template-columns: repeat(auto-fill, minmax(212px, 1fr)); gap: 1px; }
+#sensors { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 1px; }
 .tile {
   --c: transparent;
   display: grid; grid-template-rows: auto 1fr; grid-template-columns: 1fr auto; align-items: end; gap: 4px 6px;

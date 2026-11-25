@@ -1,4 +1,6 @@
 import { mjpegSplit } from "./mjpeg.mjs";
+import { ARM_J, armSim } from "./armsim.mjs";
+import { arm3d } from "./arm3d.bundle.js";
 import { parse as blkParse, run as blkRun, compile as blkCompile, insLine as blkInsLine,
          interp as blkInterp, evalExpr as blkEval, clampArg as blkClamp } from "./blk.mjs";
 
@@ -27,7 +29,8 @@ const T = {
     warm: "warm", calibrating: "CALIBRATING", safe: "safe", caution: "caution", danger: "danger",
     camFront: "front cam", camArm: "arm cam", rotate: "Rotate", camSettings: "Camera settings", live: "live", noSignal: "no signal",
     lidar: "lidar", lidarNone: "no lidar", lidarProbing: "checking usb", lidarSilent: "usb · no reply", clear: "CLEAR",
-    arm: "arm", raise: "▲ raise", lower: "▼ lower", left: "◀ left", right: "right ▶",
+    arm: "arm", joints: "joints", lift: "▲ lift", lower: "▼ lower", left: "◀ left", right: "right ▶", base: "base", shoulder: "shoulder", elbow: "elbow", gripper: "gripper",
+    armLive: "live", armLimp: "limp", armLocked: "locked", armView: "Arm, as the board believes it is. Drag to orbit, double-click to reset.",
     open: "open", regClose: "reg close", closeLock: "close lock", home: "home", noTakes: "no recorded takes",
     armOff: "disable arm", armOn: "enable arm",
   },
@@ -44,7 +47,8 @@ const T = {
     warm: "warm", calibrating: "CALIBRANDO", safe: "seguro", caution: "precaución", danger: "peligro",
     camFront: "cámara frontal", camArm: "cámara del brazo", rotate: "Girar", camSettings: "Ajustes de cámara", live: "en vivo", noSignal: "sin señal",
     lidar: "lidar", lidarNone: "sin lidar", lidarProbing: "revisando usb", lidarSilent: "usb · sin respuesta", clear: "LIBRE",
-    arm: "brazo", raise: "▲ subir", lower: "▼ bajar", left: "◀ izquierda", right: "derecha ▶",
+    arm: "brazo", joints: "articulaciones", lift: "▲ subir", lower: "▼ bajar", left: "◀ izquierda", right: "derecha ▶", base: "base", shoulder: "hombro", elbow: "codo", gripper: "pinza",
+    armLive: "activo", armLimp: "suelto", armLocked: "bloqueado", armView: "Brazo, según lo que cree la placa. Arrastra para girar, doble clic para restablecer.",
     open: "abrir", regClose: "cerrar suave", closeLock: "cerrar fijo", home: "inicio", noTakes: "sin movimientos grabados",
     armOff: "desactivar brazo", armOn: "activar brazo",
   },
@@ -454,15 +458,46 @@ function lidFrame(now) {
 // ---- arm ----
 // Same commands armrec.py sends. Held buttons repeat under the board's 1s deadman
 // (ARM_JOG_MS) and park on release; joints 0 base, 1 shoulder, 2 elbow, 3 gripper.
-// Raise/lower drive shoulder + elbow together, directions checked on the rig.
-// Takes are played by the server (armplay.js), same player Sage uses.
-const armSend = (w) => { bleWrite(w); socket.emit("cmd", w); };   // server won't echo ours back
-const ARM_HOLD = { raise: [[1, -100], [2, 100]], lower: [[1, 100], [2, -100]], left: [[0, -100]], right: [[0, 100]] };
+// Lift/lower/left/right are armrec.py's pad (raise = shoulder -, elbow +, checked on the
+// rig 2026-11-23), raw speeds so the board's dir applies. Joint rows pre-flip by dir instead.
+// Takes are played by the server (armplay.js), same player Sage uses; they come
+// back through socket "cmd", so the 3D view follows them too.
+const sim = armSim();
+const armSend = (w) => { bleWrite(w); socket.emit("cmd", w); armSeen(w); };   // server won't echo ours back
+const armSeen = (w) => { if (/^(arm|stop)/.test(w)) { sim.cmd(w, performance.now()); armKick(); } };
+socket.on("cmd", armSeen);
+socket.on("serial-line", (d) => { if (sim.serial(d?.line)) armKick(); });
 let armHeld = null;
 setInterval(() => armHeld?.forEach(([j, d]) => armSend(`arm,${j},${d}`)), 300);
+
+// one row per joint: jog -/+ (held), slider glides there (armto). Both in the
+// operator's degrees, so + always grows the number whatever the servo's dir.
+let armSlideT = 0;
+$("arm-joints").replaceChildren(...ARM_J.map((d, i) => {
+  const row = document.createElement("div");
+  row.className = "arm-j";
+  row.innerHTML = `<span class="k" data-t="${d.name}">${t(d.name)}</span><button type="button" class="btn icon" aria-label="−">−</button>`
+    + `<input type="range" min="${d.lo}" max="${d.hi}" step="1" value="${d.home}"><button type="button" class="btn icon" aria-label="+">+</button><output class="k">${d.home}°</output>`;
+  const [, dn, rng, up] = row.children;
+  [[dn, -100], [up, 100]].forEach(([b, v]) => { b.dataset.hold = `${i},${v * d.dir}`; });
+  rng.setAttribute("aria-labelledby", "arm-h");
+  rng.ariaLabel = d.name;
+  rng.onpointerdown = () => { rng.dataset.drag = ""; };
+  rng.onpointerup = rng.onblur = () => { delete rng.dataset.drag; };
+  rng.oninput = () => {                       // glide while dragging, not 60 armto/s
+    if (performance.now() - armSlideT < 120) return;
+    armSlideT = performance.now();
+    armSend(`armto,${i},${rng.value}`);
+  };
+  rng.onchange = () => armSend(`armto,${i},${rng.value}`);
+  return row;
+}));
+// sliders tucked away until wanted; the d-pad covers everyday driving
+$("arm-fine").open = get("armFine", "0") === "1";
+$("arm-fine").ontoggle = () => put("armFine", $("arm-fine").open ? "1" : "0");
 document.querySelectorAll("[data-hold]").forEach((b) => {
   const off = () => { if (!armHeld) return; armHeld.forEach(([j]) => armSend(`arm,${j},0`)); armHeld = null; };
-  b.onpointerdown = (e) => { e.preventDefault(); if (armHeld) return; armHeld = ARM_HOLD[b.dataset.hold]; armHeld.forEach(([j, d]) => armSend(`arm,${j},${d}`)); };
+  b.onpointerdown = (e) => { e.preventDefault(); if (armHeld) return; armHeld = b.dataset.hold.split(";").map((p) => p.split(",").map(Number)); armHeld.forEach(([j, d]) => armSend(`arm,${j},${d}`)); };
   b.onpointerup = b.onpointerleave = b.onpointercancel = off;
   b.oncontextmenu = (e) => e.preventDefault();
 });
@@ -488,6 +523,46 @@ fetch("/api/arm-moves").then((r) => r.json()).then((moves) => {
   }) : [Object.assign(document.createElement("span"), { className: "k", textContent: t("noTakes") })]));
 }).catch(() => {});
 
+// ---- arm 3D ----
+// arm.glb (the MuJoCo model's meshes) drawn by arm3d.bundle.js. The drawn angle springs
+// toward the sim's so it moves like a thing with mass; a ghost shows where a glide is
+// headed. Only animates while something moves. Drag to orbit, double-click resets.
+const view3d = arm3d($("arm3d"));
+const disp = sim.j.map((j) => j.pos);
+let armRaf = 0, armLast = 0;
+function armDraw() {
+  const goal = sim.j.map((j, i) => isNaN(j.goal) ? disp[i] : j.goal);
+  view3d.draw(disp, goal.some((v, i) => Math.abs(v - disp[i]) > 0.5) ? goal : null, !sim.live || !sim.on, sim.j[3].limp);
+}
+
+function armRows() {
+  $("arm-joints").querySelectorAll(".arm-j").forEach((row, i) => {
+    const deg = Math.round(sim.j[i].pos), [, , rng, , out] = row.children;
+    if (!("drag" in rng.dataset) && document.activeElement !== rng) rng.value = deg;
+    out.textContent = `${deg}°`;
+    row.toggleAttribute("data-limp", sim.j[i].limp);
+  });
+  $("arm-sum").textContent = sim.j.map((j) => `${Math.round(j.pos)}°`).join(" ");
+  const st = !sim.on ? "armLocked" : sim.live ? "armLive" : "armLimp";
+  $("arm-st").dataset.t = st; $("arm-st").textContent = t(st);
+}
+
+function armFrame(now) {
+  const dt = Math.min(0.1, (now - armLast) / 1000);
+  armLast = now;
+  const busy = sim.tick(now, dt);
+  const k = document.documentElement.classList.contains("calm") ? 1 : 1 - Math.exp(-dt * 12);
+  let settling = false;
+  sim.j.forEach((j, i) => { disp[i] += (j.pos - disp[i]) * k; if (Math.abs(j.pos - disp[i]) < 0.05) disp[i] = j.pos; else settling = true; });
+  armDraw(); armRows();
+  armRaf = busy || settling ? requestAnimationFrame(armFrame) : 0;
+}
+function armKick() { if (!armRaf) { armLast = performance.now(); armRaf = requestAnimationFrame(armFrame); } }
+
+new ResizeObserver(armDraw).observe($("arm3d"));
+new MutationObserver(armDraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+armKick();
+
 // ---- e-stop ----
 // straight to BLE (the server won't echo our own cmd back), the server for the usb
 // cable, and Sage's runner. Space works anywhere a key isn't already taken.
@@ -497,6 +572,7 @@ function estop() {
   blkCancel();
   bleWrite("stop");
   socket.emit("cmd", "stop");
+  armSeen("stop");
   fetch("/api/claude/stop", { method: "POST" }).catch(() => {});
 }
 $("estop").addEventListener("click", estop);

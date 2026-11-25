@@ -38,7 +38,7 @@
     "test:lidar": "node src/lidar.js --selftest",
     "test:mcp": "node mcp.mjs --selftest",
     "mcp": "node mcp.mjs",
-    "build:web": "esbuild web/sage.jsx --bundle --minify --format=esm --jsx=automatic --target=chrome120 --define:process.env.NODE_ENV='\"production\"' --outfile=public/js/sage.bundle.js"
+    "build:web": "esbuild web/sage.jsx --bundle --minify --format=esm --jsx=automatic --target=chrome120 --define:process.env.NODE_ENV='\"production\"' --outfile=public/js/sage.bundle.js && esbuild web/arm3d.mjs --bundle --minify --format=esm --target=chrome120 --outfile=public/js/arm3d.bundle.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
@@ -56,6 +56,7 @@
     "esbuild": "^0.28.2",
     "motion": "^14.14.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "three": "^0.170.0"
   }
 }

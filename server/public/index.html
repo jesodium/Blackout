@@ -52,9 +52,11 @@
   <main id="main">
     <section id="feeds">
       <figure class="feed" data-cam="0" data-state="loading"><img alt=""><figcaption><span class="k" data-t="camFront"></span> <span class="k st"></span><button type="button" class="btn icon rot" data-t-title="rotate">⟳</button><button type="button" class="btn icon set" data-t-title="camSettings" aria-expanded="false">⚙</button></figcaption></figure>
-      <figure class="feed" data-cam="1" data-state="loading"><img alt=""><figcaption><span class="k" data-t="camArm"></span> <span class="k st"></span><button type="button" class="btn icon rot" data-t-title="rotate">⟳</button><button type="button" class="btn icon set" data-t-title="camSettings" aria-expanded="false">⚙</button></figcaption></figure>
+      <!-- IMPORTANT NOTE: arm cam hidden so dashboard fits without scroll; uncomment + restore grid areas in dash.css to bring back
+      <figure class="feed" data-cam="1" data-state="loading"><img alt=""><figcaption><span class="k" data-t="camArm"></span> <span class="k st"></span><button type="button" class="btn icon rot" data-t-title="rotate">⟳</button><button type="button" class="btn icon set" data-t-title="camSettings" aria-expanded="false">⚙</button></figcaption></figure> -->
       <figure class="feed lidar" id="lidar" data-state="none"><svg viewBox="0 0 200 200" aria-hidden="true"><path class="x" d="M100 4V196M4 100H196M32 32L168 168M168 32L32 168"/><circle cx="100" cy="100" r="24"/><circle cx="100" cy="100" r="48"/><circle cx="100" cy="100" r="72"/><circle cx="100" cy="100" r="96"/><path class="fwd" d="M100 4v7"/><g class="m"><text x="103" y="84">1</text><text x="103" y="60">2</text><text x="103" y="36">3</text><text x="103" y="12">4 m</text></g><path class="dot" d="M100 94l4 9-4-2-4 2z"/></svg><canvas></canvas><figcaption><span class="k" data-t="lidar"></span> <span class="k st"></span> <span class="k near"></span></figcaption></figure>
     </section>
+    <div id="right">
     <section id="sensors" aria-live="off" data-stale>
       <div class="tile"><span class="k" data-t="temp"></span><i class="lvl"></i><b id="s-temp">—</b><span class="k">°C</span></div>
       <div class="tile"><span class="k" data-t="humid"></span><i class="lvl"></i><b id="s-humid">—</b><span class="k">%</span></div>
@@ -65,22 +67,36 @@
       <div class="tile"><span class="k" data-t="gas"></span><i class="lvl"></i><b id="s-gas">—</b><span class="k">/100</span></div>
     </section>
     <section id="armpad" aria-labelledby="arm-h">
-      <h2 class="k" id="arm-h" data-t="arm"></h2>
-      <button type="button" class="btn" id="arm-en" data-t="armOff"></button>
-      <div class="arm-grp">
-        <button type="button" class="btn" data-hold="raise" data-t="raise"></button>
-        <button type="button" class="btn" data-hold="lower" data-t="lower"></button>
-        <button type="button" class="btn" data-hold="left" data-t="left"></button>
-        <button type="button" class="btn" data-hold="right" data-t="right"></button>
+      <div class="arm-head">
+        <h2 class="k" id="arm-h" data-t="arm"></h2>
+        <span class="k" id="arm-st"></span>
+        <span class="grow"></span>
+        <button type="button" class="btn" id="arm-en" data-t="armOff"></button>
       </div>
-      <div class="arm-grp">
-        <button type="button" class="btn" data-cmd="armto,3,110" data-t="open"></button>
-        <button type="button" class="btn" data-cmd="armto,3,60,1" data-t="regClose"></button>
-        <button type="button" class="btn" data-cmd="armto,3,60" data-t="closeLock"></button>
-        <button type="button" class="btn" data-cmd="armz," data-t="home"></button>
+      <canvas id="arm3d" role="img" data-t-title="armView"></canvas>
+      <div class="arm-ctl">
+        <div class="arm-dpad">
+          <button type="button" class="btn" data-hold="1,-100;2,100" data-t="lift" style="grid-area:up"></button>
+          <button type="button" class="btn" data-hold="0,-100" data-t="left" style="grid-area:lt"></button>
+          <button type="button" class="btn" data-hold="1,100;2,-100" data-t="lower" style="grid-area:dn"></button>
+          <button type="button" class="btn" data-hold="0,100" data-t="right" style="grid-area:rt"></button>
+        </div>
+        <div class="arm-side">
+          <details id="arm-fine">
+            <summary><span class="k" data-t="joints"></span> <span class="k" id="arm-sum"></span></summary>
+            <div id="arm-joints"></div>
+          </details>
+          <div class="arm-grp">
+            <button type="button" class="btn" data-cmd="armto,3,110" data-t="open"></button>
+            <button type="button" class="btn" data-cmd="armto,3,60,1" data-t="regClose"></button>
+            <button type="button" class="btn" data-cmd="armto,3,60" data-t="closeLock"></button>
+            <button type="button" class="btn" data-cmd="armz," data-t="home"></button>
+          </div>
+          <div class="arm-grp" id="arm-takes"></div>
+        </div>
       </div>
-      <div class="arm-grp" id="arm-takes"></div>
     </section>
+    </div>
     <!-- test only: Debug menu (electron) shows it -->
     <section id="debug" aria-labelledby="dbg-h" hidden>
       <h2 class="k" id="dbg-h">debug</h2>
