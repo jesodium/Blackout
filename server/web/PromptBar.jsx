@@ -869,11 +869,11 @@ export default function PromptBar({
             data-on={plusOpen ? '' : undefined}
             onMouseDown={e => e.preventDefault()}
             onClick={() => {
+              focusInput();
               setModelOpen(false);
               setEffortOpen(false);
               setActive(0);
               setPlusOpen(v => !v);
-              focusInput();
             }}
           >
             <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={2} />
@@ -887,11 +887,11 @@ export default function PromptBar({
               data-on={modelOpen ? '' : undefined}
               onMouseDown={e => e.preventDefault()}
               onClick={() => {
+                focusInput();
                 setPlusOpen(false);
                 setEffortOpen(false);
                 setActive(Math.max(0, models.indexOf(model)));
                 setModelOpen(v => !v);
-                focusInput();
               }}
             >
               <Morph k={model.key}>
@@ -912,10 +912,10 @@ export default function PromptBar({
               data-max={maxed ? '' : undefined}
               onMouseDown={e => e.preventDefault()}
               onClick={() => {
+                focusInput();
                 setPlusOpen(false);
                 setModelOpen(false);
                 setEffortOpen(v => !v);
-                focusInput();
               }}
             >
               <HugeiconsIcon icon={SparklesIcon} size={13} strokeWidth={2} />

@@ -15,6 +15,19 @@ import { Camera01Icon, Camera02Icon, ClaudeIcon } from '@hugeicons/core-free-ico
 import PromptBar from './PromptBar';
 import SageFace from './SageFace';
 
+// What Sage DID this turn, as small trace rows above her reply (tool calls, arm
+// takes, the lamp, notes): the server already returns them as `steps`.
+const ARM_CUE = /my arm|mi brazo/i;   // same as routes.js
+const VERB = { camera: 'looked', armcam: 'looked at gripper', sensors: 'read sensors', arm: 'moved arm', move: 'drive', tape: 'play run', lamp: 'set lamp' };
+const actsOf = (steps, reply) => [
+  ...(steps || []).map((st) => st.error
+    ? { k: 'err', verb: '[error]', what: `${VERB[st.name] || st.name}: ${st.detail}` }
+    : { k: st.name === 'arm' ? 'arm' : 'tool', verb: VERB[st.name] || st.name, what: String(st.arg || st.detail || '').slice(0, 90) }),
+  ...(reply.led != null ? [{ k: 'tool', verb: 'set lamp', what: `→ ${reply.led}` }] : []),
+  ...(reply.finding ? [{ k: 'find', verb: 'logged', what: reply.finding }] : []),
+  ...(reply.remember ? [{ k: 'note', verb: 'noted', what: reply.remember }] : []),
+];
+
 // @ rows just put the camera's name in the message; Sage picks her own eye from it
 const SOURCES = [
   { key: 'front', name: 'Front camera', description: 'cam 0, the headlamp eye', icon: Camera01Icon },
@@ -207,6 +220,19 @@ function Sage() {
     const q = new URLSearchParams({ text, provider: voice, ...(es ? { voice: 'es-ES-AlvaroNeural' } : {}) });
     audio.current = new Audio(`/api/tts?${q}`);
     audio.current.play().catch(() => {});   // autoplay can refuse before the first click; the reply is still on screen
+    return audio.current;
+  };
+  // A deferred arm take (reply.armCue) starts as her voice reaches "my arm": the
+  // cue's spot in the text, as a share of the clip. No voice, or it fails: now.
+  const armOnCue = (a, text) => {
+    let done = false;
+    const go = () => { if (!done) { done = true; fetch('/api/arm-cue', { method: 'POST' }).catch(() => {}); } };
+    const at = Math.max(0, text.search(ARM_CUE)) / text.length;
+    if (!a) return go();
+    a.addEventListener('timeupdate', () => a.duration && a.currentTime >= at * a.duration && go());
+    a.addEventListener('error', go);
+    a.addEventListener('ended', go);
+    a.play().catch(go);
   };
 
   // ---- talking ----
@@ -222,8 +248,9 @@ function Sage() {
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || r.status);
       const reply = d.reply || {};
-      push(t, { role: 'assistant', by, content: reply.text || d.text || '(no reply)' });
-      speak(reply.text || d.text);
+      push(t, { role: 'assistant', by, content: reply.text || d.text || '(no reply)', acts: actsOf(d.steps, reply) });
+      const said = speak(reply.text || d.text);
+      if (reply.armCue) armOnCue(said, reply.text);
       if (d.session) {
         if (t.key === TEMP) tempSession.current = d.session;
         else patchChat(t.m, t.key, () => ({ claudeSession: d.session }));
@@ -262,7 +289,7 @@ function Sage() {
     // server tells her she's parked; arm:true -- her recorded arm takes the server plays itself
     return ask('/api/chat', {
       messages: next.filter((x) => x.by !== 'claude').map(({ role, content }) => ({ role, content })),
-      lang: kept('lang') || 'en', moves: false, arm: true, effort: level === 'Standard' ? null : level.toLowerCase(), ...folder
+      lang: kept('lang') || 'en', moves: false, arm: true, armCue: true, effort: level === 'Standard' ? null : level.toLowerCase(), ...folder
     }, 'sage', t);
   };
 
@@ -420,6 +447,9 @@ function Sage() {
             <li key={i} className={x.role === 'user' ? 'user' : x.err ? 'sage err' : 'sage'} data-by={x.by || 'sage'}>
               {i === messages.length - 1 && x.role !== 'user' && (x.by || 'sage') === 'sage' && busy?.key !== chatKey
                 ? <SageFace mood={x.err ? 'alert' : moodOf(x.content)} className="reply" gaze={false} /> : null}
+              {x.acts?.length ? (
+                <ul className="acts">{x.acts.map((a, j) => <li key={j} data-k={a.k}><b>{a.verb}</b>{a.what ? ` ${a.what}` : ''}</li>)}</ul>
+              ) : null}
               {x.content}
             </li>
           ))}

@@ -13,12 +13,22 @@ const { eyeParts, grabFrames, camCount } = require("../vision");
 // a missing one is no view at all.
 const blkEyes = (cam) => (cam = +cam || 0) < camCount ? eyeParts(cam) : Promise.resolve([]);
 const { readingLines } = require("../status");
-const { parseSage } = require("./parse");
+const { parseSage, parseArm, armMovesFor } = require("./parse");
+const { readArmMoves } = require("../data");
 const { askSage, agentLoop, askConfirm, recordFinding, lastImage, emitStep, LAMP_ASKED } = require("./agent");
 const { playTake } = require("../armplay");
 const { delegate, jobLine } = require("./claude");
 const { contextOrDark, armLine, tapeLine, camLine, folderLine } = require("./context");
 const { CHAT_SYSTEM, BLK_SYSTEM, demoLine, LANG_INSTRUCT, langMsg } = require("./prompts");
+
+const ARM_CUE = /my arm|mi brazo/i;
+const INTRO_DONE = /this is my arm|este es mi brazo/i;
+let cuedTake = null;
+app.post("/api/arm-cue", (req, res) => {
+  if (cuedTake) playTake(cuedTake);
+  cuedTake = null;
+  res.json({ ok: true });
+});
 
 app.post("/api/chat", async (req, res) => {
   if (!hasAI) return res.status(503).json({ error: "AI key not set" });
@@ -63,14 +73,23 @@ app.post("/api/chat", async (req, res) => {
         : [{ role: "system", content: "MOVE LOCK: your drive, your arm and the runs the crew recorded are all locked out right now — say so in your own words as a scout would (\"I'm parked until the crew unlocks me\"), never by naming these fields. Never offer to move, and never set \"move\", \"arm\" or \"tape\" this turn." }]),
       ...(lamp ? [] : [{ role: "system", content: "LAMP LOCK: your headlamp is held where the crew left it this turn. Set \"led\" to null whatever you think of the light, and don't mention the lamp unless they bring it up." }]),
       ...camLine(),
-      ...(online ? [] : [{ role: "system", content: "ROBOT OFFLINE: the rover is not connected to you right now — no Bluetooth, no cable. Nothing you ask for can reach it. If the operator asks you to drive, move the arm, the gripper or play a run, say plainly that you're not connected to the robot right now (e.g. \"I'm not connected to the rover right now — link me up first.\"), never pretend you're doing it, and never set \"move\", \"arm\" or \"tape\" this turn." }]),
+      ...(online ? [] : [{ role: "system", content: "ROBOT OFFLINE: the rover is not connected to you right now — no Bluetooth, no cable. Nothing you ask for can reach it. If the operator asks you to drive, move the arm, the gripper or play a run, say plainly that you're not connected to the robot right now (e.g. \"I'm not connected to the rover right now — link me up first.\"), never pretend you're doing it. Still fill \"move\", \"arm\" or \"tape\" exactly as you would online: it is blocked before it reaches the rover and shown to the operator as failed." }]),
       ...(handoff ? jobLine() : [{ role: "system", content: "CLAUDE LOCK: jobs can't be handed to Claude from this device. Set \"claude\" null; if asked for one, say it has to be asked from the crew's PC." }]),
       ...mapped,
     ], { maxTokens: 400, confirm: req.body?.confirm === true, lamp, effort: req.body?.effort });
     if (!moves && reply) { reply.move = null; reply.tape = null; if (!armOn) reply.arm = null; }
-    if (!online && reply) reply.move = reply.tape = reply.arm = null;
+    // Backstop: she gave the intro but forgot the "arm" field (or spent the turn on
+    // a tool) -- her own words decide, so the arm never sits out the presentation.
+    if (armOn && reply && !reply.arm && INTRO_DONE.test(reply.text || "")) reply.arm = parseArm("PRESENT", armMovesFor(readArmMoves(), "sage_can_use"));
+    if (!online && reply) {
+      // shown in the chat's action trace as a failed row, so a silent arm has a reason
+      for (const name of ["arm", "move", "tape"]) if (reply[name]) steps.push({ kind: "tool", name, detail: "robot not connected", error: true });
+      reply.move = reply.tape = reply.arm = null;
+    }
     if (!moves && reply?.arm) {
-      playTake(reply.arm.tape);
+      // "...and this is my arm!": the browser fires /api/arm-cue when her voice gets there
+      if (req.body?.armCue && ARM_CUE.test(reply.text || "")) { cuedTake = reply.arm.tape; reply.armCue = true; }
+      else playTake(reply.arm.tape);
       const step = { kind: "tool", name: "arm", detail: reply.arm.text.replace(/\n/g, " → ") };
       steps.push(step);
       emitStep(step);

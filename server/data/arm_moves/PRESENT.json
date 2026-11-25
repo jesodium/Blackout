@@ -1,0 +1,58 @@
+{
+ "steps": [
+  {
+   "ms": 0,
+   "cmd": "armz,"
+  },
+  {
+   "ms": 800,
+   "cmd": "armto,1,110"
+  },
+  {
+   "ms": 800,
+   "cmd": "armto,2,65"
+  },
+  {
+   "ms": 1600,
+   "cmd": "armto,1,75"
+  },
+  {
+   "ms": 1600,
+   "cmd": "armto,2,120"
+  },
+  {
+   "ms": 1600,
+   "cmd": "armto,0,50"
+  },
+  {
+   "ms": 2400,
+   "cmd": "armto,0,130"
+  },
+  {
+   "ms": 3500,
+   "cmd": "armto,0,90"
+  },
+  {
+   "ms": 4300,
+   "cmd": "armto,3,110"
+  },
+  {
+   "ms": 5000,
+   "cmd": "armto,3,60"
+  },
+  {
+   "ms": 5700,
+   "cmd": "armto,3,110"
+  },
+  {
+   "ms": 6400,
+   "cmd": "armto,3,60"
+  },
+  {
+   "ms": 7100,
+   "cmd": "armz,"
+  }
+ ],
+ "sage_can_use": true,
+ "show_in_app": true
+}

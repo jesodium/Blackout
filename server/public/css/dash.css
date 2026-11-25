@@ -652,3 +652,13 @@ dialog[open]::backdrop { opacity: 1; }
   cursor: pointer;
 }
 .voice-sel:hover { background: var(--raise); }
+
+/* Sage's action trace: small sans rows above her reply, a dot per action */
+#chat .acts { list-style: none; margin: 4px 0 6px; padding: 0 0 0 10px; border-left: 1px solid var(--line); display: grid; gap: 2px; }
+#chat .acts li { max-width: none; font: 12px/1.4 ui-sans-serif, system-ui, -apple-system, sans-serif; color: var(--ink-2); white-space: normal; }
+#chat .acts li::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: var(--off); vertical-align: 1px; }
+#chat .acts b { font-weight: 600; color: var(--ink); }
+#chat .acts [data-k="arm"]::before { background: var(--go); }
+#chat .acts [data-k="find"]::before { background: var(--warn); }
+#chat .acts [data-k="err"]::before { background: var(--stop); }
+#chat .acts [data-k="err"] b { color: var(--stop); }
